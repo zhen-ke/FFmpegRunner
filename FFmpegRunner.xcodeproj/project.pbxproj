@@ -1,0 +1,645 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		001A0001 /* FFmpegRunnerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0001 /* FFmpegRunnerApp.swift */; };
+		001A0002 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0002 /* AppEnvironment.swift */; };
+		001A0003 /* Template.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0003 /* Template.swift */; };
+		001A0004 /* TemplateParameter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0004 /* TemplateParameter.swift */; };
+		001A0005 /* TemplateValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0005 /* TemplateValue.swift */; };
+		001A0006 /* ExecutionResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0006 /* ExecutionResult.swift */; };
+		001A0007 /* TemplateLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0007 /* TemplateLoader.swift */; };
+		001A0008 /* CommandRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0008 /* CommandRenderer.swift */; };
+		001A0009 /* FFmpegService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0009 /* FFmpegService.swift */; };
+		001A0010 /* ProcessLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0010 /* ProcessLogger.swift */; };
+		001A0011 /* TemplateListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0011 /* TemplateListViewModel.swift */; };
+		001A0012 /* TemplateDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0012 /* TemplateDetailViewModel.swift */; };
+		001A0013 /* CommandPreviewViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0013 /* CommandPreviewViewModel.swift */; };
+		001A0014 /* ExecutionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0014 /* ExecutionViewModel.swift */; };
+		001A0015 /* MainSplitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0015 /* MainSplitView.swift */; };
+		001A0016 /* TemplateListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0016 /* TemplateListView.swift */; };
+		001A0017 /* ParameterFormView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0017 /* ParameterFormView.swift */; };
+		001A0018 /* CommandPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0018 /* CommandPreviewView.swift */; };
+		001A0019 /* LogConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0019 /* LogConsoleView.swift */; };
+		001A0020 /* FilePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0020 /* FilePicker.swift */; };
+		001A0021 /* DragDropHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0021 /* DragDropHandler.swift */; };
+		001A0022 /* UserSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0022 /* UserSettings.swift */; };
+		001A0023 /* Templates in Resources */ = {isa = PBXBuildFile; fileRef = 001B0023 /* Templates */; };
+		001A0024 /* CommandHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0024 /* CommandHistory.swift */; };
+		001A0025 /* HistoryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0025 /* HistoryService.swift */; };
+		001A0026 /* CommandValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0026 /* CommandValidator.swift */; };
+		001A0027 /* HistoryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0027 /* HistoryViewModel.swift */; };
+		001A0028 /* Template+Examples.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0028 /* Template+Examples.swift */; };
+		001A0029 /* ParameterBinding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0029 /* ParameterBinding.swift */; };
+		001A0030 /* ExecutionPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0030 /* ExecutionPlan.swift */; };
+		001A0031 /* ExecutionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0031 /* ExecutionController.swift */; };
+		001A0032 /* CommandPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0032 /* CommandPlanner.swift */; };
+		001A0033 /* FFmpegPathResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0033 /* FFmpegPathResolver.swift */; };
+		8A8FAA592F1B4B5F00389163 /* ffmpeg in Resources */ = {isa = PBXBuildFile; fileRef = 8A8FAA582F1B4B5F00389163 /* ffmpeg */; };
+		8AD7CF792F1B1EDA00A2E33E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8AD7CF782F1B1EDA00A2E33E /* Assets.xcassets */; };
+		002A0001 /* SplitCommandTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002B0001 /* SplitCommandTests.swift */; };
+		002A0002 /* CommandValidatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002B0002 /* CommandValidatorTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		001B0001 /* FFmpegRunnerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFmpegRunnerApp.swift; sourceTree = "<group>"; };
+		001B0002 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		001B0003 /* Template.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Template.swift; sourceTree = "<group>"; };
+		001B0004 /* TemplateParameter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateParameter.swift; sourceTree = "<group>"; };
+		001B0005 /* TemplateValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateValue.swift; sourceTree = "<group>"; };
+		001B0006 /* ExecutionResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutionResult.swift; sourceTree = "<group>"; };
+		001B0007 /* TemplateLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateLoader.swift; sourceTree = "<group>"; };
+		001B0008 /* CommandRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandRenderer.swift; sourceTree = "<group>"; };
+		001B0009 /* FFmpegService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFmpegService.swift; sourceTree = "<group>"; };
+		001B0010 /* ProcessLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessLogger.swift; sourceTree = "<group>"; };
+		001B0011 /* TemplateListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateListViewModel.swift; sourceTree = "<group>"; };
+		001B0012 /* TemplateDetailViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateDetailViewModel.swift; sourceTree = "<group>"; };
+		001B0013 /* CommandPreviewViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPreviewViewModel.swift; sourceTree = "<group>"; };
+		001B0014 /* ExecutionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutionViewModel.swift; sourceTree = "<group>"; };
+		001B0015 /* MainSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainSplitView.swift; sourceTree = "<group>"; };
+		001B0016 /* TemplateListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateListView.swift; sourceTree = "<group>"; };
+		001B0017 /* ParameterFormView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParameterFormView.swift; sourceTree = "<group>"; };
+		001B0018 /* CommandPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPreviewView.swift; sourceTree = "<group>"; };
+		001B0019 /* LogConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogConsoleView.swift; sourceTree = "<group>"; };
+		001B0020 /* FilePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilePicker.swift; sourceTree = "<group>"; };
+		001B0021 /* DragDropHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragDropHandler.swift; sourceTree = "<group>"; };
+		001B0022 /* UserSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserSettings.swift; sourceTree = "<group>"; };
+		001B0023 /* Templates */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Templates; sourceTree = "<group>"; };
+		001B0024 /* CommandHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandHistory.swift; sourceTree = "<group>"; };
+		001B0025 /* HistoryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryService.swift; sourceTree = "<group>"; };
+		001B0026 /* CommandValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandValidator.swift; sourceTree = "<group>"; };
+		001B0027 /* HistoryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryViewModel.swift; sourceTree = "<group>"; };
+		001B0028 /* Template+Examples.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Template+Examples.swift"; sourceTree = "<group>"; };
+		001B0029 /* ParameterBinding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ParameterBinding.swift"; sourceTree = "<group>"; };
+		001B0030 /* ExecutionPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ExecutionPlan.swift"; sourceTree = "<group>"; };
+		001B0031 /* ExecutionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ExecutionController.swift"; sourceTree = "<group>"; };
+		001B0032 /* CommandPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CommandPlanner.swift"; sourceTree = "<group>"; };
+		001B0033 /* FFmpegPathResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FFmpegPathResolver.swift"; sourceTree = "<group>"; };
+		8A8FAA572F1B486700389163 /* FFmpegRunner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FFmpegRunner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8A8FAA582F1B4B5F00389163 /* ffmpeg */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = ffmpeg; sourceTree = "<group>"; };
+		8AD7CF782F1B1EDA00A2E33E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		002B0001 /* SplitCommandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitCommandTests.swift; sourceTree = "<group>"; };
+		002B0002 /* CommandValidatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandValidatorTests.swift; sourceTree = "<group>"; };
+		002B0003 /* FFmpegRunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FFmpegRunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		001C0001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		002C0001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		001D0001 = {
+			isa = PBXGroup;
+			children = (
+				001D0002 /* FFmpegRunner */,
+				002D0012 /* FFmpegRunnerTests */,
+				8AD7CF782F1B1EDA00A2E33E /* Assets.xcassets */,
+				8A8FAA572F1B486700389163 /* FFmpegRunner.app */,
+				002B0003 /* FFmpegRunnerTests.xctest */,
+			);
+			sourceTree = "<group>";
+		};
+		001D0002 /* FFmpegRunner */ = {
+			isa = PBXGroup;
+			children = (
+				001D0004 /* App */,
+				001D0011 /* Application */,
+				001D0005 /* Models */,
+				001D0006 /* Services */,
+				001D0007 /* ViewModels */,
+				001D0008 /* Views */,
+				001D0009 /* Utilities */,
+				001D0010 /* Resources */,
+			);
+			path = FFmpegRunner;
+			sourceTree = "<group>";
+		};
+		001D0004 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				001B0001 /* FFmpegRunnerApp.swift */,
+				001B0002 /* AppEnvironment.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		001D0005 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				001B0003 /* Template.swift */,
+				001B0028 /* Template+Examples.swift */,
+				001B0029 /* ParameterBinding.swift */,
+				001B0004 /* TemplateParameter.swift */,
+				001B0005 /* TemplateValue.swift */,
+				001B0006 /* ExecutionResult.swift */,
+				001B0030 /* ExecutionPlan.swift */,
+				001B0024 /* CommandHistory.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		001D0006 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				001B0007 /* TemplateLoader.swift */,
+				001B0008 /* CommandRenderer.swift */,
+				001B0009 /* FFmpegService.swift */,
+				001B0010 /* ProcessLogger.swift */,
+				001B0033 /* FFmpegPathResolver.swift */,
+				001B0025 /* HistoryService.swift */,
+				001B0026 /* CommandValidator.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		001D0007 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				001B0011 /* TemplateListViewModel.swift */,
+				001B0012 /* TemplateDetailViewModel.swift */,
+				001B0013 /* CommandPreviewViewModel.swift */,
+				001B0014 /* ExecutionViewModel.swift */,
+				001B0027 /* HistoryViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		001D0008 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				001B0015 /* MainSplitView.swift */,
+				001B0016 /* TemplateListView.swift */,
+				001B0017 /* ParameterFormView.swift */,
+				001B0018 /* CommandPreviewView.swift */,
+				001B0019 /* LogConsoleView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		001D0009 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				001B0020 /* FilePicker.swift */,
+				001B0021 /* DragDropHandler.swift */,
+				001B0022 /* UserSettings.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		001D0010 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				8A8FAA582F1B4B5F00389163 /* ffmpeg */,
+				001B0023 /* Templates */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		001D0011 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				001B0031 /* ExecutionController.swift */,
+				001B0032 /* CommandPlanner.swift */,
+			);
+			path = Application;
+			sourceTree = "<group>";
+		};
+		002D0012 /* FFmpegRunnerTests */ = {
+			isa = PBXGroup;
+			children = (
+				002B0001 /* SplitCommandTests.swift */,
+				002B0002 /* CommandValidatorTests.swift */,
+			);
+			path = FFmpegRunnerTests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		001E0001 /* FFmpegRunner */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 001F0003 /* Build configuration list for PBXNativeTarget "FFmpegRunner" */;
+			buildPhases = (
+				001C0002 /* Sources */,
+				001C0001 /* Frameworks */,
+				001C0003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = FFmpegRunner;
+			productName = FFmpegRunner;
+			productReference = 8A8FAA572F1B486700389163 /* FFmpegRunner.app */;
+			productType = "com.apple.product-type.application";
+		};
+		002E0001 /* FFmpegRunnerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 002F0003 /* Build configuration list for PBXNativeTarget "FFmpegRunnerTests" */;
+			buildPhases = (
+				002C0002 /* Sources */,
+				002C0001 /* Frameworks */,
+				002C0003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				002E0002 /* PBXTargetDependency */,
+			);
+			name = FFmpegRunnerTests;
+			productName = FFmpegRunnerTests;
+			productReference = 002B0003 /* FFmpegRunnerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXTargetDependency section */
+		002E0002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 001E0001 /* FFmpegRunner */;
+			targetProxy = 002E0003 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXContainerItemProxy section */
+		002E0003 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 001E0002 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 001E0001;
+			remoteInfo = FFmpegRunner;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXProject section */
+		001E0002 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					001E0001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 001F0001 /* Build configuration list for PBXProject "FFmpegRunner" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				"zh-Hans",
+			);
+			mainGroup = 001D0001;
+			productRefGroup = 001D0001;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				001E0001 /* FFmpegRunner */,
+				002E0001 /* FFmpegRunnerTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section (Tests) */
+		002C0003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section (Tests) */
+
+/* Begin PBXSourcesBuildPhase section (Tests) */
+		002C0002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				002A0001 /* SplitCommandTests.swift in Sources */,
+				002A0002 /* CommandValidatorTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section (Tests) */
+
+/* Begin PBXResourcesBuildPhase section */
+		001C0003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				001A0023 /* Templates in Resources */,
+				8AD7CF792F1B1EDA00A2E33E /* Assets.xcassets in Resources */,
+				8A8FAA592F1B4B5F00389163 /* ffmpeg in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		001C0002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				001A0001 /* FFmpegRunnerApp.swift in Sources */,
+				001A0002 /* AppEnvironment.swift in Sources */,
+				001A0003 /* Template.swift in Sources */,
+				001A0004 /* TemplateParameter.swift in Sources */,
+				001A0005 /* TemplateValue.swift in Sources */,
+				001A0006 /* ExecutionResult.swift in Sources */,
+				001A0007 /* TemplateLoader.swift in Sources */,
+				001A0008 /* CommandRenderer.swift in Sources */,
+				001A0009 /* FFmpegService.swift in Sources */,
+				001A0010 /* ProcessLogger.swift in Sources */,
+				001A0011 /* TemplateListViewModel.swift in Sources */,
+				001A0012 /* TemplateDetailViewModel.swift in Sources */,
+				001A0013 /* CommandPreviewViewModel.swift in Sources */,
+				001A0014 /* ExecutionViewModel.swift in Sources */,
+				001A0015 /* MainSplitView.swift in Sources */,
+				001A0016 /* TemplateListView.swift in Sources */,
+				001A0017 /* ParameterFormView.swift in Sources */,
+				001A0018 /* CommandPreviewView.swift in Sources */,
+				001A0019 /* LogConsoleView.swift in Sources */,
+				001A0020 /* FilePicker.swift in Sources */,
+				001A0021 /* DragDropHandler.swift in Sources */,
+				001A0022 /* UserSettings.swift in Sources */,
+				001A0024 /* CommandHistory.swift in Sources */,
+				001A0025 /* HistoryService.swift in Sources */,
+				001A0026 /* CommandValidator.swift in Sources */,
+				001A0027 /* HistoryViewModel.swift in Sources */,
+				001A0028 /* Template+Examples.swift in Sources */,
+				001A0029 /* ParameterBinding.swift in Sources */,
+				001A0030 /* ExecutionPlan.swift in Sources */,
+				001A0031 /* ExecutionController.swift in Sources */,
+				001A0032 /* CommandPlanner.swift in Sources */,
+				001A0033 /* FFmpegPathResolver.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		001F0002 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		001F0004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		001F0005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "FFmpeg Runner";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.video";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ffmpeg.runner;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		001F0006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "FFmpeg Runner";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.video";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ffmpeg.runner;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		001F0001 /* Build configuration list for PBXProject "FFmpegRunner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				001F0002 /* Debug */,
+				001F0004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		001F0003 /* Build configuration list for PBXNativeTarget "FFmpegRunner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				001F0005 /* Debug */,
+				001F0006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		002F0003 /* Build configuration list for PBXNativeTarget "FFmpegRunnerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				002F0001 /* Debug */,
+				002F0002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCBuildConfiguration section (Tests) */
+		002F0001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ffmpeg.runner.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FFmpegRunner.app/Contents/MacOS/FFmpegRunner";
+			};
+			name = Debug;
+		};
+		002F0002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ffmpeg.runner.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FFmpegRunner.app/Contents/MacOS/FFmpegRunner";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section (Tests) */
+	};
+	rootObject = 001E0002 /* Project object */;
+}

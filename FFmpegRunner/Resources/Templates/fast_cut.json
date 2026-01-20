@@ -1,0 +1,43 @@
+{
+  "id": "fast_cut",
+  "name": "视频无损剪切",
+  "description": "极速截取视频片段，不进行重编码 (Copy Stream)",
+  "category": "视频处理",
+  "icon": "scissors",
+  "commandTemplate": "ffmpeg -ss {{startTime}} -i {{input}} -t {{duration}} -c copy -map 0 -y {{output}}",
+  "parameters": [
+    {
+      "key": "input",
+      "label": "输入视频",
+      "type": "file",
+      "defaultValue": "",
+      "isRequired": true
+    },
+    {
+      "key": "startTime",
+      "label": "开始时间",
+      "type": "string",
+      "defaultValue": "00:00:00",
+      "placeholder": "格式 HH:MM:SS 或秒数",
+      "isRequired": true
+    },
+    {
+      "key": "duration",
+      "label": "截取时长 (秒)",
+      "type": "number",
+      "defaultValue": "60",
+      "isRequired": true
+    },
+    {
+      "key": "output",
+      "label": "保存文件",
+      "type": "file",
+      "defaultValue": "",
+      "placeholder": "扩展名需与原视频一致",
+      "isRequired": true,
+      "constraints": {
+        "isOutputFile": true
+      }
+    }
+  ]
+}

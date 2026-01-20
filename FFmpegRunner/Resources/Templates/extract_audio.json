@@ -1,0 +1,74 @@
+{
+  "id": "extract_audio",
+  "name": "提取音频",
+  "description": "从视频中提取音频流，支持 MP3/AAC/FLAC/WAV",
+  "category": "音频处理",
+  "icon": "speaker.wave.2.fill",
+  "commandTemplate": "ffmpeg -i {{input}} -vn -c:a {{codec}} -b:a {{bitrate}} -ac 2 -y {{output}}",
+  "parameters": [
+    {
+      "key": "input",
+      "label": "视频文件",
+      "type": "file",
+      "defaultValue": "",
+      "placeholder": "拖入视频",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "mp4",
+          "mov",
+          "mkv",
+          "avi",
+          "webm",
+          "flv"
+        ]
+      }
+    },
+    {
+      "key": "codec",
+      "label": "目标格式",
+      "type": "select",
+      "defaultValue": "libmp3lame",
+      "isRequired": true,
+      "constraints": {
+        "options": [
+          "libmp3lame",
+          "aac",
+          "flac",
+          "pcm_s16le"
+        ]
+      }
+    },
+    {
+      "key": "bitrate",
+      "label": "比特率 (仅有损格式有效)",
+      "type": "select",
+      "defaultValue": "192k",
+      "isRequired": true,
+      "constraints": {
+        "options": [
+          "128k",
+          "192k",
+          "320k"
+        ]
+      }
+    },
+    {
+      "key": "output",
+      "label": "输出音频",
+      "type": "file",
+      "defaultValue": "",
+      "placeholder": "保存为 .mp3/.m4a/.flac/.wav",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "mp3",
+          "m4a",
+          "flac",
+          "wav"
+        ],
+        "isOutputFile": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "id": "compress_video",
+  "name": "视频压缩 (H.264)",
+  "description": "使用 H.264 编码压缩视频，兼容性优化，支持 Web 播放",
+  "category": "视频处理",
+  "icon": "video.fill",
+  "commandTemplate": "ffmpeg -i {{input}} -c:v libx264 -crf {{crf}} -preset {{preset}} -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a {{audioBitrate}} -ac 2 -y {{output}}",
+  "parameters": [
+    {
+      "key": "input",
+      "label": "输入文件",
+      "type": "file",
+      "defaultValue": "",
+      "placeholder": "选择视频文件",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "mp4",
+          "mov",
+          "avi",
+          "mkv",
+          "webm",
+          "flv",
+          "ts",
+          "m4v"
+        ]
+      }
+    },
+    {
+      "key": "crf",
+      "label": "质量 (CRF)",
+      "type": "number",
+      "defaultValue": "23",
+      "placeholder": "0-51, 数值越小画质越好",
+      "isRequired": true,
+      "constraints": {
+        "min": 0,
+        "max": 51
+      }
+    },
+    {
+      "key": "preset",
+      "label": "编码速度",
+      "type": "select",
+      "defaultValue": "medium",
+      "placeholder": null,
+      "isRequired": true,
+      "constraints": {
+        "options": [
+          "ultrafast",
+          "superfast",
+          "veryfast",
+          "faster",
+          "fast",
+          "medium",
+          "slow",
+          "slower",
+          "veryslow"
+        ]
+      }
+    },
+    {
+      "key": "audioBitrate",
+      "label": "音频码率",
+      "type": "select",
+      "defaultValue": "128k",
+      "placeholder": null,
+      "isRequired": true,
+      "constraints": {
+        "options": [
+          "64k",
+          "96k",
+          "128k",
+          "192k",
+          "256k",
+          "320k"
+        ]
+      }
+    },
+    {
+      "key": "output",
+      "label": "输出文件",
+      "type": "file",
+      "defaultValue": "",
+      "placeholder": "选择保存位置",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "mp4"
+        ],
+        "isOutputFile": true
+      }
+    }
+  ]
+}

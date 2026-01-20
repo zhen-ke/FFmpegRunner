@@ -1,0 +1,39 @@
+{
+  "id": "remux_mp4",
+  "name": "秒转 MP4 (Remux)",
+  "description": "将 MKV/FLV 等封装格式无损转换为 MP4",
+  "category": "格式转换",
+  "icon": "arrow.triangle.2.circlepath",
+  "commandTemplate": "ffmpeg -i {{input}} -c copy -movflags +faststart -y {{output}}",
+  "parameters": [
+    {
+      "key": "input",
+      "label": "源文件",
+      "type": "file",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "mkv",
+          "flv",
+          "avi",
+          "ts",
+          "mov",
+          "webm"
+        ]
+      }
+    },
+    {
+      "key": "output",
+      "label": "输出文件",
+      "type": "file",
+      "defaultValue": "",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "mp4"
+        ],
+        "isOutputFile": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "id": "video_to_gif",
+  "name": "视频转 GIF",
+  "description": "生成高质量优化的 GIF 动图 (Palette Gen/Use)",
+  "category": "格式转换",
+  "icon": "photo.on.rectangle.angled",
+  "commandTemplate": "ffmpeg -ss {{startTime}} -t {{duration}} -i {{input}} -vf \"fps={{fps}},scale={{width}}:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse\" -loop 0 -y {{output}}",
+  "parameters": [
+    {
+      "key": "input",
+      "label": "输入视频",
+      "type": "file",
+      "defaultValue": "",
+      "isRequired": true
+    },
+    {
+      "key": "startTime",
+      "label": "开始时间 (秒)",
+      "type": "string",
+      "defaultValue": "00:00:00",
+      "placeholder": "格式 00:00:00 或纯数字",
+      "isRequired": true
+    },
+    {
+      "key": "duration",
+      "label": "持续时长 (秒)",
+      "type": "number",
+      "defaultValue": "5",
+      "isRequired": true
+    },
+    {
+      "key": "width",
+      "label": "宽度 (像素)",
+      "type": "number",
+      "defaultValue": "480",
+      "placeholder": "例如 320, 480, 640",
+      "isRequired": true
+    },
+    {
+      "key": "fps",
+      "label": "帧率 (FPS)",
+      "type": "number",
+      "defaultValue": "15",
+      "placeholder": "建议 10-24",
+      "isRequired": true
+    },
+    {
+      "key": "output",
+      "label": "输出 GIF",
+      "type": "file",
+      "defaultValue": "",
+      "constraints": {
+        "fileTypes": [
+          "gif"
+        ],
+        "isOutputFile": true
+      }
+    }
+  ]
+}
