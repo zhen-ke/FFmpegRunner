@@ -161,11 +161,17 @@ struct RecentHistorySection: View {
             Button {
                 onShowAll()
             } label: {
-                HStack {
-                    Text("查看全部历史…")
+                HStack(spacing: 6) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.caption)
+                        .foregroundColor(.accentColor)
+                    Text("查看全部历史")
                         .font(.caption)
                         .foregroundColor(.accentColor)
                     Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
             }
             .buttonStyle(.plain)

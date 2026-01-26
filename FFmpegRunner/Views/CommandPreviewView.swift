@@ -2,7 +2,8 @@
 //  CommandPreviewView.swift
 //  FFmpegRunner
 //
-//  命令预览视图 - 专业化版本
+//  命令预览视图 - 专业化版本 v2
+//  优化：Header 精简、命令呼吸感、渐变遮罩、状态语义化、复制波纹
 //
 
 import SwiftUI
@@ -17,6 +18,7 @@ struct CommandPreviewView: View {
     // MARK: - State
 
     @State private var showCopied = false
+    @State private var isHovering = false
 
     // MARK: - Configuration
 
@@ -29,54 +31,13 @@ struct CommandPreviewView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack(spacing: 10) {
-                // 标题
-                Text("命令预览")
-                    .font(.caption)
-                    .fontWeight(.bold)
-                    .foregroundColor(.secondary)
-                    .tracking(1)
+            // Header - 优化1：左轻右重
+            headerView
 
-                // 字符数 Badge
-                CharacterCountBadge(count: viewModel.commandLength)
+            // Code Area - 带浮层状态和渐变遮罩
+            codeAreaView
 
-                Spacer()
-
-                // Status Indicator
-                StatusBadge(isComplete: viewModel.isComplete)
-
-                // Display Mode Button (AUTO/WRAP/SINGLE)
-                DisplayModeButton(mode: viewModel.displayMode) {
-                    viewModel.toggleDisplayMode()
-                }
-
-                // Copy Button
-                CopyButton(isCopied: showCopied) {
-                    copyCommand()
-                }
-                .disabled(viewModel.renderedCommand.isEmpty)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(headerBackground)
-            .overlay(
-                Rectangle()
-                    .frame(height: 1)
-                    .foregroundColor(Color(NSColor.separatorColor)),
-                alignment: .bottom
-            )
-
-            // Code Area
-            ScrollView(viewModel.shouldWrap ? .vertical : [.horizontal, .vertical]) {
-                Text(viewModel.highlightedCommand())
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-            }
-            .background(terminalBackground)
-
-            // Footer (Warnings)
+            // Footer (Warnings) - 优化4：语义降级
             if !viewModel.missingPlaceholders.isEmpty {
                 MissingParametersView(placeholders: viewModel.missingPlaceholders)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -89,13 +50,89 @@ struct CommandPreviewView: View {
                 .stroke(Color(NSColor.separatorColor), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
+        .onHover { hovering in
+            isHovering = hovering
+        }
+    }
+
+    // MARK: - Header View (优化1：左轻右重)
+
+    private var headerView: some View {
+        HStack(spacing: 10) {
+            // 左侧：仅标题（轻量）
+            Text("命令预览")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            Spacer()
+
+            // 右侧：操作按钮
+            DisplayModeButton(mode: viewModel.displayMode) {
+                viewModel.toggleDisplayMode()
+            }
+
+            CopyButton(isCopied: showCopied) {
+                copyCommand()
+            }
+            .disabled(viewModel.renderedCommand.isEmpty)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(headerBackground)
+        .overlay(
+            Rectangle()
+                .frame(height: 1)
+                .foregroundColor(Color(NSColor.separatorColor)),
+            alignment: .bottom
+        )
+    }
+
+    // MARK: - Code Area View (优化2+3：呼吸感 + 渐变遮罩)
+
+    private var codeAreaView: some View {
+        ZStack {
+            // 主内容
+            ScrollView(viewModel.shouldWrap ? .vertical : [.horizontal, .vertical]) {
+                Text(viewModel.highlightedCommand())
+                    // 优化2：呼吸感
+                    .lineSpacing(3)
+                    .tracking(0.2)
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .background(terminalBackground)
+
+            // 优化3：长命令渐变遮罩（非换行模式时显示）
+            if !viewModel.shouldWrap {
+                HStack {
+                    Spacer()
+                    LinearGradient(
+                        colors: [.clear, terminalBackground],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: 24)
+                }
+                .allowsHitTesting(false)
+            }
+
+            // 优化1：状态浮层（右上角）
+            VStack(alignment: .trailing, spacing: 6) {
+                StatusBadge(isComplete: viewModel.isComplete)
+                CharacterCountBadge(count: viewModel.commandLength)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            .allowsHitTesting(false)
+        }
     }
 
     // MARK: - Actions
 
     private func copyCommand() {
         viewModel.copyToClipboard()
-        withAnimation {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
             showCopied = true
         }
 
@@ -109,7 +146,7 @@ struct CommandPreviewView: View {
 
 // MARK: - Helper Views
 
-/// 字符数显示 Badge
+/// 字符数显示 Badge（优化后：更轻量的浮层样式）
 struct CharacterCountBadge: View {
     let count: Int
 
@@ -124,17 +161,18 @@ struct CharacterCountBadge: View {
         if count > 0 {
             Text("\(count) 字符")
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundColor(isLong ? .orange : .secondary)
+                .foregroundColor(isLong ? .orange : Color.white.opacity(0.6))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(
                     Capsule()
-                        .fill(isLong ? Color.orange.opacity(0.1) : Color(NSColor.controlColor).opacity(0.3))
+                        .fill(Color.black.opacity(0.4))
                 )
         }
     }
 }
 
+/// 状态 Badge（优化后：浮层样式，更语义化）
 struct StatusBadge: View {
     let isComplete: Bool
 
@@ -144,19 +182,19 @@ struct StatusBadge: View {
                 .fill(isComplete ? Color.green : Color.orange)
                 .frame(width: 6, height: 6)
 
-            Text(isComplete ? "就绪" : "未完成")
+            Text(isComplete ? "就绪" : "待填写")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(isComplete ? .green : .orange)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
         .background(
             Capsule()
-                .fill(isComplete ? Color.green.opacity(0.1) : Color.orange.opacity(0.1))
+                .fill(Color.black.opacity(0.5))
         )
         .overlay(
             Capsule()
-                .strokeBorder(isComplete ? Color.green.opacity(0.2) : Color.orange.opacity(0.2), lineWidth: 1)
+                .strokeBorder(isComplete ? Color.green.opacity(0.3) : Color.orange.opacity(0.3), lineWidth: 1)
         )
     }
 }
@@ -261,6 +299,7 @@ struct FormatButton: View {
     }
 }
 
+/// 复制按钮（优化5：支持 symbolEffect 波纹反馈）
 struct CopyButton: View {
     let isCopied: Bool
     let action: () -> Void
@@ -268,8 +307,15 @@ struct CopyButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 11))
+                // 优化5：macOS 14+ 弹跳效果
+                if #available(macOS 14.0, *) {
+                    Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 11))
+                        .symbolEffect(.bounce, value: isCopied)
+                } else {
+                    Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 11))
+                }
                 Text(isCopied ? "已复制" : "复制")
                     .font(.system(size: 10, weight: .semibold))
             }
@@ -281,37 +327,39 @@ struct CopyButton: View {
         .foregroundColor(isCopied ? .green : .secondary)
         .background(
             RoundedRectangle(cornerRadius: 4)
-                .fill(Color(NSColor.controlColor).opacity(0.5))
+                .fill(isCopied ? Color.green.opacity(0.1) : Color(NSColor.controlColor).opacity(0.5))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 4)
-                .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+                .stroke(isCopied ? Color.green.opacity(0.5) : Color(NSColor.separatorColor), lineWidth: 1)
         )
+        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isCopied)
     }
 }
 
+/// 缺失参数提示（优化4：语义降级为"提示"而非"警告"）
 struct MissingParametersView: View {
     let placeholders: [String]
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(.yellow)
+            Image(systemName: "info.circle.fill")
+                .foregroundColor(.orange)
                 .font(.system(size: 12))
 
-            Text("缺少参数：\(placeholders.joined(separator: "、"))")
+            Text("仍需填写：\(placeholders.joined(separator: "、"))")
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(.yellow)
+                .foregroundColor(.orange)
 
             Spacer()
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color.yellow.opacity(0.1))
+        .background(Color.orange.opacity(0.08))
         .overlay(
             Rectangle()
                 .frame(height: 1)
-                .foregroundColor(Color.yellow.opacity(0.2)),
+                .foregroundColor(Color.orange.opacity(0.15)),
             alignment: .top
         )
     }

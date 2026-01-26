@@ -7,6 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		8E6E06EB17C547239E6A7A40 /* TemplateLoadError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B93501C21014E29A3CA29FC /* TemplateLoadError.swift */; };
+		67D2F8151C4940348AE00234 /* TemplateLoadReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A767DD49C7EA4126AA9DC1C1 /* TemplateLoadReport.swift */; };
+		EBB0AFB80C1B410B8EA52794 /* TemplateSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2DF7524880B405F8DC53832 /* TemplateSource.swift */; };
+		5606A2C5E30149B1AEA8E777 /* TemplateFileLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02A112851AD44494891EA5FE /* TemplateFileLoader.swift */; };
+		87BFD673DA0A43C0AE0C4AA0 /* TemplateValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA5DAA0F6C8C4BADA831EA35 /* TemplateValidator.swift */; };
+		530950BCB4F94F878F4555CD /* TemplateSorter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F18260226DD42C193DB5E8D /* TemplateSorter.swift */; };
+		08C7C357CCD34E78A24FD67F /* TemplateRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69A961845DB84B18B9E0C1A0 /* TemplateRepository.swift */; };
 		001A0001 /* FFmpegRunnerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0001 /* FFmpegRunnerApp.swift */; };
 		001A0002 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0002 /* AppEnvironment.swift */; };
 		001A0003 /* Template.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0003 /* Template.swift */; };
@@ -48,6 +55,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		7B93501C21014E29A3CA29FC /* TemplateLoadError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateLoadError.swift; sourceTree = "<group>"; };
+		A767DD49C7EA4126AA9DC1C1 /* TemplateLoadReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateLoadReport.swift; sourceTree = "<group>"; };
+		F2DF7524880B405F8DC53832 /* TemplateSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateSource.swift; sourceTree = "<group>"; };
+		02A112851AD44494891EA5FE /* TemplateFileLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateFileLoader.swift; sourceTree = "<group>"; };
+		FA5DAA0F6C8C4BADA831EA35 /* TemplateValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateValidator.swift; sourceTree = "<group>"; };
+		3F18260226DD42C193DB5E8D /* TemplateSorter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateSorter.swift; sourceTree = "<group>"; };
+		69A961845DB84B18B9E0C1A0 /* TemplateRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateRepository.swift; sourceTree = "<group>"; };
 		001B0001 /* FFmpegRunnerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFmpegRunnerApp.swift; sourceTree = "<group>"; };
 		001B0002 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		001B0003 /* Template.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Template.swift; sourceTree = "<group>"; };
@@ -146,6 +160,8 @@
 		001D0005 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				7B93501C21014E29A3CA29FC /* TemplateLoadError.swift */,
+				A767DD49C7EA4126AA9DC1C1 /* TemplateLoadReport.swift */,
 				001B0003 /* Template.swift */,
 				001B0028 /* Template+Examples.swift */,
 				001B0029 /* ParameterBinding.swift */,
@@ -161,6 +177,11 @@
 		001D0006 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				F2DF7524880B405F8DC53832 /* TemplateSource.swift */,
+				02A112851AD44494891EA5FE /* TemplateFileLoader.swift */,
+				FA5DAA0F6C8C4BADA831EA35 /* TemplateValidator.swift */,
+				3F18260226DD42C193DB5E8D /* TemplateSorter.swift */,
+				69A961845DB84B18B9E0C1A0 /* TemplateRepository.swift */,
 				001B0007 /* TemplateLoader.swift */,
 				001B0008 /* CommandRenderer.swift */,
 				001B0009 /* FFmpegService.swift */,
@@ -340,6 +361,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8E6E06EB17C547239E6A7A40 /* TemplateLoadError.swift in Sources */,
+				67D2F8151C4940348AE00234 /* TemplateLoadReport.swift in Sources */,
+				EBB0AFB80C1B410B8EA52794 /* TemplateSource.swift in Sources */,
+				5606A2C5E30149B1AEA8E777 /* TemplateFileLoader.swift in Sources */,
+				87BFD673DA0A43C0AE0C4AA0 /* TemplateValidator.swift in Sources */,
+				530950BCB4F94F878F4555CD /* TemplateSorter.swift in Sources */,
+				08C7C357CCD34E78A24FD67F /* TemplateRepository.swift in Sources */,
 				002A0001 /* SplitCommandTests.swift in Sources */,
 				002A0002 /* CommandValidatorTests.swift in Sources */,
 			);
@@ -365,6 +393,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8E6E06EB17C547239E6A7A40 /* TemplateLoadError.swift in Sources */,
+				67D2F8151C4940348AE00234 /* TemplateLoadReport.swift in Sources */,
+				EBB0AFB80C1B410B8EA52794 /* TemplateSource.swift in Sources */,
+				5606A2C5E30149B1AEA8E777 /* TemplateFileLoader.swift in Sources */,
+				87BFD673DA0A43C0AE0C4AA0 /* TemplateValidator.swift in Sources */,
+				530950BCB4F94F878F4555CD /* TemplateSorter.swift in Sources */,
+				08C7C357CCD34E78A24FD67F /* TemplateRepository.swift in Sources */,
 				001A0001 /* FFmpegRunnerApp.swift in Sources */,
 				001A0002 /* AppEnvironment.swift in Sources */,
 				001A0003 /* Template.swift in Sources */,

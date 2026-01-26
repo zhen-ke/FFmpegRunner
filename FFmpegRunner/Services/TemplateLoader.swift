@@ -4,11 +4,17 @@
 //
 //  模板加载服务
 //
+//  ⚠️ DEPRECATED: 此类已被 TemplateRepository 取代
+//  保留仅为向后兼容，新代码请使用 TemplateRepository.shared
+//
 
 import Foundation
 
 /// 模板加载服务
-/// 负责从 Bundle 和用户目录加载模板
+/// - Important: **已废弃**，请使用 `TemplateRepository` 替代
+///
+/// 此类现在作为兼容层，内部委托给新架构
+@available(*, deprecated, message: "Use TemplateRepository instead")
 class TemplateLoader {
 
     // MARK: - Singleton
@@ -30,40 +36,11 @@ class TemplateLoader {
 
     /// 加载所有模板（Bundle + 用户）
     /// 如果有相同 ID 的模板，用户模板会覆盖 Bundle 模板
+    ///
+    /// - Important: **已废弃**，请使用 `TemplateRepository.shared.loadAllTemplates()`
     func loadAllTemplates() async throws -> [Template] {
-        // 使用字典按 ID 去重
-        var templateDict: [String: Template] = [:]
-
-        // 1. 注入 RawCommandTemplate (始终存在)
-        let rawCommand = createRawCommandTemplate()
-        templateDict[rawCommand.id] = rawCommand
-
-        // 2. 加载 Bundle 模板
-        let bundleTemplates = try await loadBundleTemplates()
-        for template in bundleTemplates {
-            templateDict[template.id] = template
-        }
-
-        // 3. 加载用户模板（后加载，会覆盖同 ID 的 Bundle 模板）
-        let userTemplates = try await loadUserTemplates()
-        for template in userTemplates {
-            templateDict[template.id] = template
-        }
-
-        // 4. 转换为数组，按分类和名称排序
-        let templates = Array(templateDict.values).sorted { t1, t2 in
-            // RawCommand 始终在第一位
-            if t1.id == Template.rawCommandId { return true }
-            if t2.id == Template.rawCommandId { return false }
-            // 按分类排序
-            let cat1 = t1.category ?? "其他"
-            let cat2 = t2.category ?? "其他"
-            if cat1 != cat2 { return cat1 < cat2 }
-            // 同分类按名称排序
-            return t1.name < t2.name
-        }
-
-        return templates
+        // 委托给新架构
+        await TemplateRepository.shared.loadAllTemplates()
     }
 
     /// 加载 Bundle 内的模板
@@ -118,6 +95,34 @@ class TemplateLoader {
         return fileManager.fileExists(atPath: fileURL.path)
     }
 
+    // MARK: - Internal Methods (供 TemplateRepository 复用)
+
+    /// 创建内置的 RawCommandTemplate
+    func createRawCommandTemplate() -> Template {
+        Template(
+            id: Template.rawCommandId,
+            name: "自定义命令",
+            description: "直接输入并执行完整 FFmpeg 命令",
+            commandTemplate: "{{command}}",
+            parameters: [
+                TemplateParameter(
+                    key: "command",
+                    label: "FFmpeg 命令",
+                    type: .string,
+                    defaultValue: "ffmpeg -i input.mp4 -c:v libx264 output.mp4",
+                    placeholder: "在此输入完整命令...",
+                    isRequired: true,
+                    constraints: nil,
+                    role: .raw,
+                    escapeStrategy: .raw,
+                    uiHint: ParameterUIHint(multiline: true, monospace: true)
+                )
+            ],
+            category: "高级",
+            icon: "terminal.fill"
+        )
+    }
+
     // MARK: - Private Methods
 
     /// 从指定目录加载模板
@@ -169,33 +174,5 @@ class TemplateLoader {
         }
 
         return true
-    }
-
-
-
-    /// 创建内置的 RawCommandTemplate
-    private func createRawCommandTemplate() -> Template {
-        Template(
-            id: Template.rawCommandId,
-            name: "自定义命令",
-            description: "直接输入并执行完整 FFmpeg 命令",
-            commandTemplate: "{{command}}",
-            parameters: [
-                TemplateParameter(
-                    key: "command",
-                    label: "FFmpeg 命令",
-                    type: .string,
-                    defaultValue: "ffmpeg -i input.mp4 -c:v libx264 output.mp4",
-                    placeholder: "在此输入完整命令...",
-                    isRequired: true,
-                    constraints: nil,
-                    role: .raw,
-                    escapeStrategy: .raw,
-                    uiHint: ParameterUIHint(multiline: true, monospace: true)
-                )
-            ],
-            category: "高级",
-            icon: "terminal.fill"
-        )
     }
 }
