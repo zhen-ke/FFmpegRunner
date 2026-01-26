@@ -78,10 +78,19 @@ final class FFmpegPathResolver: FFmpegPathProviding {
         return nil
     }
 
+    /// 缓存的系统路径
+    private var cachedSystemPath: String?
+
     var systemPath: String? {
+        // 如果已有缓存，直接返回
+        if let cached = cachedSystemPath {
+            return cached
+        }
+
         // 首先检查常见路径
         for path in systemSearchPaths {
             if FileManager.default.isExecutableFile(atPath: path) {
+                cachedSystemPath = path
                 return path
             }
         }
@@ -101,6 +110,7 @@ final class FFmpegPathResolver: FFmpegPathProviding {
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
                !path.isEmpty {
+                cachedSystemPath = path
                 return path
             }
         } catch {

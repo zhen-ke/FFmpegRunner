@@ -39,11 +39,15 @@ struct CommandHistory: Identifiable, Codable, Hashable {
 
     /// 格式化的执行时间
     var formattedDate: String {
+        Self.dateFormatter.string(from: executedAt)
+    }
+
+    private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         formatter.timeStyle = .short
-        return formatter.string(from: executedAt)
-    }
+        return formatter
+    }()
 
     /// 相对时间描述
     var relativeDate: String {

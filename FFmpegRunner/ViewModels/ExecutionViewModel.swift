@@ -41,6 +41,19 @@ class ExecutionViewModel: ObservableObject {
     /// FFmpeg 版本信息（从 Controller 同步）
     @Published private(set) var ffmpegVersion: String?
 
+    /// 简短的 FFmpeg 版本号（优化 UI 显示）
+    var ffmpegVersionShort: String {
+        guard let fullVersion = ffmpegVersion else { return "FFmpeg" }
+        // 尝试提取类似 "ffmpeg version 7.1" 中的 "7.1"
+        if let range = fullVersion.range(of: #"version\s+(\d+\.\d+(?:\.\d+)?)"#, options: .regularExpression) {
+            let versionPart = fullVersion[range]
+            if let numberRange = versionPart.range(of: #"\d+\.\d+(?:\.\d+)?"#, options: .regularExpression) {
+                return "v\(versionPart[numberRange])"
+            }
+        }
+        return "FFmpeg"
+    }
+
     /// FFmpeg 是否可用（从 Controller 同步）
     @Published private(set) var isFFmpegAvailable = false
 

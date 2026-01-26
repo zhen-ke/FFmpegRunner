@@ -42,6 +42,7 @@
 		001A0033 /* FFmpegPathResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0033 /* FFmpegPathResolver.swift */; };
 		8A8FAA592F1B4B5F00389163 /* ffmpeg in Resources */ = {isa = PBXBuildFile; fileRef = 8A8FAA582F1B4B5F00389163 /* ffmpeg */; };
 		8AD7CF792F1B1EDA00A2E33E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8AD7CF782F1B1EDA00A2E33E /* Assets.xcassets */; };
+		001A0034 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0034 /* SettingsView.swift */; };
 		002A0001 /* SplitCommandTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002B0001 /* SplitCommandTests.swift */; };
 		002A0002 /* CommandValidatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002B0002 /* CommandValidatorTests.swift */; };
 /* End PBXBuildFile section */
@@ -83,6 +84,7 @@
 		8A8FAA572F1B486700389163 /* FFmpegRunner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FFmpegRunner.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8A8FAA582F1B4B5F00389163 /* ffmpeg */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = ffmpeg; sourceTree = "<group>"; };
 		8AD7CF782F1B1EDA00A2E33E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		001B0034 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		002B0001 /* SplitCommandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitCommandTests.swift; sourceTree = "<group>"; };
 		002B0002 /* CommandValidatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandValidatorTests.swift; sourceTree = "<group>"; };
 		002B0003 /* FFmpegRunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FFmpegRunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -190,6 +192,7 @@
 				001B0017 /* ParameterFormView.swift */,
 				001B0018 /* CommandPreviewView.swift */,
 				001B0019 /* LogConsoleView.swift */,
+				001B0034 /* SettingsView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -394,6 +397,7 @@
 				001A0031 /* ExecutionController.swift in Sources */,
 				001A0032 /* CommandPlanner.swift in Sources */,
 				001A0033 /* FFmpegPathResolver.swift in Sources */,
+				001A0034 /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

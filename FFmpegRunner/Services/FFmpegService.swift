@@ -45,8 +45,12 @@ class FFmpegService: ObservableObject {
 
     @Published private(set) var isRunning = false
     @Published private(set) var currentProcess: Process?
-    @Published var ffmpegSource: FFmpegSource = .bundled {
-        didSet {
+    /// FFmpeg 来源：从 UserSettings 读取，统一数据源
+    var ffmpegSource: FFmpegSource {
+        get { UserSettings.shared.ffmpegSource }
+        set {
+            UserSettings.shared.ffmpegSource = newValue
+            objectWillChange.send()
             updateFFmpegPath()
         }
     }
@@ -59,9 +63,11 @@ class FFmpegService: ObservableObject {
     /// 当前使用的 FFmpeg 路径
     private(set) var ffmpegPath: String = ""
 
-    /// 自定义 FFmpeg 路径
-    var customFFmpegPath: String = "" {
-        didSet {
+    /// 自定义 FFmpeg 路径：从 UserSettings 读取，统一数据源
+    var customFFmpegPath: String {
+        get { UserSettings.shared.customFFmpegPath }
+        set {
+            UserSettings.shared.customFFmpegPath = newValue
             if ffmpegSource == .custom {
                 updateFFmpegPath()
             }
@@ -81,11 +87,13 @@ class FFmpegService: ObservableObject {
     private init(pathResolver: FFmpegPathProviding = FFmpegPathResolver()) {
         self.pathResolver = pathResolver
 
-        // 优先使用内置二进制
-        if pathResolver.bundledPath != nil {
-            ffmpegSource = .bundled
-        } else if pathResolver.systemPath != nil {
-            ffmpegSource = .system
+        // 仅在首次启动时自动检测可用的 FFmpeg 来源
+        // 如果当前选择的来源不可用，自动切换到可用的来源
+        let currentSource = UserSettings.shared.ffmpegSource
+        if currentSource == .bundled && pathResolver.bundledPath == nil {
+            if pathResolver.systemPath != nil {
+                UserSettings.shared.ffmpegSource = .system
+            }
         }
         updateFFmpegPath()
     }
@@ -119,16 +127,26 @@ class FFmpegService: ObservableObject {
         !ffmpegPath.isEmpty && FileManager.default.isExecutableFile(atPath: ffmpegPath)
     }
 
+    /// 缓存的 FFmpeg 版本
+    private var cachedVersion: String?
+
     /// 设置 FFmpeg 来源
     func setSource(_ source: FFmpegSource, customPath: String? = nil) {
         if let customPath = customPath {
             self.customFFmpegPath = customPath
         }
         self.ffmpegSource = source
+        // 如果来源改变，清除版本缓存
+        self.cachedVersion = nil
     }
 
     /// 获取 FFmpeg 版本
     func getFFmpegVersion() async throws -> String {
+        // 如果有缓存，直接返回
+        if let cached = cachedVersion {
+            return cached
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ffmpegPath)
         process.arguments = ["-version"]
@@ -145,9 +163,12 @@ class FFmpegService: ObservableObject {
 
         // 提取第一行版本信息
         if let firstLine = output.split(separator: "\n").first {
-            return String(firstLine)
+            let version = String(firstLine)
+            self.cachedVersion = version
+            return version
         }
 
+        self.cachedVersion = output
         return output
     }
 

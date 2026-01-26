@@ -205,7 +205,7 @@ struct TemplateHeaderView: View {
     /// 是否显示保存为模板按钮
     private var canShowSaveAsTemplate: Bool {
         guard let template = detailViewModel.template else { return false }
-        let isRawCommand = template.id == "raw-command"
+        let isRawCommand = template.id == Template.rawCommandId
         let hasSuccessfulResult = executionViewModel.lastResult?.isSuccess == true
         return isRawCommand && hasSuccessfulResult && !executionViewModel.isRunning
     }
@@ -313,13 +313,15 @@ struct TemplateHeaderView: View {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
 
-        guard let data = try? encoder.encode(template) else { return }
+        Task.detached(priority: .background) {
+            guard let data = try? encoder.encode(template) else { return }
 
-        let userTemplatesDir = TemplateLoader.shared.userTemplatesDirectory
-        try? FileManager.default.createDirectory(at: userTemplatesDir, withIntermediateDirectories: true)
+            let userTemplatesDir = TemplateLoader.shared.userTemplatesDirectory
+            try? FileManager.default.createDirectory(at: userTemplatesDir, withIntermediateDirectories: true)
 
-        let fileURL = userTemplatesDir.appendingPathComponent("\(template.id).json")
-        try? data.write(to: fileURL)
+            let fileURL = userTemplatesDir.appendingPathComponent("\(template.id).json")
+            try? data.write(to: fileURL)
+        }
     }
 }
 

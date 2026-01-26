@@ -53,8 +53,8 @@ class TemplateLoader {
         // 4. 转换为数组，按分类和名称排序
         let templates = Array(templateDict.values).sorted { t1, t2 in
             // RawCommand 始终在第一位
-            if t1.id == "raw-command" { return true }
-            if t2.id == "raw-command" { return false }
+            if t1.id == Template.rawCommandId { return true }
+            if t2.id == Template.rawCommandId { return false }
             // 按分类排序
             let cat1 = t1.category ?? "其他"
             let cat2 = t2.category ?? "其他"
@@ -110,7 +110,7 @@ class TemplateLoader {
     /// 判断模板是否可删除（用户目录中存在该模板文件）
     func canDeleteTemplate(_ template: Template) -> Bool {
         // 不允许删除 RawCommand 模板
-        if template.id == "raw-command" {
+        if template.id == Template.rawCommandId {
             return false
         }
 
@@ -176,7 +176,7 @@ class TemplateLoader {
     /// 创建内置的 RawCommandTemplate
     private func createRawCommandTemplate() -> Template {
         Template(
-            id: "raw-command",
+            id: Template.rawCommandId,
             name: "自定义命令",
             description: "直接输入并执行完整 FFmpeg 命令",
             commandTemplate: "{{command}}",

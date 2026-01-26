@@ -19,6 +19,9 @@ struct Template: Codable, Identifiable, Hashable {
     /// 唯一标识符
     let id: String
 
+    /// Raw Command 模板 ID
+    static let rawCommandId = "raw-command"
+
     /// 模板名称（显示在列表中）
     let name: String
 

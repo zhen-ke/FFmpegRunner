@@ -48,7 +48,7 @@ class TemplateDetailViewModel: ObservableObject {
 
     // MARK: - Private Properties
 
-    private var cancellables = Set<AnyCancellable>()
+    // (Removed unused cancellables)
 
     // MARK: - Initialization
 

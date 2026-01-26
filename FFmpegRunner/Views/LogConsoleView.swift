@@ -38,10 +38,11 @@ struct LogConsoleView: View {
             LogContentView(logs: viewModel.logs, autoScroll: autoScroll)
 
             // 状态栏
+
             ConsoleStatusBar(
                 logCount: viewModel.logs.count,
                 lastResult: viewModel.lastResult,
-                ffmpegVersion: viewModel.ffmpegVersion
+                ffmpegVersion: viewModel.ffmpegVersionShort
             )
         }
         .fileExporter(
@@ -284,7 +285,7 @@ struct ConsoleStatusBar: View {
 
             // FFmpeg 版本
             if let version = ffmpegVersion {
-                Text(extractVersionNumber(from: version))
+                Text(version)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -292,19 +293,6 @@ struct ConsoleStatusBar: View {
         .padding(.horizontal)
         .padding(.vertical, 4)
         .background(Color(NSColor.controlBackgroundColor))
-    }
-
-    /// 从完整版本字符串中提取版本号
-    private func extractVersionNumber(from fullVersion: String) -> String {
-        // 尝试提取类似 "ffmpeg version 7.1" 中的 "7.1"
-        if let range = fullVersion.range(of: #"version\s+(\d+\.\d+(?:\.\d+)?)"#, options: .regularExpression) {
-            let versionPart = fullVersion[range]
-            if let numberRange = versionPart.range(of: #"\d+\.\d+(?:\.\d+)?"#, options: .regularExpression) {
-                return "v\(versionPart[numberRange])"
-            }
-        }
-        // 如果无法提取，返回 "FFmpeg"
-        return "FFmpeg"
     }
 }
 

@@ -23,6 +23,9 @@ class HistoryService {
     /// 最大历史记录数量
     private let maxHistoryCount = 100
 
+    /// 缓存的历史记录
+    private var historyCache: [CommandHistory]?
+
     /// 历史记录存储目录
     var historyDirectory: URL {
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -45,6 +48,11 @@ class HistoryService {
 
     /// 加载所有历史记录
     func loadHistory() -> [CommandHistory] {
+        // 如果有缓存，直接返回
+        if let cache = historyCache {
+            return cache
+        }
+
         guard fileManager.fileExists(atPath: historyFile.path) else {
             return []
         }
@@ -53,7 +61,9 @@ class HistoryService {
             let data = try Data(contentsOf: historyFile)
             let history = try decoder.decode([CommandHistory].self, from: data)
             // 按时间倒序排列
-            return history.sorted { $0.executedAt > $1.executedAt }
+            let sortedHistory = history.sorted { $0.executedAt > $1.executedAt }
+            historyCache = sortedHistory
+            return sortedHistory
         } catch {
             print("Failed to load history: \(error)")
             return []
@@ -62,6 +72,9 @@ class HistoryService {
 
     /// 保存历史记录
     func saveHistory(_ history: [CommandHistory]) {
+        // 更新缓存
+        historyCache = history
+
         do {
             encoder.outputFormatting = .prettyPrinted
             let data = try encoder.encode(history)

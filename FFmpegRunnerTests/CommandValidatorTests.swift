@@ -96,3 +96,110 @@ final class CommandValidatorTests: XCTestCase {
         XCTAssertNotNil(CommandValidationResult.notFFmpegCommand.errorMessage)
     }
 }
+
+// MARK: - Template Parameter Tests
+
+final class TemplateParameterTests: XCTestCase {
+
+    // MARK: - File Type Validation
+
+    func testFileTypeValidation_ValidExtension() {
+        let param = TemplateParameter(
+            key: "input",
+            label: "Input",
+            type: .file,
+            constraints: TemplateParameter.Constraints(fileTypes: ["mp4", "mov"])
+        )
+
+        let result = param.validate("/path/to/video.mp4")
+        XCTAssertTrue(result.isValid)
+        XCTAssertNil(result.errorMessage)
+    }
+
+    func testFileTypeValidation_ValidExtensionUppercase() {
+        let param = TemplateParameter(
+            key: "input",
+            label: "Input",
+            type: .file,
+            constraints: TemplateParameter.Constraints(fileTypes: ["mp4", "mov"])
+        )
+
+        let result = param.validate("/path/to/VIDEO.MOV")
+        XCTAssertTrue(result.isValid)
+    }
+
+    func testFileTypeValidation_InvalidExtension() {
+        let param = TemplateParameter(
+            key: "input",
+            label: "Input",
+            type: .file,
+            constraints: TemplateParameter.Constraints(fileTypes: ["mp4", "mov"])
+        )
+
+        let result = param.validate("/path/to/image.jpg")
+        XCTAssertFalse(result.isValid)
+        XCTAssertEqual(result.errorCode, .invalidFileType)
+    }
+
+    func testFileTypeValidation_NoExtension() {
+         let param = TemplateParameter(
+             key: "input",
+             label: "Input",
+             type: .file,
+             constraints: TemplateParameter.Constraints(fileTypes: ["mp4"])
+         )
+
+         let result = param.validate("/path/to/file_without_ext")
+         XCTAssertFalse(result.isValid)
+         XCTAssertEqual(result.errorCode, .invalidFileType)
+     }
+
+    func testFileTypeValidation_EmptyAllowedTypes() {
+        let param = TemplateParameter(
+            key: "output",
+            label: "Output",
+            type: .file,
+            constraints: TemplateParameter.Constraints(fileTypes: [], isOutputFile: true)
+        )
+
+        let result = param.validate("/path/to/anything.xyz")
+        XCTAssertTrue(result.isValid)
+    }
+
+    // MARK: - Output File Validation
+
+    func testOutputFileValidation_IgnoresExistence() {
+        let param = TemplateParameter(
+            key: "output",
+            label: "Output",
+            type: .file,
+             constraints: TemplateParameter.Constraints(fileTypes: ["mp4"], isOutputFile: true)
+        )
+
+        let result = param.validate("/path/to/nonexistent.mp4")
+        XCTAssertTrue(result.isValid)
+    }
+
+    func testOutputFileValidation_ChecksExtension() {
+        let param = TemplateParameter(
+            key: "output",
+            label: "Output",
+            type: .file,
+             constraints: TemplateParameter.Constraints(fileTypes: ["mp4"], isOutputFile: true)
+        )
+
+        let result = param.validate("/path/to/output.avi")
+        XCTAssertFalse(result.isValid)
+        XCTAssertEqual(result.errorCode, .invalidFileType)
+    }
+
+    // MARK: - DateFormatter Optimization Check
+
+    func testCommandHistoryDateFormatting() {
+        let history = CommandHistory(
+            command: "ffmpeg -version",
+            wasSuccessful: true
+        )
+        XCTAssertFalse(history.formattedDate.isEmpty)
+    }
+}

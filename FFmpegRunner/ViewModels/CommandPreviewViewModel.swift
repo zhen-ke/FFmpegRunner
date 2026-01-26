@@ -97,7 +97,7 @@ class CommandPreviewViewModel: ObservableObject {
 
     // MARK: - Properties
 
-    private var cancellables = Set<AnyCancellable>()
+    // (Removed unused cancellables)
 
     // MARK: - Initialization
 
@@ -146,36 +146,28 @@ class CommandPreviewViewModel: ObservableObject {
         attributed.foregroundColor = .white
 
         // 1. 高亮程序名 (ffmpeg, ffprobe) - 紫色加粗
-        let programPattern = "(?:^|\\n)\\s*(ffmpeg|ffprobe)"
-        applyColor(to: &attributed, pattern: programPattern, color: Color(red: 0.8, green: 0.4, blue: 0.9), weight: .bold)
+        applyColor(to: &attributed, regex: RegexPatterns.program, color: Color(red: 0.8, green: 0.4, blue: 0.9), weight: .bold)
 
         // 2. 高亮输入参数 (-i) - 青色
-        let inputPattern = "\\s(-i)(?:\\s|$)"
-        applyColor(to: &attributed, pattern: inputPattern, color: Color(red: 0.4, green: 0.85, blue: 0.85))
+        applyColor(to: &attributed, regex: RegexPatterns.input, color: Color(red: 0.4, green: 0.85, blue: 0.85))
 
         // 3. 高亮滤镜参数 (-vf, -af, -filter_complex) - 绿色
-        let filterPattern = "\\s(-(?:vf|af|filter_complex|filter:v|filter:a))(?:\\s|$)"
-        applyColor(to: &attributed, pattern: filterPattern, color: Color(red: 0.4, green: 0.85, blue: 0.5))
+        applyColor(to: &attributed, regex: RegexPatterns.filter, color: Color(red: 0.4, green: 0.85, blue: 0.5))
 
         // 4. 高亮编码参数 (-c:v, -c:a, -b:v, -b:a, -crf, -preset, -profile:v 等) - 蓝色
-        let codecPattern = "\\s(-(?:c:[va]|codec:[va]|b:[va]|crf|preset|profile:[va]|level|tune|pix_fmt|r|g|bf|refs))(?:\\s|$)"
-        applyColor(to: &attributed, pattern: codecPattern, color: Color(red: 0.4, green: 0.6, blue: 1.0))
+        applyColor(to: &attributed, regex: RegexPatterns.codec, color: Color(red: 0.4, green: 0.6, blue: 1.0))
 
         // 5. 高亮格式参数 (-f, -movflags, -map 等) - 黄色
-        let formatPattern = "\\s(-(?:f|movflags|map|metadata|t|ss|to|shortest|y|n|nostdin))(?:\\s|$)"
-        applyColor(to: &attributed, pattern: formatPattern, color: Color(red: 0.95, green: 0.8, blue: 0.3))
+        applyColor(to: &attributed, regex: RegexPatterns.format, color: Color(red: 0.95, green: 0.8, blue: 0.3))
 
         // 6. 高亮数值 (纯数字、分辨率如 1920x1080、比特率如 192k) - 浅蓝色
-        let numberPattern = "(?<=\\s|:)([0-9]+(?:x[0-9]+)?[kKmMgG]?)(?=\\s|$|\\\\)"
-        applyColor(to: &attributed, pattern: numberPattern, color: Color(red: 0.6, green: 0.8, blue: 1.0))
+        applyColor(to: &attributed, regex: RegexPatterns.number, color: Color(red: 0.6, green: 0.8, blue: 1.0))
 
         // 7. 高亮引号内容 (文件路径等) - 橙色
-        let quotePattern = "[\"'][^\"']*[\"']"
-        applyColor(to: &attributed, pattern: quotePattern, color: Color(red: 1.0, green: 0.7, blue: 0.3))
+        applyColor(to: &attributed, regex: RegexPatterns.quote, color: Color(red: 1.0, green: 0.7, blue: 0.3))
 
         // 8. 高亮未替换的占位符 - 红底白字
-        let placeholderPattern = "\\{\\{[^}]+\\}\\}"
-        applyHighlight(to: &attributed, pattern: placeholderPattern, fgColor: .white, bgColor: Color(red: 0.9, green: 0.3, blue: 0.3))
+        applyHighlight(to: &attributed, regex: RegexPatterns.placeholder, fgColor: .white, bgColor: Color(red: 0.9, green: 0.3, blue: 0.3))
 
         return attributed
     }
@@ -244,8 +236,19 @@ class CommandPreviewViewModel: ObservableObject {
 
     // MARK: - Highlighting Helpers
 
-    private func applyColor(to attributed: inout AttributedString, pattern: String, color: Color, weight: Font.Weight? = nil) {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return }
+    private struct RegexPatterns {
+        static let program = try? NSRegularExpression(pattern: "(?:^|\\n)\\s*(ffmpeg|ffprobe)", options: [])
+        static let input = try? NSRegularExpression(pattern: "\\s(-i)(?:\\s|$)", options: [])
+        static let filter = try? NSRegularExpression(pattern: "\\s(-(?:vf|af|filter_complex|filter:v|filter:a))(?:\\s|$)", options: [])
+        static let codec = try? NSRegularExpression(pattern: "\\s(-(?:c:[va]|codec:[va]|b:[va]|crf|preset|profile:[va]|level|tune|pix_fmt|r|g|bf|refs))(?:\\s|$)", options: [])
+        static let format = try? NSRegularExpression(pattern: "\\s(-(?:f|movflags|map|metadata|t|ss|to|shortest|y|n|nostdin))(?:\\s|$)", options: [])
+        static let number = try? NSRegularExpression(pattern: "(?<=\\s|:)([0-9]+(?:x[0-9]+)?[kKmMgG]?)(?=\\s|$|\\\\)", options: [])
+        static let quote = try? NSRegularExpression(pattern: "[\"'][^\"']*[\"']", options: [])
+        static let placeholder = try? NSRegularExpression(pattern: "\\{\\{[^}]+\\}\\}" , options: [])
+    }
+
+    private func applyColor(to attributed: inout AttributedString, regex: NSRegularExpression?, color: Color, weight: Font.Weight? = nil) {
+        guard let regex = regex else { return }
         let string = String(attributed.characters)
         let nsRange = NSRange(string.startIndex..., in: string)
         let matches = regex.matches(in: string, options: [], range: nsRange)
@@ -264,8 +267,8 @@ class CommandPreviewViewModel: ObservableObject {
         }
     }
 
-    private func applyHighlight(to attributed: inout AttributedString, pattern: String, fgColor: Color, bgColor: Color) {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+    private func applyHighlight(to attributed: inout AttributedString, regex: NSRegularExpression?, fgColor: Color, bgColor: Color) {
+        guard let regex = regex else { return }
         let string = String(attributed.characters)
         let nsRange = NSRange(string.startIndex..., in: string)
         let matches = regex.matches(in: string, range: nsRange)

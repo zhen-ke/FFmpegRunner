@@ -277,6 +277,7 @@ enum ValidationError: String, Codable {
     case outOfRange
     case invalidOption
     case fileNotFound
+    case invalidFileType
 }
 
 /// 验证结果
@@ -343,6 +344,17 @@ extension TemplateParameter {
                 // 输出文件不需要存在
                 if constraints?.isOutputFile != true {
                     return .invalid(code: .fileNotFound, message: "文件不存在")
+                }
+            }
+
+            // Check file extensions
+            if let allowedTypes = constraints?.fileTypes, !allowedTypes.isEmpty, !value.isEmpty {
+                let fileExtension = (value as NSString).pathExtension.lowercased()
+                let allowedLowercased = allowedTypes.map { $0.lowercased() }
+
+                if !allowedLowercased.contains(fileExtension) {
+                    let typesString = allowedTypes.joined(separator: ", ")
+                    return .invalid(code: .invalidFileType, message: "文件类型错误 (仅支持: \(typesString))")
                 }
             }
 

@@ -139,10 +139,14 @@ struct LogEntry: Identifiable, Equatable {
 
     /// 格式化的时间戳
     var formattedTimestamp: String {
+        Self.timestampFormatter.string(from: timestamp)
+    }
+
+    private static let timestampFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
-        return formatter.string(from: timestamp)
-    }
+        return formatter
+    }()
 
     /// 检测消息中是否包含错误关键字
     var containsErrorKeyword: Bool {

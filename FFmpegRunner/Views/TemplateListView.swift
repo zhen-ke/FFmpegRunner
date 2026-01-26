@@ -15,6 +15,10 @@ struct TemplateListView: View {
     @EnvironmentObject var viewModel: TemplateListViewModel
     @EnvironmentObject var historyViewModel: HistoryViewModel
 
+    // MARK: - State
+
+    @State private var showHistorySheet = false
+
     // MARK: - Body
 
     var body: some View {
@@ -31,7 +35,7 @@ struct TemplateListView: View {
             } else if viewModel.filteredTemplates.isEmpty && historyViewModel.isEmpty {
                 NoResultsView()
             } else {
-                SidebarContentView()
+                SidebarContentView(showHistorySheet: $showHistorySheet)
             }
         }
         .navigationTitle("FFmpeg 模板")
@@ -45,6 +49,9 @@ struct TemplateListView: View {
         } message: {
             Text(viewModel.errorMessage ?? "")
         }
+        .sheet(isPresented: $showHistorySheet) {
+            HistorySheetView()
+        }
     }
 }
 
@@ -57,26 +64,21 @@ struct SidebarContentView: View {
     @EnvironmentObject var detailViewModel: TemplateDetailViewModel
     @EnvironmentObject var executionViewModel: ExecutionViewModel
 
-    @State private var templateToDelete: Template?
+    @Binding var showHistorySheet: Bool
 
+    @State private var templateToDelete: Template?
     @State private var showDeleteConfirm = false
-    @State private var showHistoryClearConfirm = false
 
     var body: some View {
         List(selection: Binding(
             get: { viewModel.selectedTemplate },
             set: { viewModel.selectedTemplate = $0 }
         )) {
-            // 历史记录区域
+            // ✅ 最近历史（最多 3 条）
             if !historyViewModel.isEmpty {
-                HistorySection(
-                    history: historyViewModel.history,
-                    historyCount: historyViewModel.history.count,
-                    onFill: fillCommand,
-                    onRename: historyViewModel.renameEntry,
-                    onSaveAsTemplate: saveAsTemplate,
-                    onDelete: historyViewModel.deleteEntry,
-                    showClearConfirm: $showHistoryClearConfirm
+                RecentHistorySection(
+                    history: Array(historyViewModel.history.prefix(3)),
+                    onShowAll: { showHistorySheet = true }
                 )
             }
 
@@ -114,41 +116,9 @@ struct SidebarContentView: View {
         } message: {
             Text("确定要删除模板「\(templateToDelete?.name ?? "")」吗？此操作无法撤销。")
         }
-        .alert("清空历史记录", isPresented: $showHistoryClearConfirm) {
-            Button("取消", role: .cancel) {}
-            Button("清空", role: .destructive) {
-                historyViewModel.clearAll()
-            }
-        } message: {
-            Text("确定要清空所有历史记录吗？此操作无法撤销。")
-        }
     }
 
-    // MARK: - 历史记录操作
-
-    private func fillCommand(_ entry: CommandHistory) {
-        // 清空控制台
-        executionViewModel.clearLogs()
-        executionViewModel.reset()
-
-        // 选择 RawCommand 模板并填充命令
-        if let rawTemplate = viewModel.templates.first(where: { $0.id == "raw-command" }) {
-            viewModel.selectedTemplate = rawTemplate
-            // 更新命令值
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                detailViewModel.updateValue(key: "command", value: entry.command)
-            }
-        }
-    }
-
-    private func saveAsTemplate(_ entry: CommandHistory) {
-        // 创建并保存模板
-        _ = historyViewModel.saveAsTemplate(entry, name: entry.title, category: nil)
-        // 通知模板列表刷新
-        Task {
-            await viewModel.loadTemplates()
-        }
-    }
+    // MARK: - 模板操作
 
     private func deleteTemplate(_ template: Template) {
         if TemplateLoader.shared.deleteUserTemplate(template) {
@@ -164,105 +134,167 @@ struct SidebarContentView: View {
     }
 }
 
-// MARK: - 历史记录区域
+// MARK: - 最近历史区（精简版）
+/// 只负责「快速填充 + 跳转完整历史」
 
-/// 历史记录区域 - 使用显式参数传递，提高可测试性和可复用性
-struct HistorySection: View {
-
-    // MARK: - Properties (显式依赖注入)
+struct RecentHistorySection: View {
 
     let history: [CommandHistory]
-    let historyCount: Int
-    let onFill: (CommandHistory) -> Void
-    let onRename: (CommandHistory, String) -> Void
-    let onSaveAsTemplate: (CommandHistory) -> Void
-    let onDelete: (CommandHistory) -> Void
-    @Binding var showClearConfirm: Bool
+    let onShowAll: () -> Void
 
-    // MARK: - State
+    @EnvironmentObject var executionViewModel: ExecutionViewModel
+    @EnvironmentObject var viewModel: TemplateListViewModel
+    @EnvironmentObject var detailViewModel: TemplateDetailViewModel
 
+    var body: some View {
+        Section(header: Text("最近历史")) {
+
+            ForEach(history) { entry in
+                Button {
+                    fill(entry)
+                } label: {
+                    HistoryRowView(entry: entry)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button {
+                onShowAll()
+            } label: {
+                HStack {
+                    Text("查看全部历史…")
+                        .font(.caption)
+                        .foregroundColor(.accentColor)
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func fill(_ entry: CommandHistory) {
+        executionViewModel.clearLogs()
+        executionViewModel.reset()
+
+        if let raw = viewModel.templates.first(where: { $0.id == Template.rawCommandId }) {
+            viewModel.selectedTemplate = raw
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                detailViewModel.updateValue(key: "command", value: entry.command)
+            }
+        }
+    }
+}
+
+// MARK: - 完整历史 Sheet
+
+struct HistorySheetView: View {
+
+    @EnvironmentObject var historyViewModel: HistoryViewModel
+    @EnvironmentObject var viewModel: TemplateListViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var searchText = ""
     @State private var showRenameSheet = false
     @State private var renameText = ""
     @State private var selectedEntry: CommandHistory?
-
-    // MARK: - Body
+    @State private var showClearConfirm = false
 
     var body: some View {
-        Group {
-            Section {
-                // 自定义 Header (模拟 Section Header 样式)
-                HStack {
-                    Text("历史记录")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.secondary)
+        VStack(spacing: 0) {
 
+            // 顶部工具栏
+            HStack {
+                Text("历史记录")
+                    .font(.headline)
+
+                Spacer()
+
+                Button("清空全部", role: .destructive) {
+                    showClearConfirm = true
+                }
+                .disabled(historyViewModel.isEmpty)
+
+                Button("关闭") {
+                    dismiss()
+                }
+            }
+            .padding()
+
+            Divider()
+
+            // 搜索
+            SearchBarView(text: $searchText)
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+
+            if filteredHistory.isEmpty {
+                VStack {
                     Spacer()
-
-                    if !history.isEmpty {
-                        Button(action: { showClearConfirm = true }) {
-                            Image(systemName: "trash")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.plain)
-                        .frame(width: 20)
-                        .help("清空历史")
-                    }
-                }
-                .padding(.vertical, 4)
-                .padding(.top, 4)
-
-                ForEach(history.prefix(10)) { entry in
-                    Button(action: {
-                        onFill(entry)
-                    }) {
-                        HistoryRowView(entry: entry)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        Button("填充到编辑器") {
-                            onFill(entry)
-                        }
-
-                        Divider()
-
-                        Button("重命名...") {
-                            selectedEntry = entry
-                            renameText = entry.displayName ?? ""
-                            showRenameSheet = true
-                        }
-
-                        Button("保存为模板...") {
-                            onSaveAsTemplate(entry)
-                        }
-
-                        Divider()
-
-                        Button("删除", role: .destructive) {
-                            onDelete(entry)
-                        }
-                    }
-                }
-
-                if historyCount > 10 {
-                    Text("还有 \(historyCount - 10) 条记录...")
-                        .font(.caption)
+                    Text(searchText.isEmpty ? "暂无历史记录" : "未找到匹配结果")
                         .foregroundColor(.secondary)
+                    Spacer()
+                }
+            } else {
+                List {
+                    ForEach(filteredHistory) { entry in
+                        HistoryRowView(entry: entry)
+                            .contextMenu {
+                                Button("重命名…") {
+                                    selectedEntry = entry
+                                    renameText = entry.displayName ?? ""
+                                    showRenameSheet = true
+                                }
+
+                                Button("保存为模板…") {
+                                    saveAsTemplate(entry)
+                                }
+
+                                Divider()
+
+                                Button("删除", role: .destructive) {
+                                    historyViewModel.deleteEntry(entry)
+                                }
+                            }
+                    }
                 }
             }
         }
+        .frame(minWidth: 500, minHeight: 600)
         .sheet(isPresented: $showRenameSheet) {
             RenameSheetView(
                 title: "重命名历史记录",
                 text: $renameText,
                 onSave: {
                     if let entry = selectedEntry {
-                        onRename(entry, renameText)
+                        historyViewModel.renameEntry(entry, to: renameText)
                     }
                 }
             )
+        }
+        .alert("清空历史记录", isPresented: $showClearConfirm) {
+            Button("取消", role: .cancel) {}
+            Button("清空", role: .destructive) {
+                historyViewModel.clearAll()
+            }
+        } message: {
+            Text("确定要清空所有历史记录吗？此操作无法撤销。")
+        }
+    }
+
+    private var filteredHistory: [CommandHistory] {
+        if searchText.isEmpty {
+            return historyViewModel.history
+        }
+        return historyViewModel.history.filter {
+            $0.title.localizedCaseInsensitiveContains(searchText) ||
+            $0.command.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    private func saveAsTemplate(_ entry: CommandHistory) {
+        _ = historyViewModel.saveAsTemplate(entry, name: entry.title, category: nil)
+        Task {
+            await viewModel.loadTemplates()
         }
     }
 }
@@ -439,5 +471,6 @@ struct NoResultsView: View {
         .environmentObject(TemplateListViewModel())
         .environmentObject(HistoryViewModel())
         .environmentObject(TemplateDetailViewModel())
+        .environmentObject(ExecutionViewModel())
         .frame(width: 300, height: 600)
 }
