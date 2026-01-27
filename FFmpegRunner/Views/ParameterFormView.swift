@@ -123,26 +123,32 @@ struct StringField: View {
     var body: some View {
         Group {
             if isMultiline {
-                // 多行输入
-                ZStack(alignment: .topLeading) {
-                    TextEditor(text: $value)
-                        .font(isMonospace ? .body.monospaced() : .body)
+                if isMonospace {
+                    // 命令输入（支持拖拽插入路径）
+                    CommandTextView(text: $value, placeholder: placeholder)
                         .frame(minHeight: 120)
-                        .padding(4)
-                        .background(Color(NSColor.textBackgroundColor))
-                        .cornerRadius(6)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-                        )
+                } else {
+                    // 普通多行输入
+                    ZStack(alignment: .topLeading) {
+                        TextEditor(text: $value)
+                            .font(.body)
+                            .frame(minHeight: 120)
+                            .padding(4)
+                            .background(Color(NSColor.textBackgroundColor))
+                            .cornerRadius(6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                            )
 
-                    // 简易 Placeholder 实现
-                    if value.isEmpty, let placeholder = placeholder {
-                        Text(placeholder)
-                            .foregroundColor(.secondary.opacity(0.5))
-                            .padding(.top, 8)
-                            .padding(.leading, 8)
-                            .allowsHitTesting(false)
+                        // 简易 Placeholder 实现
+                        if value.isEmpty, let placeholder = placeholder {
+                            Text(placeholder)
+                                .foregroundColor(.secondary.opacity(0.5))
+                                .padding(.top, 8)
+                                .padding(.leading, 8)
+                                .allowsHitTesting(false)
+                        }
                     }
                 }
             } else {

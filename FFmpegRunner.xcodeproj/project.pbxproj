@@ -31,6 +31,7 @@
 		001A0015 /* MainSplitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0015 /* MainSplitView.swift */; };
 		001A0016 /* TemplateListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0016 /* TemplateListView.swift */; };
 		001A0017 /* ParameterFormView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0017 /* ParameterFormView.swift */; };
+			001A0050 /* CommandTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0050 /* CommandTextView.swift */; };
 		001A0018 /* CommandPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0018 /* CommandPreviewView.swift */; };
 		001A0019 /* LogConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0019 /* LogConsoleView.swift */; };
 		001A0020 /* FilePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0020 /* FilePicker.swift */; };
@@ -79,6 +80,7 @@
 		001B0015 /* MainSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainSplitView.swift; sourceTree = "<group>"; };
 		001B0016 /* TemplateListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateListView.swift; sourceTree = "<group>"; };
 		001B0017 /* ParameterFormView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParameterFormView.swift; sourceTree = "<group>"; };
+			001B0050 /* CommandTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandTextView.swift; sourceTree = "<group>"; };
 		001B0018 /* CommandPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPreviewView.swift; sourceTree = "<group>"; };
 		001B0019 /* LogConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogConsoleView.swift; sourceTree = "<group>"; };
 		001B0020 /* FilePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilePicker.swift; sourceTree = "<group>"; };
@@ -211,6 +213,7 @@
 				001B0015 /* MainSplitView.swift */,
 				001B0016 /* TemplateListView.swift */,
 				001B0017 /* ParameterFormView.swift */,
+							001B0050 /* CommandTextView.swift */,
 				001B0018 /* CommandPreviewView.swift */,
 				001B0019 /* LogConsoleView.swift */,
 				001B0034 /* SettingsView.swift */,
@@ -417,6 +420,7 @@
 				001A0015 /* MainSplitView.swift in Sources */,
 				001A0016 /* TemplateListView.swift in Sources */,
 				001A0017 /* ParameterFormView.swift in Sources */,
+							001A0050 /* CommandTextView.swift in Sources */,
 				001A0018 /* CommandPreviewView.swift in Sources */,
 				001A0019 /* LogConsoleView.swift in Sources */,
 				001A0020 /* FilePicker.swift in Sources */,
