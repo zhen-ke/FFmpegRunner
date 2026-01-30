@@ -68,6 +68,7 @@ class FFmpegService: ObservableObject {
         get { UserSettings.shared.customFFmpegPath }
         set {
             UserSettings.shared.customFFmpegPath = newValue
+            cachedVersion = nil // 路径变化时清除缓存
             if ffmpegSource == .custom {
                 updateFFmpegPath()
             }
@@ -210,7 +211,7 @@ class FFmpegService: ObservableObject {
         // 使用线程安全的数据收集器
         let dataCollector = OutputDataCollector()
 
-        // 更新状态
+        // 状态管理
         isRunning = true
         currentProcess = process
 
@@ -222,7 +223,15 @@ class FFmpegService: ObservableObject {
             }
         }
 
-        // 开始流式读取 - 使用线程安全的方式
+        // 清理函数：关闭文件句柄，重置状态
+        let cleanup = {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            try? stdoutPipe.fileHandleForReading.close()
+            try? stderrPipe.fileHandleForReading.close()
+        }
+
+        // 开始流式读取
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if !data.isEmpty {
@@ -241,14 +250,6 @@ class FFmpegService: ObservableObject {
                     processLogger.processOutput(text, isError: false)
                 }
             }
-        }
-
-        // 清理函数 - 用于 run() 失败时的清理
-        func cleanupOnFailure() {
-            isRunning = false
-            currentProcess = nil
-            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-            stderrPipe.fileHandleForReading.readabilityHandler = nil
         }
 
         // 记录开始
@@ -258,51 +259,72 @@ class FFmpegService: ObservableObject {
             message: "开始执行: \(displayCommand)"
         ))
 
-        do {
-            try process.run()
-        } catch {
-            // run() 失败时清理状态
-            cleanupOnFailure()
-            throw FFmpegError.executionFailed(error.localizedDescription)
-        }
+        return try await withTaskCancellationHandler {
+            do {
+                try process.run()
 
-        // 等待完成 - 状态清理绑定到 terminationHandler
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            process.terminationHandler = { [weak self] _ in
-                // 清理 readabilityHandler
-                stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                stderrPipe.fileHandleForReading.readabilityHandler = nil
+                // 等待进程结束
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    process.terminationHandler = { _ in
+                        continuation.resume()
+                    }
+                }
+
+                cleanup()
 
                 // 在主线程更新状态
                 Task { @MainActor in
-                    self?.isRunning = false
-                    self?.currentProcess = nil
+                    self.isRunning = false
+                    self.currentProcess = nil
                 }
 
-                continuation.resume()
+                let endTime = Date()
+                let result = ExecutionResult(
+                    command: displayCommand,
+                    exitCode: process.terminationStatus,
+                    standardOutput: dataCollector.stdoutString,
+                    standardError: dataCollector.stderrString,
+                    startTime: startTime,
+                    endTime: endTime
+                )
+
+                // 记录结束
+                let statusMessage = result.isSuccess ? "执行成功" : "执行失败 (退出码: \(result.exitCode))"
+                onLogOutput?(LogEntry(
+                    timestamp: Date(),
+                    level: result.isSuccess ? .info : .error,
+                    message: "\(statusMessage)，耗时: \(result.formattedDuration)"
+                ))
+
+                return result
+
+            } catch {
+                cleanup()
+                Task { @MainActor in
+                    self.isRunning = false
+                    self.currentProcess = nil
+                }
+
+                // 记录错误
+                let errorMsg = error.localizedDescription
+                Task { @MainActor in
+                    self.onLogOutput?(LogEntry(
+                        timestamp: Date(),
+                        level: .error,
+                        message: "执行异常: \(errorMsg)"
+                    ))
+                }
+                throw FFmpegError.executionFailed(errorMsg)
+            }
+
+        } onCancel: { [weak self, weak process] in
+            // 处理取消
+            if let proc = process {
+                Task {
+                    await self?.gracefullyTerminate(proc)
+                }
             }
         }
-
-        let endTime = Date()
-
-        let result = ExecutionResult(
-            command: displayCommand,
-            exitCode: process.terminationStatus,
-            standardOutput: dataCollector.stdoutString,
-            standardError: dataCollector.stderrString,
-            startTime: startTime,
-            endTime: endTime
-        )
-
-        // 记录结束
-        let statusMessage = result.isSuccess ? "执行成功" : "执行失败 (退出码: \(result.exitCode))"
-        onLogOutput?(LogEntry(
-            timestamp: Date(),
-            level: result.isSuccess ? .info : .error,
-            message: "\(statusMessage)，耗时: \(result.formattedDuration)"
-        ))
-
-        return result
     }
 
     /// 执行 FFmpeg 命令（使用命令字符串）
@@ -312,177 +334,63 @@ class FFmpegService: ObservableObject {
     ///         对于 Template → Execute 的主路径，请使用 execute(arguments:displayCommand:)
     @available(*, deprecated, message: "Use execute(arguments:displayCommand:) instead. This method is only for legacy command string input.")
     func execute(command: String) async throws -> ExecutionResult {
-        guard !isRunning else {
-            throw FFmpegError.alreadyRunning
-        }
-
-        guard isFFmpegAvailable() else {
-            throw FFmpegError.ffmpegNotFound
-        }
-
-        let startTime = Date()
-
         // 解析命令参数
         let args = CommandRenderer.splitCommand(command)
         guard args.first == "ffmpeg" || args.first?.hasSuffix("ffmpeg") == true else {
             throw FFmpegError.invalidCommand("命令必须以 ffmpeg 开头")
         }
 
-        // 创建进程
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: ffmpegPath)
+        // 移除 ffmpeg 本身，保留参数
+        let finalArgs = Array(args.dropFirst())
 
-        // 自动添加 -nostdin 防止因等待输入而死锁
-        var finalArgs = Array(args.dropFirst()) // 移除 ffmpeg 本身
-        if !finalArgs.contains("-nostdin") {
-            finalArgs.insert("-nostdin", at: 0)
-        }
-        process.arguments = finalArgs
-
-        // 设置管道
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        // 使用线程安全的数据收集器
-        let dataCollector = OutputDataCollector()
-
-        // 更新状态
-        isRunning = true
-        currentProcess = process
-
-        // 设置输出处理
-        let processLogger = ProcessLogger()
-        processLogger.onLog = { [weak self] entry in
-            Task { @MainActor in
-                self?.onLogOutput?(entry)
-            }
-        }
-
-        // 开始流式读取 - 使用线程安全的方式
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                dataCollector.appendStderr(data)
-                if let text = String(data: data, encoding: .utf8) {
-                    processLogger.processOutput(text, isError: true)
-                }
-            }
-        }
-
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                dataCollector.appendStdout(data)
-                if let text = String(data: data, encoding: .utf8) {
-                    processLogger.processOutput(text, isError: false)
-                }
-            }
-        }
-
-        // 清理函数 - 用于 run() 失败时的清理
-        func cleanupOnFailure() {
-            isRunning = false
-            currentProcess = nil
-            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-            stderrPipe.fileHandleForReading.readabilityHandler = nil
-        }
-
-        // 记录开始
-        onLogOutput?(LogEntry(
-            timestamp: Date(),
-            level: .info,
-            message: "开始执行: \(command)"
-        ))
-
-        do {
-            try process.run()
-        } catch {
-            // run() 失败时清理状态
-            cleanupOnFailure()
-            throw FFmpegError.executionFailed(error.localizedDescription)
-        }
-
-        // 等待完成 - 状态清理绑定到 terminationHandler
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            process.terminationHandler = { [weak self] _ in
-                // 清理 readabilityHandler
-                stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                stderrPipe.fileHandleForReading.readabilityHandler = nil
-
-                // 在主线程更新状态
-                Task { @MainActor in
-                    self?.isRunning = false
-                    self?.currentProcess = nil
-                }
-
-                continuation.resume()
-            }
-        }
-
-        let endTime = Date()
-
-        let result = ExecutionResult(
-            command: command,
-            exitCode: process.terminationStatus,
-            standardOutput: dataCollector.stdoutString,
-            standardError: dataCollector.stderrString,
-            startTime: startTime,
-            endTime: endTime
-        )
-
-        // 记录结束
-        let statusMessage = result.isSuccess ? "执行成功" : "执行失败 (退出码: \(result.exitCode))"
-        onLogOutput?(LogEntry(
-            timestamp: Date(),
-            level: result.isSuccess ? .info : .error,
-            message: "\(statusMessage)，耗时: \(result.formattedDuration)"
-        ))
-
-        return result
+        // 委托给主实现
+        return try await execute(arguments: finalArgs, displayCommand: command)
     }
 
     /// 取消当前执行
     func cancel() {
         guard let process = currentProcess, process.isRunning else { return }
-        cancelProcess(process)
+        gracefullyTerminate(process)
     }
 
-    /// 终止进程：先优雅（SIGINT），超时后强制（SIGKILL）
-    private func cancelProcess(_ process: Process) {
+    /// 优雅终止进程
+    /// 先发送 SIGINT (Ctrl+C)，如果超时未退出则发送 SIGKILL
+    private func gracefullyTerminate(_ process: Process) {
         let pid = process.processIdentifier
         guard pid > 0 else { return }
 
         onLogOutput?(LogEntry(
             timestamp: Date(),
             level: .warning,
-            message: "用户取消执行"
+            message: "正在停止执行..."
         ))
 
-        // 优雅终止 (SIGINT = Ctrl+C)，FFmpeg 对此响应良好
+        // 1. 尝试优雅终止 (SIGINT)
         kill(pid, SIGINT)
 
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            // 检查进程是否仍存在 (kill with signal 0 只检测不发信号)
+        // 2. 延迟检查并强制终止
+        DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            // check if process is still running
             if kill(pid, 0) == 0 {
                 kill(pid, SIGKILL)
 
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     self?.onLogOutput?(LogEntry(
                         timestamp: Date(),
                         level: .warning,
                         message: "进程未响应，已强制终止"
                     ))
                 }
+            } else {
+                 Task { @MainActor [weak self] in
+                    self?.onLogOutput?(LogEntry(
+                        timestamp: Date(),
+                        level: .warning,
+                        message: "执行已取消"
+                    ))
+                }
             }
         }
-
-        onLogOutput?(LogEntry(
-            timestamp: Date(),
-            level: .warning,
-            message: "执行已取消"
-        ))
     }
 }
 
