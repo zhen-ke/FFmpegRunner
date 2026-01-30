@@ -31,11 +31,11 @@ class ProcessLogger: ProcessLoggerProviding {
     /// 待处理的行缓冲
     private var lineBuffer = ""
 
-    /// 串行队列 - 确保日志按顺序处理
+    /// 串行队列 - 确保日志按顺序处理且线程安全
     private let logQueue = DispatchQueue(label: "com.ffmpegrunner.processlogger.queue")
 
-    /// 线程安全锁
-    private let lock = NSLock()
+    /// 缓冲区最大大小（防止内存溢出）
+    private let maxBufferSize = 10_000
 
     // MARK: - FFmpeg 进度解析
 
@@ -53,35 +53,66 @@ class ProcessLogger: ProcessLoggerProviding {
 
     /// 处理进程输出
     func processOutput(_ text: String, isError: Bool) {
-        // 使用串行队列确保日志按顺序处理
+        // 使用串行队列确保日志按顺序处理（队列本身提供线程安全，无需额外锁）
         logQueue.async { [weak self] in
             guard let self = self else { return }
 
-            self.lock.lock()
-            defer { self.lock.unlock() }
+            // 缓冲区溢出保护
+            if self.lineBuffer.count + text.count > self.maxBufferSize {
+                self.flushBuffer(isError: isError)
+            }
 
-            // 将文本按行分割
             self.lineBuffer += text
-            let lines = self.lineBuffer.components(separatedBy: CharacterSet.newlines)
-
-            // 保留最后一个不完整的行
-            if !text.hasSuffix("\n") && !text.hasSuffix("\r") {
-                self.lineBuffer = lines.last ?? ""
-            } else {
-                self.lineBuffer = ""
-            }
-
-            // 处理完整的行
-            let completeLines = lines.dropLast()
-            for line in completeLines {
-                self.processLine(String(line), isError: isError)
-            }
-
-            // 如果缓冲区为空，也处理最后一行
-            if self.lineBuffer.isEmpty, let lastLine = lines.last, !lastLine.isEmpty {
-                self.processLine(lastLine, isError: isError)
-            }
+            self.processBuffer(isError: isError)
         }
+    }
+
+    /// 清空缓冲区（线程安全）
+    func clear() {
+        logQueue.async { [weak self] in
+            self?.lineBuffer.removeAll(keepingCapacity: true)
+        }
+    }
+
+    /// 同步清空缓冲区（用于需要立即清空的场景）
+    func clearSync() {
+        logQueue.sync { [weak self] in
+            self?.lineBuffer.removeAll(keepingCapacity: true)
+        }
+    }
+
+    // MARK: - Private Methods
+
+    /// 处理缓冲区中的完整行（使用索引遍历，避免数组分配）
+    private func processBuffer(isError: Bool) {
+        var remaining = lineBuffer[...]
+
+        while let newlineIndex = remaining.firstIndex(where: { $0.isNewline }) {
+            let line = remaining[..<newlineIndex]
+            let afterNewline = remaining.index(after: newlineIndex)
+
+            if !line.isEmpty {
+                processLine(String(line), isError: isError)
+            }
+
+            remaining = remaining[afterNewline...]
+        }
+
+        // 保留未处理的部分（不完整的行）
+        lineBuffer = String(remaining)
+    }
+
+    /// 强制刷新缓冲区（处理未完成的行）
+    private func flushBuffer(isError: Bool) {
+        guard !lineBuffer.isEmpty else { return }
+
+        let entry = LogEntry(
+            timestamp: Date(),
+            level: isError ? .warning : .info,
+            message: "[缓冲区溢出] \(lineBuffer)"
+        )
+        onLog?(entry)
+        lineBuffer.removeAll()
     }
 
     /// 处理单行输出
@@ -132,58 +163,42 @@ class ProcessLogger: ProcessLoggerProviding {
         return isError ? .warning : .info
     }
 
-    /// 解析 FFmpeg 进度行
+    /// 解析 FFmpeg 进度行（使用字符串分割，性能优于正则表达式）
     func parseProgress(_ line: String) -> Progress? {
         guard line.contains("frame=") || line.contains("size=") else { return nil }
 
         var progress = Progress()
 
-        // 解析 frame
-        if let range = line.range(of: "frame=\\s*(\\d+)", options: .regularExpression) {
-            let match = line[range]
-            if let numRange = match.range(of: "\\d+", options: .regularExpression) {
-                progress.frame = Int(match[numRange]) ?? 0
+        // 使用空格分割，然后解析 key=value 对
+        let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+
+        for part in parts {
+            let keyValue = part.split(separator: "=", maxSplits: 1)
+            guard keyValue.count == 2 else { continue }
+
+            let key = String(keyValue[0]).trimmingCharacters(in: .whitespaces)
+            let value = String(keyValue[1]).trimmingCharacters(in: .whitespaces)
+
+            switch key {
+            case "frame":
+                progress.frame = Int(value) ?? 0
+            case "fps":
+                progress.fps = Double(value) ?? 0
+            case "size":
+                progress.size = value
+            case "time":
+                progress.time = value
+            case "bitrate":
+                progress.bitrate = value
+            case "speed":
+                // 移除 "x" 后缀（如 "1.5x" -> "1.5"）
+                progress.speed = value.replacingOccurrences(of: "x", with: "")
+            default:
+                break
             }
-        }
-
-        // 解析 fps
-        if let range = line.range(of: "fps=\\s*([\\d.]+)", options: .regularExpression) {
-            let match = line[range]
-            if let numRange = match.range(of: "[\\d.]+", options: .regularExpression) {
-                progress.fps = Double(match[numRange]) ?? 0
-            }
-        }
-
-        // 解析 size
-        if let range = line.range(of: "size=\\s*(\\S+)", options: .regularExpression) {
-            let match = line[range]
-            progress.size = String(match.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-        }
-
-        // 解析 time
-        if let range = line.range(of: "time=\\s*(\\S+)", options: .regularExpression) {
-            let match = line[range]
-            progress.time = String(match.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-        }
-
-        // 解析 bitrate
-        if let range = line.range(of: "bitrate=\\s*(\\S+)", options: .regularExpression) {
-            let match = line[range]
-            progress.bitrate = String(match.dropFirst(8)).trimmingCharacters(in: .whitespaces)
-        }
-
-        // 解析 speed
-        if let range = line.range(of: "speed=\\s*(\\S+)", options: .regularExpression) {
-            let match = line[range]
-            progress.speed = String(match.dropFirst(6)).trimmingCharacters(in: .whitespaces)
         }
 
         return progress
-    }
-
-    /// 清空缓冲区
-    func clear() {
-        lineBuffer = ""
     }
 }
 

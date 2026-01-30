@@ -12,6 +12,73 @@
 
 import Foundation
 
+// MARK: - Render Context Protocol
+
+/// 渲染上下文协议
+/// 统一不同值来源的渲染逻辑，消除重复代码
+protocol RenderContext {
+    /// 获取指定 key 的值
+    /// - Parameter key: 参数键名
+    /// - Returns: 参数值，如果不存在返回 nil
+    func value(forKey key: String) -> String?
+
+    /// 判断指定 key 是否需要跳过转义
+    /// - Parameter key: 参数键名
+    /// - Returns: 是否跳过转义
+    func shouldSkipEscape(forKey key: String) -> Bool
+}
+
+// MARK: - Context Implementations
+
+/// 基于 TemplateValueDict 的渲染上下文
+struct TemplateValueContext: RenderContext {
+    let values: TemplateValueDict
+    let skipEscapeKeys: Set<String>
+
+    func value(forKey key: String) -> String? {
+        values[key]?.rawValue
+    }
+
+    func shouldSkipEscape(forKey key: String) -> Bool {
+        skipEscapeKeys.contains(key)
+    }
+}
+
+/// 基于 ParameterBinding 的渲染上下文（语义闭环路径）
+struct ParameterBindingContext: RenderContext {
+    let bindingDict: [String: ParameterBinding]
+    let skipEscapeKeys: Set<String>
+
+    init(bindings: [ParameterBinding], skipEscapeKeys: Set<String>) {
+        self.bindingDict = Dictionary(uniqueKeysWithValues: bindings.map { ($0.key, $0) })
+        self.skipEscapeKeys = skipEscapeKeys
+    }
+
+    func value(forKey key: String) -> String? {
+        // 优先使用 renderValue（来自 ParsedValue）
+        bindingDict[key]?.renderValue
+    }
+
+    func shouldSkipEscape(forKey key: String) -> Bool {
+        skipEscapeKeys.contains(key)
+    }
+}
+
+/// 基于简单字典的渲染上下文
+struct SimpleValueContext: RenderContext {
+    let values: [String: String]
+
+    func value(forKey key: String) -> String? {
+        values[key]
+    }
+
+    func shouldSkipEscape(forKey key: String) -> Bool {
+        false // 简单字典始终需要转义
+    }
+}
+
+// MARK: - Rendered Command
+
 /// 渲染后的命令
 /// 同时包含用于执行的参数数组和用于显示的字符串
 struct RenderedCommand {
@@ -32,6 +99,8 @@ struct RenderedCommand {
     }
 }
 
+// MARK: - Command Renderer
+
 /// 命令渲染器
 /// 负责将模板 + 参数值渲染为可执行命令
 struct CommandRenderer {
@@ -42,6 +111,12 @@ struct CommandRenderer {
     private static let placeholderPattern = "\\{\\{([a-zA-Z_][a-zA-Z0-9_]*)\\}\\}"
     private static let placeholderRegex = try! NSRegularExpression(pattern: placeholderPattern)
 
+    // MARK: - Shell 元字符集
+
+    /// 需要转义的 shell 元字符
+    /// 包括：空白符、引号、变量替换、命令替换、重定向、管道、后台执行等
+    private static let shellMetaCharacters = CharacterSet(charactersIn: " \t\n\r\"'`$\\(){}[]<>|;&!?*#~^")
+
     // MARK: - Public Methods
 
     /// 渲染命令
@@ -51,16 +126,9 @@ struct CommandRenderer {
     /// - Returns: 渲染后的命令字符串
     static func render(template: Template, values: [TemplateValue]) -> String {
         let valueDict = values.asDictionary
-
-        // 创建跳过转义的 key 集合
-        var skipEscapeKeys: Set<String> = []
-        for param in template.parameters {
-            if param.skipEscape == true {
-                skipEscapeKeys.insert(param.key)
-            }
-        }
-
-        return render(commandTemplate: template.commandTemplate, values: valueDict, skipEscapeKeys: skipEscapeKeys)
+        let skipEscapeKeys = collectSkipEscapeKeys(from: template.parameters)
+        let context = TemplateValueContext(values: valueDict, skipEscapeKeys: skipEscapeKeys)
+        return render(commandTemplate: template.commandTemplate, context: context, forDisplay: true)
     }
 
     /// 渲染命令（使用字典）
@@ -70,26 +138,8 @@ struct CommandRenderer {
     ///   - skipEscapeKeys: 不需要转义的参数 key 集合
     /// - Returns: 渲染后的命令字符串
     static func render(commandTemplate: String, values: TemplateValueDict, skipEscapeKeys: Set<String> = []) -> String {
-        var result = commandTemplate
-
-        let range = NSRange(commandTemplate.startIndex..., in: commandTemplate)
-        let matches = placeholderRegex.matches(in: commandTemplate, range: range)
-
-        // 倒序替换，避免位置偏移
-        for match in matches.reversed() {
-            guard let keyRange = Range(match.range(at: 1), in: commandTemplate) else { continue }
-            let key = String(commandTemplate[keyRange])
-
-            // 获取值并替换
-            let value = values[key]?.rawValue ?? ""
-            let finalValue = skipEscapeKeys.contains(key) ? value : escapeForDisplay(value)
-
-            if let fullRange = Range(match.range, in: result) {
-                result.replaceSubrange(fullRange, with: finalValue)
-            }
-        }
-
-        return result
+        let context = TemplateValueContext(values: values, skipEscapeKeys: skipEscapeKeys)
+        return render(commandTemplate: commandTemplate, context: context, forDisplay: true)
     }
 
     /// 渲染命令（使用简单字典）
@@ -98,15 +148,8 @@ struct CommandRenderer {
     ///   - values: 简单键值字典
     /// - Returns: 渲染后的命令字符串
     static func render(commandTemplate: String, simpleValues: [String: String]) -> String {
-        var result = commandTemplate
-
-        for (key, value) in simpleValues {
-            let placeholder = "{{\(key)}}"
-            let escapedValue = escapeForDisplay(value)
-            result = result.replacingOccurrences(of: placeholder, with: escapedValue)
-        }
-
-        return result
+        let context = SimpleValueContext(values: simpleValues)
+        return render(commandTemplate: commandTemplate, context: context, forDisplay: true)
     }
 
     // MARK: - Arguments-First Rendering (推荐执行路径)
@@ -119,20 +162,15 @@ struct CommandRenderer {
     /// - Note: 这是执行命令的推荐路径，直接生成参数数组，避免 shell escaping 的不可逆问题
     static func renderToCommand(template: Template, values: [TemplateValue]) -> RenderedCommand {
         let valueDict = values.asDictionary
-
-        // 创建跳过转义的 key 集合
-        var skipEscapeKeys: Set<String> = []
-        for param in template.parameters {
-            if param.skipEscape == true {
-                skipEscapeKeys.insert(param.key)
-            }
-        }
+        let skipEscapeKeys = collectSkipEscapeKeys(from: template.parameters)
+        let context = TemplateValueContext(values: valueDict, skipEscapeKeys: skipEscapeKeys)
 
         // 生成用于显示的命令字符串（带 shell 转义）
-        let displayString = render(commandTemplate: template.commandTemplate, values: valueDict, skipEscapeKeys: skipEscapeKeys)
+        let displayString = render(commandTemplate: template.commandTemplate, context: context, forDisplay: true)
 
         // 生成用于执行的参数数组（不经过 shell 转义）
-        let arguments = renderArguments(commandTemplate: template.commandTemplate, values: valueDict)
+        let rawCommand = render(commandTemplate: template.commandTemplate, context: context, forDisplay: false)
+        let arguments = removeFFmpegIfNeeded(from: splitCommand(rawCommand))
 
         return RenderedCommand(arguments: arguments, displayString: displayString)
     }
@@ -142,107 +180,104 @@ struct CommandRenderer {
     /// - Returns: 包含参数数组和显示字符串的 RenderedCommand
     /// - Note: 这是"语义闭环"路径，优先消费 ParsedValue 而非 rawValue
     static func renderToCommand(binding: TemplateBinding) -> RenderedCommand {
-        // 创建跳过转义的 key 集合
-        var skipEscapeKeys: Set<String> = []
-        for b in binding.bindings {
-            if b.escapeStrategy == .raw {
-                skipEscapeKeys.insert(b.key)
-            }
-        }
+        let skipEscapeKeys = collectSkipEscapeKeysFromBindings(binding.bindings)
+        let context = ParameterBindingContext(bindings: binding.bindings, skipEscapeKeys: skipEscapeKeys)
 
         // 生成用于显示的命令字符串（带 shell 转义）
-        let displayString = renderWithBinding(
+        let displayString = render(
             commandTemplate: binding.template.commandTemplate,
-            bindings: binding.bindings,
-            skipEscapeKeys: skipEscapeKeys,
+            context: context,
             forDisplay: true
         )
 
         // 生成用于执行的参数数组（不经过 shell 转义，使用 ParsedValue）
-        let rawCommand = renderWithBinding(
+        let rawCommand = render(
             commandTemplate: binding.template.commandTemplate,
-            bindings: binding.bindings,
-            skipEscapeKeys: skipEscapeKeys,
+            context: context,
             forDisplay: false
         )
-        let arguments = splitCommand(rawCommand)
-
-        // 移除 ffmpeg 本身（如果存在）
-        if let first = arguments.first, first == "ffmpeg" || first.hasSuffix("ffmpeg") {
-            return RenderedCommand(arguments: Array(arguments.dropFirst()), displayString: displayString)
-        }
+        let arguments = removeFFmpegIfNeeded(from: splitCommand(rawCommand))
 
         return RenderedCommand(arguments: arguments, displayString: displayString)
     }
 
-    /// 使用 ParameterBinding 渲染命令模板
-    private static func renderWithBinding(
+    // MARK: - Core Render Logic (统一实现)
+
+    /// 统一的渲染核心逻辑
+    /// - Parameters:
+    ///   - commandTemplate: 命令模板
+    ///   - context: 渲染上下文
+    ///   - forDisplay: 是否用于显示（true 则转义，false 则不转义）
+    /// - Returns: 渲染后的字符串
+    private static func render(
         commandTemplate: String,
-        bindings: [ParameterBinding],
-        skipEscapeKeys: Set<String>,
+        context: RenderContext,
         forDisplay: Bool
     ) -> String {
-        var result = commandTemplate
-        let bindingDict = Dictionary(uniqueKeysWithValues: bindings.map { ($0.key, $0) })
-
         let range = NSRange(commandTemplate.startIndex..., in: commandTemplate)
         let matches = placeholderRegex.matches(in: commandTemplate, range: range)
 
-        // 倒序替换，避免位置偏移
-        for match in matches.reversed() {
-            guard let keyRange = Range(match.range(at: 1), in: commandTemplate) else { continue }
+        // 使用正序构建，避免多次 replaceSubrange 的性能问题
+        var result = ""
+        var currentIndex = commandTemplate.startIndex
+
+        for match in matches {
+            guard let keyRange = Range(match.range(at: 1), in: commandTemplate),
+                  let fullRange = Range(match.range, in: commandTemplate) else { continue }
+
+            // 追加占位符前的文本
+            result.append(contentsOf: commandTemplate[currentIndex..<fullRange.lowerBound])
+
+            // 获取值并处理
             let key = String(commandTemplate[keyRange])
+            let value = context.value(forKey: key) ?? ""
 
-            // 优先使用 renderValue（来自 ParsedValue）
-            let value = bindingDict[key]?.renderValue ?? ""
+            // 根据模式决定是否转义
             let finalValue: String
-
-            if forDisplay && !skipEscapeKeys.contains(key) {
+            if forDisplay && !context.shouldSkipEscape(forKey: key) {
                 finalValue = escapeForDisplay(value)
             } else {
                 finalValue = value
             }
 
-            if let fullRange = Range(match.range, in: result) {
-                result.replaceSubrange(fullRange, with: finalValue)
-            }
+            result.append(finalValue)
+            currentIndex = fullRange.upperBound
         }
 
+        // 追加剩余文本
+        result.append(contentsOf: commandTemplate[currentIndex...])
         return result
     }
 
-    /// 渲染命令为参数数组（内部方法）
-    /// - Parameters:
-    ///   - commandTemplate: 命令模板
-    ///   - values: 参数值字典
-    /// - Returns: 参数数组（不包含 ffmpeg 本身）
-    private static func renderArguments(commandTemplate: String, values: TemplateValueDict) -> [String] {
-        var result = commandTemplate
+    // MARK: - Helper Methods
 
-        let range = NSRange(commandTemplate.startIndex..., in: commandTemplate)
-        let matches = placeholderRegex.matches(in: commandTemplate, range: range)
-
-        // 倒序替换，避免位置偏移
-        for match in matches.reversed() {
-            guard let keyRange = Range(match.range(at: 1), in: commandTemplate) else { continue }
-            let key = String(commandTemplate[keyRange])
-
-            // 获取值并直接替换（不做 shell 转义）
-            let value = values[key]?.rawValue ?? ""
-
-            if let fullRange = Range(match.range, in: result) {
-                result.replaceSubrange(fullRange, with: value)
+    /// 从模板参数中收集需要跳过转义的 key
+    private static func collectSkipEscapeKeys(from parameters: [TemplateParameter]) -> Set<String> {
+        var skipEscapeKeys: Set<String> = []
+        for param in parameters {
+            if param.skipEscape == true {
+                skipEscapeKeys.insert(param.key)
             }
         }
+        return skipEscapeKeys
+    }
 
-        // 使用 splitCommand 将结果分割为参数数组
-        let args = splitCommand(result)
+    /// 从绑定中收集需要跳过转义的 key
+    private static func collectSkipEscapeKeysFromBindings(_ bindings: [ParameterBinding]) -> Set<String> {
+        var skipEscapeKeys: Set<String> = []
+        for binding in bindings {
+            if binding.escapeStrategy == .raw {
+                skipEscapeKeys.insert(binding.key)
+            }
+        }
+        return skipEscapeKeys
+    }
 
-        // 移除 ffmpeg 本身（如果存在）
+    /// 从参数数组中移除 ffmpeg 本身
+    private static func removeFFmpegIfNeeded(from args: [String]) -> [String] {
         if let first = args.first, first == "ffmpeg" || first.hasSuffix("ffmpeg") {
             return Array(args.dropFirst())
         }
-
         return args
     }
 
@@ -275,19 +310,24 @@ struct CommandRenderer {
     /// 为 UI 显示转义值（仅用于显示，不用于执行）
     /// - Note: 此方法生成的字符串仅供 UI 展示，看起来像 shell 命令。
     ///         实际执行时应使用 renderToCommand() 返回的 arguments 数组。
+    ///
+    /// 使用 POSIX 标准的单引号转义策略：
+    /// - 空值返回 ''
+    /// - 包含元字符的值用单引号包裹
+    /// - 单引号内部的单引号转义为 '\''
     private static func escapeForDisplay(_ value: String) -> String {
-        // 如果值包含空格或特殊字符，需要用引号包裹
-        let needsQuoting = value.contains(" ") ||
-                          value.contains("\"") ||
-                          value.contains("'") ||
-                          value.contains("$") ||
-                          value.contains("`") ||
-                          value.contains("\\") ||
-                          value.contains("(") ||
-                          value.contains(")")
+        // 空值特殊处理
+        if value.isEmpty {
+            return "''"
+        }
+
+        // 检查是否需要转义
+        // 使用 Unicode scalars 检查以正确处理所有字符
+        let needsQuoting = value.unicodeScalars.contains { shellMetaCharacters.contains($0) }
 
         if needsQuoting {
-            // 使用单引号包裹，并转义单引号
+            // 使用 POSIX 标准的单引号转义
+            // 单引号内部的单引号转义为 '\''（结束引用、添加转义单引号、重新开始引用）
             let escaped = value.replacingOccurrences(of: "'", with: "'\\''")
             return "'\(escaped)'"
         }
@@ -303,6 +343,9 @@ struct CommandRenderer {
     ///
     ///   对于 Template → Execute 的主路径，请使用 `renderToCommand()` 方法，
     ///   它会直接生成正确的参数数组，避免 shell escaping 的不可逆问题。
+    ///
+    /// - Important: 此实现仅支持基本的 shell 引用语法（单引号、双引号、反斜杠转义）。
+    ///              不支持 $()、heredoc、嵌套复杂引号等高级语法。
     static func splitCommand(_ command: String) -> [String] {
         var args: [String] = []
         var current = ""

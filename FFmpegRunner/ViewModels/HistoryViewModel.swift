@@ -20,6 +20,9 @@ class HistoryViewModel: ObservableObject {
     /// 是否正在加载
     @Published private(set) var isLoading = false
 
+    /// 错误信息
+    @Published var errorMessage: String?
+
     /// 选中的历史记录
     @Published var selectedHistory: CommandHistory?
 
@@ -39,8 +42,11 @@ class HistoryViewModel: ObservableObject {
     /// 加载历史记录
     func loadHistory() {
         isLoading = true
-        history = historyService.loadHistory()
-        isLoading = false
+        Task {
+            let items = await historyService.loadHistory()
+            self.history = items
+            self.isLoading = false
+        }
     }
 
     /// 添加历史记录
@@ -49,31 +55,55 @@ class HistoryViewModel: ObservableObject {
             command: command,
             wasSuccessful: wasSuccessful
         )
-        historyService.addEntry(entry)
-        loadHistory()
+        Task {
+            do {
+                try await historyService.addEntry(entry)
+                loadHistory()
+            } catch {
+                self.errorMessage = error.localizedDescription
+            }
+        }
     }
 
     /// 删除历史记录
     func deleteEntry(_ entry: CommandHistory) {
-        historyService.deleteEntry(entry.id)
-        if selectedHistory?.id == entry.id {
-            selectedHistory = nil
+        Task {
+            do {
+                try await historyService.deleteEntry(entry.id)
+                if self.selectedHistory?.id == entry.id {
+                    self.selectedHistory = nil
+                }
+                loadHistory()
+            } catch {
+                self.errorMessage = error.localizedDescription
+            }
         }
-        loadHistory()
     }
 
     /// 重命名历史记录
     func renameEntry(_ entry: CommandHistory, to newName: String) {
         let name = newName.isEmpty ? nil : newName
-        historyService.updateEntry(entry.id, displayName: name)
-        loadHistory()
+        Task {
+            do {
+                try await historyService.updateEntry(entry.id, displayName: name)
+                loadHistory()
+            } catch {
+                self.errorMessage = error.localizedDescription
+            }
+        }
     }
 
     /// 清空所有历史
     func clearAll() {
-        historyService.clearHistory()
-        selectedHistory = nil
-        loadHistory()
+        Task {
+            do {
+                try await historyService.clearHistory()
+                self.selectedHistory = nil
+                loadHistory()
+            } catch {
+                self.errorMessage = error.localizedDescription
+            }
+        }
     }
 
     /// 将历史记录保存为模板

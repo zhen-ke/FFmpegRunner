@@ -77,18 +77,26 @@ final class ServicesOptimizationTests: XCTestCase {
 
     // MARK: - FFmpegPathResolver Caching Tests
 
-    func testFFmpegPathResolverCaching() {
-        // Can't easily test private property `cachedSystemPath`, but we can verify consistent returns.
+    func testFFmpegPathResolverCaching() async {
+        // Can't easily test private property `systemCache`, but we can verify consistent returns.
         // And ensure it doesn't crash on repeated calls.
 
         let resolver = FFmpegPathResolver() // New instance
 
         // 1. First call
-        let path1 = resolver.systemPath
+        let path1 = await resolver.systemPath
 
-        // 2. Second call
-        let path2 = resolver.systemPath
+        // 2. Second call (should use cache)
+        let path2 = await resolver.systemPath
 
         XCTAssertEqual(path1, path2)
+
+        // 3. Invalidate cache and call again
+        await resolver.invalidateCache()
+        let path3 = await resolver.systemPath
+
+        // Path should still be the same (same system)
+        XCTAssertEqual(path1, path3)
     }
 }
+

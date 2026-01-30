@@ -262,10 +262,16 @@ final class ExecutionController: ObservableObject {
     // MARK: - Private Helpers
 
     private func saveToHistory(command: String, wasSuccessful: Bool) {
-        historyService.addEntry(CommandHistory(
-            command: command,
-            wasSuccessful: wasSuccessful
-        ))
-        onHistoryChanged?()
+        Task {
+            let entry = CommandHistory(
+                command: command,
+                wasSuccessful: wasSuccessful
+            )
+            try? await historyService.addEntry(entry)
+            // 通知变更 (回到主线程)
+            await MainActor.run {
+                self.onHistoryChanged?()
+            }
+        }
     }
 }

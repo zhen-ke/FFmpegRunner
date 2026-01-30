@@ -14,9 +14,11 @@ struct SettingsView: View {
     @EnvironmentObject var executionViewModel: ExecutionViewModel
 
     // 直接访问 FFmpegService.shared
-    private var ffmpegService: FFmpegService { FFmpegService.shared }
+    @ObservedObject private var ffmpegService = FFmpegService.shared
 
     @State private var isCustomPathValid = false
+    @State private var systemFFmpegPath: String?
+    @State private var isSystemAvailable = false
 
     var body: some View {
         Form {
@@ -77,13 +79,13 @@ struct SettingsView: View {
 
                 // 系统安装状态
                 if ffmpegService.ffmpegSource == .system {
-                    if ffmpegService.isSystemFFmpegAvailable {
+                    if isSystemAvailable {
                         HStack {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundColor(.green)
                             Text("系统 FFmpeg 可用")
                             Spacer()
-                            Text(ffmpegService.findSystemFFmpeg() ?? "")
+                            Text(systemFFmpegPath ?? ffmpegService.cachedSystemPath ?? "")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -98,6 +100,13 @@ struct SettingsView: View {
                             Text("请通过 Homebrew 安装: brew install ffmpeg")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+
+                            Button("刷新") {
+                                Task {
+                                    await refreshSystemPath()
+                                }
+                            }
+                            .buttonStyle(.link)
                         }
                     }
                 }
@@ -192,12 +201,27 @@ struct SettingsView: View {
         .task {
             // 初始检查
             checkCustomPath(ffmpegService.customFFmpegPath)
+            await refreshSystemPath()
+        }
+        .onChange(of: ffmpegService.ffmpegSource) { _ in
+            // 切换到系统来源时刷新
+            if ffmpegService.ffmpegSource == .system {
+                Task {
+                    await refreshSystemPath()
+                }
+            }
         }
     }
 
     private func checkCustomPath(_ path: String) {
         let isValid = !path.isEmpty && FileManager.default.isExecutableFile(atPath: path)
         isCustomPathValid = isValid
+    }
+
+    private func refreshSystemPath() async {
+        let path = await ffmpegService.findSystemFFmpeg()
+        systemFFmpegPath = path
+        isSystemAvailable = path != nil
     }
 
     private func showBundledFFmpegHelp() {

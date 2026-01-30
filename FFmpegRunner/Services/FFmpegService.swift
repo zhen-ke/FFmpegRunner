@@ -8,7 +8,7 @@
 import Foundation
 
 /// FFmpeg 来源类型
-enum FFmpegSource: String, CaseIterable, Codable {
+enum FFmpegSource: String, CaseIterable, Codable, Sendable {
     /// 使用 App 内置的二进制文件
     case bundled = "bundled"
     /// 使用系统安装的 FFmpeg
@@ -45,13 +45,17 @@ class FFmpegService: ObservableObject {
 
     @Published private(set) var isRunning = false
     @Published private(set) var currentProcess: Process?
+
+    /// 系统 FFmpeg 路径的缓存（用于 UI 展示）
+    @Published private(set) var cachedSystemPath: String?
+
     /// FFmpeg 来源：从 UserSettings 读取，统一数据源
     var ffmpegSource: FFmpegSource {
         get { UserSettings.shared.ffmpegSource }
         set {
             UserSettings.shared.ffmpegSource = newValue
             objectWillChange.send()
-            updateFFmpegPath()
+            Task { await updateFFmpegPathAsync() }
         }
     }
 
@@ -61,7 +65,7 @@ class FFmpegService: ObservableObject {
     var onLogOutput: ((LogEntry) -> Void)?
 
     /// 当前使用的 FFmpeg 路径
-    private(set) var ffmpegPath: String = ""
+    @Published private(set) var ffmpegPath: String = ""
 
     /// 自定义 FFmpeg 路径：从 UserSettings 读取，统一数据源
     var customFFmpegPath: String {
@@ -70,7 +74,7 @@ class FFmpegService: ObservableObject {
             UserSettings.shared.customFFmpegPath = newValue
             cachedVersion = nil // 路径变化时清除缓存
             if ffmpegSource == .custom {
-                updateFFmpegPath()
+                Task { await updateFFmpegPathAsync() }
             }
         }
     }
@@ -78,7 +82,7 @@ class FFmpegService: ObservableObject {
     /// 路径解析器（依赖注入）
     private let pathResolver: FFmpegPathProviding
 
-    /// 内置 FFmpeg 路径（委托给 pathResolver）
+    /// 内置 FFmpeg 路径（委托给 pathResolver，同步访问）
     var bundledFFmpegPath: String? {
         pathResolver.bundledPath
     }
@@ -88,29 +92,51 @@ class FFmpegService: ObservableObject {
     private init(pathResolver: FFmpegPathProviding = FFmpegPathResolver()) {
         self.pathResolver = pathResolver
 
-        // 仅在首次启动时自动检测可用的 FFmpeg 来源
-        // 如果当前选择的来源不可用，自动切换到可用的来源
+        // 同步设置 bundled 路径（无 I/O，安全）
+        if ffmpegSource == .bundled, let bundled = pathResolver.bundledPath {
+            ffmpegPath = bundled
+        } else if ffmpegSource == .custom {
+            ffmpegPath = customFFmpegPath
+        }
+
+        // 延迟异步初始化（避免阻塞主线程）
+        Task { await initializePathAsync() }
+    }
+
+    /// 异步初始化路径（处理需要 I/O 的情况）
+    private func initializePathAsync() async {
         let currentSource = UserSettings.shared.ffmpegSource
+
+        // 如果选择了 bundled 但不可用，尝试切换到 system
         if currentSource == .bundled && pathResolver.bundledPath == nil {
-            if pathResolver.systemPath != nil {
+            if await pathResolver.systemPath != nil {
                 UserSettings.shared.ffmpegSource = .system
             }
         }
-        updateFFmpegPath()
+
+        await updateFFmpegPathAsync()
     }
 
     // MARK: - Path Management
 
-    /// 更新 FFmpeg 路径
-    private func updateFFmpegPath() {
-        ffmpegPath = pathResolver.resolvePath(for: ffmpegSource, customPath: customFFmpegPath) ?? ""
+    /// 异步更新 FFmpeg 路径
+    private func updateFFmpegPathAsync() async {
+        let path = await pathResolver.resolvePath(for: ffmpegSource, customPath: customFFmpegPath)
+        ffmpegPath = path ?? ""
+
+        // 同时更新缓存的系统路径
+        if ffmpegSource == .system {
+            cachedSystemPath = path
+        }
     }
 
     // MARK: - Public Methods
 
-    /// 查找系统中的 FFmpeg
-    func findSystemFFmpeg() -> String? {
-        pathResolver.systemPath
+    /// 查找系统中的 FFmpeg（异步）
+    func findSystemFFmpeg() async -> String? {
+        let path = await pathResolver.systemPath
+        cachedSystemPath = path
+        return path
     }
 
     /// 检查内置 FFmpeg 是否可用
@@ -118,9 +144,9 @@ class FFmpegService: ObservableObject {
         bundledFFmpegPath != nil
     }
 
-    /// 检查系统 FFmpeg 是否可用
-    var isSystemFFmpegAvailable: Bool {
-        findSystemFFmpeg() != nil
+    /// 检查系统 FFmpeg 是否可用（异步）
+    func isSystemFFmpegAvailable() async -> Bool {
+        await findSystemFFmpeg() != nil
     }
 
     /// 检查当前配置的 FFmpeg 是否可用
@@ -139,6 +165,15 @@ class FFmpegService: ObservableObject {
         self.ffmpegSource = source
         // 如果来源改变，清除版本缓存
         self.cachedVersion = nil
+    }
+
+    /// 刷新系统 FFmpeg 路径缓存
+    func refreshSystemPath() async {
+        await pathResolver.invalidateCache()
+        cachedSystemPath = await pathResolver.systemPath
+        if ffmpegSource == .system {
+            ffmpegPath = cachedSystemPath ?? ""
+        }
     }
 
     /// 获取 FFmpeg 版本
