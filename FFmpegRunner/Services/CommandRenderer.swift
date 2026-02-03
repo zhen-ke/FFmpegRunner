@@ -108,14 +108,12 @@ struct RenderedCommand {
     /// 用于 UI 展示的命令字符串（带 shell 转义）
     let displayString: String
 
+    /// 缺失的占位符（基于模板 + 值判断）
+    let missingPlaceholders: [String]
+
     /// 命令是否完整（所有占位符都已替换）
     var isComplete: Bool {
         CommandRenderer.isComplete(displayString)
-    }
-
-    /// 未替换的占位符
-    var missingPlaceholders: [String] {
-        CommandRenderer.getMissingPlaceholders(displayString)
     }
 }
 
@@ -190,6 +188,11 @@ struct CommandRenderer {
             rawCommandKeys: rawCommandKeys
         )
 
+        let missingPlaceholders = collectMissingPlaceholders(
+            commandTemplate: template.commandTemplate,
+            context: context
+        )
+
         // UI 展示字符串（允许 shell escaping）
         let displayString = render(
             commandTemplate: template.commandTemplate,
@@ -203,7 +206,11 @@ struct CommandRenderer {
             context: context
         )
 
-        return RenderedCommand(arguments: arguments, displayString: displayString)
+        return RenderedCommand(
+            arguments: arguments,
+            displayString: displayString,
+            missingPlaceholders: missingPlaceholders
+        )
     }
 
     /// 渲染命令（使用 TemplateBinding，语义闭环路径）
@@ -219,6 +226,11 @@ struct CommandRenderer {
             rawCommandKeys: rawCommandKeys
         )
 
+        let missingPlaceholders = collectMissingPlaceholders(
+            commandTemplate: binding.template.commandTemplate,
+            context: context
+        )
+
         // UI 展示字符串（允许 shell escaping）
         let displayString = render(
             commandTemplate: binding.template.commandTemplate,
@@ -232,7 +244,11 @@ struct CommandRenderer {
             context: context
         )
 
-        return RenderedCommand(arguments: arguments, displayString: displayString)
+        return RenderedCommand(
+            arguments: arguments,
+            displayString: displayString,
+            missingPlaceholders: missingPlaceholders
+        )
     }
 
     // MARK: - Arguments Builder (Execution-Only)
@@ -259,9 +275,9 @@ struct CommandRenderer {
 
         /// 将静态文本按空白拆分后追加到 args
         func appendStatic(_ text: Substring) {
-            let parts = text
-                .split(whereSeparator: \.isWhitespace)
-                .map(String.init)
+            let staticText = String(text)
+            guard !staticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            let parts = splitCommand(staticText)
             args.append(contentsOf: parts)
         }
 
@@ -394,7 +410,7 @@ struct CommandRenderer {
 
     /// 从参数数组中移除 ffmpeg 本身
     private static func removeFFmpegIfNeeded(from args: [String]) -> [String] {
-        if let first = args.first, first == "ffmpeg" || first.hasSuffix("ffmpeg") {
+        if let first = args.first, (first as NSString).lastPathComponent == "ffmpeg" {
             return Array(args.dropFirst())
         }
         return args
@@ -417,6 +433,32 @@ struct CommandRenderer {
             guard let keyRange = Range(match.range(at: 1), in: command) else { return nil }
             return String(command[keyRange])
         }
+    }
+
+    /// 收集缺失占位符（值为空或不存在）
+    private static func collectMissingPlaceholders(
+        commandTemplate: String,
+        context: RenderContext
+    ) -> [String] {
+        let range = NSRange(commandTemplate.startIndex..., in: commandTemplate)
+        let matches = placeholderRegex.matches(in: commandTemplate, range: range)
+
+        var missing: [String] = []
+        var seen: Set<String> = []
+
+        for match in matches {
+            guard let keyRange = Range(match.range(at: 1), in: commandTemplate) else { continue }
+            let key = String(commandTemplate[keyRange])
+            if seen.contains(key) { continue }
+            seen.insert(key)
+
+            let value = context.value(forKey: key) ?? ""
+            if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                missing.append(key)
+            }
+        }
+
+        return missing
     }
 
     /// 提取模板中的所有占位符

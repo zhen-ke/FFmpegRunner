@@ -84,12 +84,10 @@ struct SidebarContentView: View {
     @Binding var showHistorySheet: Bool
 
     @State private var activeAlert: SidebarAlertType?
+    @State private var listSelection: Template?
 
     var body: some View {
-        List(selection: Binding(
-            get: { viewModel.selectedTemplate },
-            set: { viewModel.selectedTemplate = $0 }
-        )) {
+        List(selection: $listSelection) {
             // ✅ 最近历史（最多 3 条）
             if !historyViewModel.isEmpty {
                 RecentHistorySection(
@@ -121,6 +119,19 @@ struct SidebarContentView: View {
             }
         }
         .listStyle(.sidebar)
+        .onAppear {
+            listSelection = viewModel.selectedTemplate
+        }
+        .onChange(of: viewModel.selectedTemplate) { newValue in
+            if listSelection?.id != newValue?.id {
+                listSelection = newValue
+            }
+        }
+        .onChange(of: listSelection) { newValue in
+            if viewModel.selectedTemplate?.id != newValue?.id {
+                viewModel.selectedTemplate = newValue
+            }
+        }
         .alert(item: $activeAlert) { alertType in
             switch alertType {
             case .deleteConfirmation(let template):

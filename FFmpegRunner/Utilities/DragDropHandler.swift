@@ -16,19 +16,21 @@ struct DragDropHandler {
     static func extractFileURL(from providers: [NSItemProvider]) async -> URL? {
         guard let provider = providers.first else { return nil }
 
-        // 在主线程上同步获取 provider 信息
         let typeIdentifier = UTType.fileURL.identifier
 
         return await withCheckedContinuation { continuation in
-            provider.loadItem(forTypeIdentifier: typeIdentifier, options: nil) { item, error in
-                DispatchQueue.main.async {
-                    if let data = item as? Data,
-                       let url = URL(dataRepresentation: data, relativeTo: nil) {
+            provider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { data, _ in
+                if let data = data,
+                   let url = URL(dataRepresentation: data, relativeTo: nil) {
+                    DispatchQueue.main.async {
                         continuation.resume(returning: url)
-                    } else if let url = item as? URL {
-                        continuation.resume(returning: url)
-                    } else {
-                        continuation.resume(returning: nil)
+                    }
+                    return
+                }
+
+                provider.loadObject(ofClass: URL.self) { object, _ in
+                    DispatchQueue.main.async {
+                        continuation.resume(returning: object)
                     }
                 }
             }

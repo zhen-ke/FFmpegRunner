@@ -89,54 +89,88 @@ struct CommandTextView: View {
     /// 是否应该高亮工具入口（-i 后缀检测）
     @State private var shouldHighlightMenu = false
 
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            // 主文本输入区域
-            ZStack(alignment: .topLeading) {
-                CommandTextViewRepresentable(
-                    text: $text,
-                    insertPathHandler: $insertPathHandler,
-                    isFocused: $isFocused
-                )
-                .frame(minHeight: 100)
+    /// 光标选区（用于更精准的 -i 提示）
+    @State private var selectionRange: NSRange = NSRange(location: 0, length: 0)
 
-                // Placeholder
-                if text.isEmpty, let placeholder = placeholder {
-                    Text(placeholder)
-                        .foregroundColor(.secondary.opacity(0.5))
-                        .font(.system(.body, design: .monospaced))
-                        .padding(.top, 8)
-                        .padding(.leading, 8)
-                        .allowsHitTesting(false)
+    /// 路径校验提示
+    @State private var validationIssues: [CommandPathIssue] = []
+    @State private var validationTask: Task<Void, Never>?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .bottomTrailing) {
+                // 主文本输入区域
+                ZStack(alignment: .topLeading) {
+                    CommandTextViewRepresentable(
+                        text: $text,
+                        insertPathHandler: $insertPathHandler,
+                        isFocused: $isFocused,
+                        selectionRange: $selectionRange,
+                        onInsertFile: { insertFile(isDirectory: false) },
+                        onInsertDirectory: { insertFile(isDirectory: true) }
+                    )
+                    .frame(minHeight: 100)
+
+                    // Placeholder
+                    if text.isEmpty, let placeholder = placeholder {
+                        Text(placeholder)
+                            .foregroundColor(.secondary.opacity(0.5))
+                            .font(.system(.body, design: .monospaced))
+                            .padding(.top, 8)
+                            .padding(.leading, 8)
+                            .allowsHitTesting(false)
+                    }
+                }
+
+                // 右下角插入按钮（仅在 hover / focus 时显示）
+                if isHovering || isFocused {
+                    CommandInsertButtons(
+                        highlightFile: shouldHighlightMenu,
+                        insertFile: { insertFile(isDirectory: false) },
+                        insertDirectory: { insertFile(isDirectory: true) }
+                    )
+                    .padding(8)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
+            }
+            .background(Color(NSColor.textBackgroundColor))
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+            )
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isHovering = hovering
                 }
             }
 
-            // 悬浮工具入口（仅在 hover / focus 时显示）
-            if isHovering || isFocused {
-                CommandInlineMenu(
-                    isHighlighted: shouldHighlightMenu,
-                    insertFile: { insertFile(isDirectory: false) },
-                    insertDirectory: { insertFile(isDirectory: true) }
-                )
-                .frame(width: 28, height: 28)
-                .contentShape(Circle())
-                .padding(8)
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            if !validationIssues.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(validationIssues) { issue in
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.red)
+                            Text(issue.message)
+                                .font(.caption2)
+                                .foregroundColor(.red)
+                        }
+                    }
+                }
+                .padding(.leading, 4)
             }
         }
-        .background(Color(NSColor.textBackgroundColor))
-        .cornerRadius(6)
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-        )
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovering = hovering
-            }
+        .onAppear {
+            updateMenuHint(for: text, selection: selectionRange)
+            scheduleValidation(for: text)
         }
         .onChange(of: text) { newValue in
-            updateMenuHint(for: newValue)
+            updateMenuHint(for: newValue, selection: selectionRange)
+            scheduleValidation(for: newValue)
+        }
+        .onChange(of: selectionRange) { newRange in
+            updateMenuHint(for: text, selection: newRange)
         }
     }
 
@@ -163,67 +197,184 @@ struct CommandTextView: View {
         insertPathHandler?(escapedPath)
     }
 
-    /// 检测是否在 -i 后（高亮菜单）
-    private func updateMenuHint(for text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        let endsWithInputFlag = trimmed.hasSuffix("-i") || text.hasSuffix("-i ")
+    /// 检测是否在 -i 后（高亮按钮）
+    private func updateMenuHint(for text: String, selection: NSRange) {
+        guard selection.location != NSNotFound else {
+            shouldHighlightMenu = false
+            return
+        }
+        let caretIndex = min(selection.location, text.count)
+        let prefix = text.prefix(caretIndex)
+        let trimmed = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        let endsWithInputFlag = trimmed.hasSuffix("-i")
 
         withAnimation(.easeInOut(duration: 0.2)) {
             shouldHighlightMenu = endsWithInputFlag
         }
     }
+
+    // MARK: - Path Validation
+
+    private func scheduleValidation(for text: String) {
+        validationTask?.cancel()
+        validationTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            validationIssues = collectValidationIssues(from: text)
+        }
+    }
+
+    private func collectValidationIssues(from text: String) -> [CommandPathIssue] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        let args = CommandRenderer.splitCommand(trimmed)
+        guard !args.isEmpty else { return [] }
+
+        var issues: [CommandPathIssue] = []
+        let fm = FileManager.default
+
+        // 1) 校验 -i 输入文件是否存在（仅检查绝对路径或 ~）
+        for index in 0..<args.count {
+            guard args[index] == "-i", index + 1 < args.count else { continue }
+            let candidate = args[index + 1]
+            guard shouldValidatePath(candidate) else { continue }
+
+            let expanded = (candidate as NSString).expandingTildeInPath
+            if !fm.fileExists(atPath: expanded) {
+                issues.append(CommandPathIssue(message: "输入文件不存在：\(candidate)"))
+            }
+        }
+
+        // 2) 输出格式与扩展名不一致（轻量提示）
+        if let output = findOutputPath(in: args),
+           let format = findLastFormat(in: args),
+           let ext = output.pathExtensionLowercased,
+           !ext.isEmpty,
+           format != ext {
+            issues.append(CommandPathIssue(message: "输出格式 (-f \(format)) 与扩展名 (.\(ext)) 可能不一致"))
+        }
+
+        // 限制提示数量，避免干扰
+        if issues.count > 3 {
+            return Array(issues.prefix(3))
+        }
+
+        return issues
+    }
+
+    private func shouldValidatePath(_ value: String) -> Bool {
+        if value.hasPrefix("-") { return false }
+        if value == "-" { return false }
+        if value.contains("://") { return false }
+        if value.hasPrefix("pipe:") || value.hasPrefix("concat:") { return false }
+        return value.hasPrefix("/") || value.hasPrefix("~")
+    }
+
+    private func findOutputPath(in args: [String]) -> String? {
+        var output: String?
+        for arg in args {
+            if arg.hasPrefix("-") { continue }
+            if arg.contains(":") && !arg.contains("/") { continue }
+            output = arg
+        }
+        return output
+    }
+
+    private func findLastFormat(in args: [String]) -> String? {
+        var format: String?
+        for index in 0..<args.count {
+            guard args[index] == "-f", index + 1 < args.count else { continue }
+            format = args[index + 1].lowercased()
+        }
+        return format
+    }
 }
 
-// MARK: - Inline Menu (悬浮工具入口)
+// MARK: - Insert Buttons (右下角工具)
 
-private struct CommandInlineMenu: View {
-    var isHighlighted: Bool = false
+private struct CommandInsertButtons: View {
+    var highlightFile: Bool = false
     let insertFile: () -> Void
     let insertDirectory: () -> Void
 
-    @State private var isHovering = false
-
     var body: some View {
-        Menu {
+        HStack(spacing: 6) {
             Button(action: insertFile) {
-                Label("插入文件…", systemImage: "doc")
+                Label("插入文件", systemImage: "doc")
+                    .labelStyle(.iconOnly)
             }
-            Button(action: insertDirectory) {
-                Label("插入目录…", systemImage: "folder")
-            }
-            Divider()
-            Text("💡 可直接从 Finder 拖入文件")
-                .font(.caption)
-        } label: {
-            Image(systemName: isHighlighted ? "plus.circle.fill" : "ellipsis.circle")
-                .foregroundColor(isHighlighted ? .accentColor : .secondary)
-                .font(.system(size: 14, weight: isHighlighted ? .medium : .regular))
-                .padding(6)
-                .background(
-                    Circle()
-                        .fill(backgroundColor)
-                )
-                .overlay(
-                    Circle()
-                        .stroke(isHighlighted ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
-                )
-                .scaleEffect(isHovering ? 1.1 : 1.0)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.1)) {
-                isHovering = hovering
-            }
-        }
-        .help(isHighlighted ? "检测到 -i，建议插入输入文件" : "插入文件或目录路径")
-    }
+            .buttonStyle(.plain)
+            .controlSize(.small)
+            .padding(4)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(highlightFile ? Color.accentColor.opacity(0.12) : Color(NSColor.controlBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(highlightFile ? Color.accentColor.opacity(0.5) : Color(NSColor.separatorColor).opacity(0.6), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .pointingHandCursor()
+            .help(highlightFile ? "检测到 -i，建议插入输入文件" : "插入文件路径")
 
-    private var backgroundColor: Color {
-        if isHighlighted {
-            return Color.accentColor.opacity(0.1)
+            Button(action: insertDirectory) {
+                Label("插入目录", systemImage: "folder")
+                    .labelStyle(.iconOnly)
+            }
+            .buttonStyle(.plain)
+            .controlSize(.small)
+            .padding(4)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(NSColor.controlBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color(NSColor.separatorColor).opacity(0.6), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .pointingHandCursor()
+            .help("插入目录路径")
         }
-        return isHovering ? Color.black.opacity(0.08) : Color.black.opacity(0.04)
+        .padding(4)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(NSColor.windowBackgroundColor).opacity(0.9))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(NSColor.separatorColor).opacity(0.6), lineWidth: 1)
+        )
+    }
+}
+
+// MARK: - Cursor Helper
+
+private extension View {
+    func pointingHandCursor() -> some View {
+        onHover { hovering in
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+    }
+}
+
+// MARK: - Command Path Issue
+
+private struct CommandPathIssue: Identifiable {
+    let id = UUID()
+    let message: String
+}
+
+private extension String {
+    var pathExtensionLowercased: String? {
+        let ext = (self as NSString).pathExtension.lowercased()
+        return ext.isEmpty ? nil : ext
     }
 }
 
@@ -233,6 +384,9 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
     @Binding var text: String
     @Binding var insertPathHandler: ((String) -> Void)?
     @Binding var isFocused: Bool
+    @Binding var selectionRange: NSRange
+    var onInsertFile: (() -> Void)?
+    var onInsertDirectory: (() -> Void)?
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -268,6 +422,8 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
         // 设置代理
         textView.delegate = context.coordinator
         context.coordinator.textView = textView
+        textView.onInsertFile = onInsertFile
+        textView.onInsertDirectory = onInsertDirectory
 
         scrollView.documentView = textView
 
@@ -293,6 +449,10 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
             if selectedRange.location <= text.count {
                 textView.setSelectedRange(selectedRange)
             }
+        }
+        if let commandTextView = textView as? CommandNSTextView {
+            commandTextView.onInsertFile = onInsertFile
+            commandTextView.onInsertDirectory = onInsertDirectory
         }
     }
 
@@ -330,6 +490,13 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
             parent.text = textView.string
         }
 
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            DispatchQueue.main.async {
+                self.parent.selectionRange = textView.selectedRange()
+            }
+        }
+
         /// 在光标位置插入文本（带智能空格）
         func insertAtCursor(_ path: String) {
             guard let textView = textView else { return }
@@ -346,6 +513,9 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
 // MARK: - Custom NSTextView with Drag Support
 
 final class CommandNSTextView: NSTextView {
+
+    var onInsertFile: (() -> Void)?
+    var onInsertDirectory: (() -> Void)?
 
     /// 当前 hover 的路径范围（用于高亮）
     private var hoveredPathRange: NSRange?
@@ -435,6 +605,24 @@ final class CommandNSTextView: NSTextView {
         }
 
         super.draw(dirtyRect)
+    }
+
+    // MARK: - Keyboard Shortcuts
+
+    override func keyDown(with event: NSEvent) {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags.contains(.command),
+           let key = event.charactersIgnoringModifiers?.lowercased(),
+           key == "i" {
+            if flags.contains(.shift) {
+                onInsertDirectory?()
+            } else {
+                onInsertFile?()
+            }
+            return
+        }
+
+        super.keyDown(with: event)
     }
 
     // MARK: - Drag & Drop
