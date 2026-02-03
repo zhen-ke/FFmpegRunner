@@ -180,6 +180,21 @@ struct SettingsView: View {
                 Stepper("最大日志条目: \(settings.maxLogEntries)", value: $settings.maxLogEntries, in: 100...10000, step: 100)
             }
 
+            // 日志设置
+            Section("日志") {
+                Toggle("详细日志输出", isOn: $settings.enableVerboseLogging)
+
+                Toggle("合并进度日志", isOn: $settings.coalesceProgressLogs)
+
+                Stepper(
+                    "进度合并间隔: \(settings.progressCoalesceIntervalMs) ms",
+                    value: $settings.progressCoalesceIntervalMs,
+                    in: 50...1000,
+                    step: 50
+                )
+                .disabled(!settings.coalesceProgressLogs)
+            }
+
             // 执行设置
             Section("执行") {
                 Toggle("执行前确认", isOn: $settings.confirmBeforeRun)

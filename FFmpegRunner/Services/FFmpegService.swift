@@ -237,13 +237,11 @@ class FFmpegService: ObservableObject {
         }
         process.arguments = finalArgs
 
-        // 🔍 调试日志：输出实际 arguments
-        print("=== DEBUG: FFmpeg Arguments ===")
-        print("Arguments count: \(finalArgs.count)")
+        // 🔍 调试日志：输出实际 arguments（仅在开启详细日志时）
+        AppLogger.debug(AppLogger.ffmpeg, "FFmpeg arguments count: \(finalArgs.count)")
         for (i, arg) in finalArgs.enumerated() {
-            print("  [\(i)] = \(arg)")
+            AppLogger.debug(AppLogger.ffmpeg, "  [\(i)] = \(arg)")
         }
-        print("================================")
 
         // 设置管道
         let stdoutPipe = Pipe()

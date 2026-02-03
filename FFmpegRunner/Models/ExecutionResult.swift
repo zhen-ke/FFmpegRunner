@@ -128,13 +128,24 @@ struct LogEntry: Identifiable, Equatable {
     /// 是否来自 stderr（用于颜色区分）
     var isStderr: Bool
 
+    /// 是否为进度日志（frame= / time= 等）
+    var isProgress: Bool
+
     /// 初始化器
-    init(timestamp: Date, level: LogLevel, message: String, isStderr: Bool = false) {
-        self.id = UUID()
+    init(
+        id: UUID = UUID(),
+        timestamp: Date,
+        level: LogLevel,
+        message: String,
+        isStderr: Bool = false,
+        isProgress: Bool = false
+    ) {
+        self.id = id
         self.timestamp = timestamp
         self.level = level
         self.message = message
         self.isStderr = isStderr
+        self.isProgress = isProgress
     }
 
     /// 格式化的时间戳
@@ -153,6 +164,23 @@ struct LogEntry: Identifiable, Equatable {
         let lowercased = message.lowercased()
         let errorKeywords = ["error", "failed", "invalid", "cannot", "no such", "not found", "denied", "fatal"]
         return errorKeywords.contains { lowercased.contains($0) }
+    }
+
+    /// 是否为重要日志（错误/警告）
+    var isImportant: Bool {
+        level == .error || level == .warning
+    }
+
+    /// 使用指定 ID 创建副本（用于合并进度日志）
+    func withId(_ id: UUID) -> LogEntry {
+        LogEntry(
+            id: id,
+            timestamp: timestamp,
+            level: level,
+            message: message,
+            isStderr: isStderr,
+            isProgress: isProgress
+        )
     }
 }
 

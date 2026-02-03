@@ -99,7 +99,7 @@ actor HistoryService {
             historyCache = sortedHistory
             return sortedHistory
         } catch {
-            print("Failed to load history: \(error)")
+            AppLogger.notice(AppLogger.history, "Failed to load history: \(error)")
             // 发生错误时返回空数组，不中断流程
             return []
         }

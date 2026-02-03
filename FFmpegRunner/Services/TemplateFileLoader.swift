@@ -45,12 +45,12 @@ enum TemplateFileLoader {
                         templates.append(template)
                     } catch let decodingError as DecodingError {
                         // 解码错误记录但继续处理
-                        print("[TemplateFileLoader] Decoding failed for \(fileURL.lastPathComponent): \(decodingError)")
+                        AppLogger.notice(AppLogger.template, "Decoding failed for \(fileURL.lastPathComponent): \(decodingError)")
                         // 可以选择收集错误而不是中断
                         continue
                     } catch {
                         // 文件读取错误记录但继续
-                        print("[TemplateFileLoader] Read failed for \(fileURL.lastPathComponent): \(error)")
+                        AppLogger.notice(AppLogger.template, "Read failed for \(fileURL.lastPathComponent): \(error)")
                         continue
                     }
                 }

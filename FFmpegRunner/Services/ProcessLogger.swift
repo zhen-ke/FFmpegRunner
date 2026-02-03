@@ -106,10 +106,16 @@ class ProcessLogger: ProcessLoggerProviding {
     private func flushBuffer(isError: Bool) {
         guard !lineBuffer.isEmpty else { return }
 
+        let droppedCount = lineBuffer.count
+        let snippetLimit = 200
+        let snippet = String(lineBuffer.prefix(snippetLimit))
+        let snippetSuffix = snippet.isEmpty ? "" : "，示例: \(snippet)"
+
         let entry = LogEntry(
             timestamp: Date(),
             level: isError ? .warning : .info,
-            message: "[缓冲区溢出] \(lineBuffer)"
+            message: "[缓冲区溢出] 日志输出过快，已丢弃 \(droppedCount) 字符\(snippetSuffix)",
+            isStderr: isError
         )
         onLog?(entry)
         lineBuffer.removeAll()
@@ -117,26 +123,29 @@ class ProcessLogger: ProcessLoggerProviding {
 
     /// 处理单行输出
     private func processLine(_ line: String, isError: Bool) {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        let lowercased = trimmed.lowercased()
+        let isProgress = isProgressLine(lowercased)
+
         // 检测日志级别
-        let level = detectLogLevel(trimmed, isError: isError)
+        let level = detectLogLevel(lowercased, isError: isError, isProgress: isProgress)
 
         // 创建日志条目
         let entry = LogEntry(
             timestamp: Date(),
             level: level,
-            message: trimmed
+            message: trimmed,
+            isStderr: isError,
+            isProgress: isProgress
         )
 
         onLog?(entry)
     }
 
     /// 检测日志级别
-    private func detectLogLevel(_ line: String, isError: Bool) -> LogLevel {
-        let lowercased = line.lowercased()
-
+    private func detectLogLevel(_ lowercased: String, isError: Bool, isProgress: Bool) -> LogLevel {
         // 错误
         if lowercased.contains("error") ||
            lowercased.contains("failed") ||
@@ -153,14 +162,22 @@ class ProcessLogger: ProcessLoggerProviding {
         }
 
         // 进度信息（frame=, size=, time= 等）
-        if lowercased.contains("frame=") ||
-           lowercased.contains("size=") ||
-           lowercased.contains("time=") {
+        if isProgress {
             return .debug
         }
 
         // 默认
         return isError ? .warning : .info
+    }
+
+    /// 是否为 FFmpeg 进度行
+    private func isProgressLine(_ lowercased: String) -> Bool {
+        lowercased.contains("frame=") ||
+        lowercased.contains("fps=") ||
+        lowercased.contains("size=") ||
+        lowercased.contains("time=") ||
+        lowercased.contains("bitrate=") ||
+        lowercased.contains("speed=")
     }
 
     /// 解析 FFmpeg 进度行（使用字符串分割，性能优于正则表达式）

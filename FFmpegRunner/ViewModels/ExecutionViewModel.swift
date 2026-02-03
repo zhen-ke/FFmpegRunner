@@ -77,6 +77,16 @@ class ExecutionViewModel: ObservableObject {
         UserSettings.shared.maxLogEntries
     }
 
+    /// 是否合并进度日志
+    private var shouldCoalesceProgressLogs: Bool {
+        UserSettings.shared.coalesceProgressLogs
+    }
+
+    /// 进度日志合并间隔（秒）
+    private var progressCoalesceInterval: TimeInterval {
+        TimeInterval(UserSettings.shared.progressCoalesceIntervalMs) / 1000.0
+    }
+
     // MARK: - Dependencies
 
     /// 执行控制器 (Application Layer)
@@ -91,6 +101,9 @@ class ExecutionViewModel: ObservableObject {
             controller.onHistoryChanged = onHistoryChanged
         }
     }
+
+    /// 上次进度日志更新时间
+    private var lastProgressLogTime: Date?
 
     // MARK: - Initialization
 
@@ -236,15 +249,47 @@ class ExecutionViewModel: ObservableObject {
     func clearLogs() {
         logs = []
         visibleLogs = []
+        lastProgressLogTime = nil
     }
 
     /// 添加日志条目
     func appendLog(_ entry: LogEntry) {
-        logs.append(entry)
+        if entry.isProgress, shouldCoalesceProgressLogs {
+            let now = entry.timestamp
+            if let lastIndex = logs.indices.last,
+               logs[lastIndex].isProgress,
+               let lastTime = lastProgressLogTime,
+               now.timeIntervalSince(lastTime) < progressCoalesceInterval {
+                logs[lastIndex] = entry.withId(logs[lastIndex].id)
+                lastProgressLogTime = now
+                return
+            }
+            lastProgressLogTime = now
+        }
 
-        // 限制日志数量
-        if logs.count > maxLogEntries {
-            logs.removeFirst(logs.count - maxLogEntries)
+        logs.append(entry)
+        trimLogsIfNeeded()
+    }
+
+    private func trimLogsIfNeeded() {
+        guard logs.count > maxLogEntries else { return }
+
+        var overflow = logs.count - maxLogEntries
+
+        // 优先移除不重要日志（debug/info），保留错误/警告
+        var index = 0
+        while overflow > 0, index < logs.count {
+            if !logs[index].isImportant {
+                logs.remove(at: index)
+                overflow -= 1
+                continue
+            }
+            index += 1
+        }
+
+        // 如果仍超出，移除最旧的日志
+        if overflow > 0 {
+            logs.removeFirst(overflow)
         }
     }
 

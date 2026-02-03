@@ -37,6 +37,7 @@
 		001A0020 /* FilePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0020 /* FilePicker.swift */; };
 		001A0021 /* DragDropHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0021 /* DragDropHandler.swift */; };
 		001A0022 /* UserSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0022 /* UserSettings.swift */; };
+		001A0051 /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0051 /* AppLogger.swift */; };
 		001A0023 /* Templates in Resources */ = {isa = PBXBuildFile; fileRef = 001B0023 /* Templates */; };
 		001A0024 /* CommandHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0024 /* CommandHistory.swift */; };
 		001A0025 /* HistoryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0025 /* HistoryService.swift */; };
@@ -87,6 +88,7 @@
 		001B0020 /* FilePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilePicker.swift; sourceTree = "<group>"; };
 		001B0021 /* DragDropHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragDropHandler.swift; sourceTree = "<group>"; };
 		001B0022 /* UserSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserSettings.swift; sourceTree = "<group>"; };
+		001B0051 /* AppLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogger.swift; sourceTree = "<group>"; };
 		001B0023 /* Templates */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Templates; sourceTree = "<group>"; };
 		001B0024 /* CommandHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandHistory.swift; sourceTree = "<group>"; };
 		001B0025 /* HistoryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryService.swift; sourceTree = "<group>"; };
@@ -230,6 +232,7 @@
 				001B0020 /* FilePicker.swift */,
 				001B0021 /* DragDropHandler.swift */,
 				001B0022 /* UserSettings.swift */,
+				001B0051 /* AppLogger.swift */,
 			);
 			path = Utilities;
 			sourceTree = "<group>";
@@ -374,6 +377,7 @@
 				87BFD673DA0A43C0AE0C4AA0 /* TemplateValidator.swift in Sources */,
 				530950BCB4F94F878F4555CD /* TemplateSorter.swift in Sources */,
 				08C7C357CCD34E78A24FD67F /* TemplateRepository.swift in Sources */,
+				001A0051 /* AppLogger.swift in Sources */,
 				002A0001 /* SplitCommandTests.swift in Sources */,
 				002A0002 /* CommandValidatorTests.swift in Sources */,
 			);
@@ -429,6 +433,7 @@
 				001A0020 /* FilePicker.swift in Sources */,
 				001A0021 /* DragDropHandler.swift in Sources */,
 				001A0022 /* UserSettings.swift in Sources */,
+				001A0051 /* AppLogger.swift in Sources */,
 				001A0024 /* CommandHistory.swift in Sources */,
 				001A0025 /* HistoryService.swift in Sources */,
 				001A0026 /* CommandValidator.swift in Sources */,

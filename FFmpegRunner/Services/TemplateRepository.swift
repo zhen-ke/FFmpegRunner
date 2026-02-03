@@ -133,7 +133,7 @@ final class TemplateRepository {
             try FileManager.default.removeItem(at: fileURL)
             return true
         } catch {
-            print("[TemplateRepository] Failed to delete template: \(error)")
+            AppLogger.error(AppLogger.template, "Failed to delete template: \(error)")
             return false
         }
     }

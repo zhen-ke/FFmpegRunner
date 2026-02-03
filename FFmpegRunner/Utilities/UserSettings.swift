@@ -41,6 +41,15 @@ class UserSettings: ObservableObject {
     /// 最大日志条目数
     @AppStorage("maxLogEntries") var maxLogEntries: Int = 1000
 
+    /// 详细日志输出（开发排查用）
+    @AppStorage("enableVerboseLogging") var enableVerboseLogging: Bool = false
+
+    /// 合并进度日志，减少滚动压力
+    @AppStorage("coalesceProgressLogs") var coalesceProgressLogs: Bool = true
+
+    /// 进度日志合并间隔（毫秒）
+    @AppStorage("progressCoalesceIntervalMs") var progressCoalesceIntervalMs: Int = 200
+
     /// 侧边栏宽度
     @AppStorage("sidebarWidth") var sidebarWidth: Double = 250
 
@@ -87,6 +96,9 @@ class UserSettings: ObservableObject {
         ffprobePath = "/opt/homebrew/bin/ffprobe"
         autoScrollLog = true
         maxLogEntries = 1000
+        enableVerboseLogging = false
+        coalesceProgressLogs = true
+        progressCoalesceIntervalMs = 200
         sidebarWidth = 250
         confirmBeforeRun = false
         notifyOnComplete = true

@@ -71,7 +71,7 @@ class TemplateLoader {
 
         // 检查文件是否存在于用户目录
         guard fileManager.fileExists(atPath: fileURL.path) else {
-            print("Template file not found in user directory: \(fileURL.path)")
+            AppLogger.notice(AppLogger.template, "Template file not found in user directory: \(fileURL.path)")
             return false
         }
 
@@ -79,7 +79,7 @@ class TemplateLoader {
             try fileManager.removeItem(at: fileURL)
             return true
         } catch {
-            print("Failed to delete template: \(error)")
+            AppLogger.error(AppLogger.template, "Failed to delete template: \(error)")
             return false
         }
     }
@@ -143,7 +143,7 @@ class TemplateLoader {
                     templates.append(template)
                 }
             } catch {
-                print("Failed to load template from \(fileURL.lastPathComponent): \(error)")
+                AppLogger.notice(AppLogger.template, "Failed to load template from \(fileURL.lastPathComponent): \(error)")
             }
         }
 
@@ -169,7 +169,7 @@ class TemplateLoader {
         for param in template.parameters {
             let placeholder = "{{\(param.key)}}"
             if !template.commandTemplate.contains(placeholder) {
-                print("Warning: Parameter '\(param.key)' not found in command template")
+                AppLogger.notice(AppLogger.template, "Parameter '\(param.key)' not found in command template")
             }
         }
 
