@@ -62,10 +62,22 @@ final class TemplateRepository {
         let rawCommand = createRawCommandTemplate()
         templateDict[rawCommand.id] = rawCommand
 
-        // 2. 从所有来源加载
-        for source in sources {
-            let result = await source.loadTemplates()
+        // 2. 从所有来源并行加载（避免串行 IO）
+        let results = await withTaskGroup(of: Result<[Template], TemplateLoadError>.self) { group in
+            for source in sources {
+                group.addTask {
+                    await source.loadTemplates()
+                }
+            }
 
+            var collected: [Result<[Template], TemplateLoadError>] = []
+            for await result in group {
+                collected.append(result)
+            }
+            return collected
+        }
+
+        for result in results {
             switch result {
             case .success(let templates):
                 for template in templates {

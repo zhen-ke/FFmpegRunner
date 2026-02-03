@@ -160,6 +160,12 @@ final class ExecutionController: ObservableObject {
                 displayCommand: plan.displayCommand
             )
 
+            // ✅ 兼容外部取消（未显式调用 cancel）
+            if Task.isCancelled || state.isCancelling {
+                state = .cancelled
+                throw ExecutionError.cancelled
+            }
+
             state = .completed(result)
 
             // 保存到历史记录
@@ -167,9 +173,12 @@ final class ExecutionController: ObservableObject {
 
             return result
 
+        } catch is CancellationError {
+            state = .cancelled
+            throw ExecutionError.cancelled
         } catch {
             // 检查是否是取消
-            if state.isCancelling {
+            if state.isCancelling || Task.isCancelled {
                 state = .cancelled
                 throw ExecutionError.cancelled
             }

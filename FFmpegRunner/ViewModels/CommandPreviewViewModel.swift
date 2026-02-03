@@ -54,6 +54,9 @@ class CommandPreviewViewModel: ObservableObject {
     /// 当前渲染的命令（包含参数数组和显示字符串）
     @Published private(set) var currentCommand: RenderedCommand?
 
+    /// 高亮后的命令（缓存，避免频繁重算）
+    @Published private(set) var highlightedCommand: AttributedString = AttributedString("")
+
     /// 渲染后的命令（用于 UI 显示）
     var renderedCommand: String {
         currentCommand?.displayString ?? ""
@@ -70,7 +73,11 @@ class CommandPreviewViewModel: ObservableObject {
     }
 
     /// 显示模式
-    @Published var displayMode: DisplayMode = .auto
+    @Published var displayMode: DisplayMode = .auto {
+        didSet {
+            recomputeHighlight()
+        }
+    }
 
     /// 命令字符数
     var commandLength: Int {
@@ -109,11 +116,13 @@ class CommandPreviewViewModel: ObservableObject {
     func update(template: Template?, values: [TemplateValue]) {
         guard let template = template else {
             currentCommand = nil
+            highlightedCommand = AttributedString("")
             return
         }
 
         // 使用 arguments-first 路径渲染命令
         currentCommand = CommandRenderer.renderToCommand(template: template, values: values)
+        recomputeHighlight()
     }
 
     /// 从模板和详情 ViewModel 更新
@@ -136,10 +145,20 @@ class CommandPreviewViewModel: ObservableObject {
         #endif
     }
 
-    /// 获取命令的高亮版本（用于显示）
-    func highlightedCommand() -> AttributedString {
+    /// 重新计算高亮命令（仅在命令或显示模式变化时触发）
+    private func recomputeHighlight() {
+        guard !renderedCommand.isEmpty else {
+            highlightedCommand = AttributedString("")
+            return
+        }
+
         let textToDisplay = shouldWrap ? formatCommand(renderedCommand) : renderedCommand
-        var attributed = AttributedString(textToDisplay)
+        highlightedCommand = buildHighlightedCommand(from: textToDisplay)
+    }
+
+    /// 构建高亮命令的 AttributedString
+    private func buildHighlightedCommand(from text: String) -> AttributedString {
+        var attributed = AttributedString(text)
 
         // 基础样式
         attributed.font = .system(size: 13, weight: .regular, design: .monospaced)

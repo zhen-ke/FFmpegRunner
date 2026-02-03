@@ -58,7 +58,7 @@ struct ParameterFieldView: View {
             inputField
 
             // 占位符/帮助文本
-            if let placeholder = parameter.placeholder, error == nil {
+            if let placeholder = parameter.effectivePlaceholder, error == nil {
                 Text(placeholder)
                     .font(.caption)
                     .foregroundColor(.secondary)

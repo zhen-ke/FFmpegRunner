@@ -312,11 +312,11 @@ struct TemplateHeaderView: View {
     private func saveTemplateToFile(_ template: Template) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
+        let userTemplatesDir = TemplateRepository.shared.userTemplatesDirectory
 
         Task.detached(priority: .background) {
             guard let data = try? encoder.encode(template) else { return }
 
-            let userTemplatesDir = TemplateLoader.shared.userTemplatesDirectory
             try? FileManager.default.createDirectory(at: userTemplatesDir, withIntermediateDirectories: true)
 
             let fileURL = userTemplatesDir.appendingPathComponent("\(template.id).json")

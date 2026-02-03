@@ -45,12 +45,12 @@ class TemplateHeaderViewModel: ObservableObject {
 
     // MARK: - Dependencies
 
-    private let templateLoader: TemplateLoader
+    private let templateRepository: TemplateRepository
 
     // MARK: - Initialization
 
-    init(templateLoader: TemplateLoader = .shared) {
-        self.templateLoader = templateLoader
+    init(templateRepository: TemplateRepository = .shared) {
+        self.templateRepository = templateRepository
     }
 
     // MARK: - Public Methods
@@ -185,7 +185,7 @@ class TemplateHeaderViewModel: ObservableObject {
 
         let data = try encoder.encode(template)
 
-        let userTemplatesDir = templateLoader.userTemplatesDirectory
+        let userTemplatesDir = templateRepository.userTemplatesDirectory
 
         try FileManager.default.createDirectory(
             at: userTemplatesDir,

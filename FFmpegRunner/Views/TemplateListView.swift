@@ -108,7 +108,7 @@ struct SidebarContentView: View {
                         )
                         .tag(template)
                             .contextMenu {
-                                if TemplateLoader.shared.canDeleteTemplate(template) {
+                                if TemplateRepository.shared.canDeleteTemplate(template) {
                                     Button(role: .destructive) {
                                         activeAlert = .deleteConfirmation(template)
                                     } label: {
@@ -146,19 +146,18 @@ struct SidebarContentView: View {
 
     // MARK: - 模板操作
 
+    @MainActor
     private func deleteTemplate(_ template: Template) async {
-        do {
-            let success = TemplateLoader.shared.deleteUserTemplate(template)
-            if success {
-                // 如果删除的是当前选中的模板，清空选择
-                if viewModel.selectedTemplate?.id == template.id {
-                    viewModel.selectedTemplate = nil
-                }
-                // 刷新模板列表
-                await viewModel.loadTemplates()
-            } else {
-                activeAlert = .deleteError("无法删除模板，请检查文件权限。")
+        let success = TemplateRepository.shared.deleteUserTemplate(template)
+        if success {
+            // 如果删除的是当前选中的模板，清空选择
+            if viewModel.selectedTemplate?.id == template.id {
+                viewModel.selectedTemplate = nil
             }
+            // 刷新模板列表
+            await viewModel.loadTemplates()
+        } else {
+            activeAlert = .deleteError("无法删除模板，请检查文件权限。")
         }
     }
 }

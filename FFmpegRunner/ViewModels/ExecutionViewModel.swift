@@ -73,7 +73,9 @@ class ExecutionViewModel: ObservableObject {
     // MARK: - Configuration
 
     /// 最大日志条目数
-    private let maxLogEntries = 1000
+    private var maxLogEntries: Int {
+        UserSettings.shared.maxLogEntries
+    }
 
     // MARK: - Dependencies
 

@@ -59,12 +59,12 @@ class TemplateListViewModel: ObservableObject {
 
     // MARK: - Dependencies
 
-    private let templateLoader: TemplateLoader
+    private let templateRepository: TemplateRepository
 
     // MARK: - Initialization
 
-    init(templateLoader: TemplateLoader = .shared) {
-        self.templateLoader = templateLoader
+    init(templateRepository: TemplateRepository = .shared) {
+        self.templateRepository = templateRepository
     }
 
     // MARK: - Public Methods
@@ -74,15 +74,17 @@ class TemplateListViewModel: ObservableObject {
         isLoading = true
         errorMessage = nil
 
-        do {
-            templates = try await templateLoader.loadAllTemplates()
+        let report = await templateRepository.loadTemplates()
+        templates = report.templates
 
-            // 默认选中第一个模板
-            if selectedTemplate == nil, let first = templates.first {
-                selectedTemplate = first
-            }
-        } catch {
-            errorMessage = "加载模板失败: \(error.localizedDescription)"
+        // 默认选中第一个模板
+        if selectedTemplate == nil, let first = templates.first {
+            selectedTemplate = first
+        }
+
+        if !report.errors.isEmpty {
+            let messages = report.errors.compactMap { $0.errorDescription }
+            errorMessage = messages.joined(separator: "\n")
         }
 
         isLoading = false
@@ -116,7 +118,7 @@ class TemplateListViewModel: ObservableObject {
             let template = try decoder.decode(Template.self, from: data)
 
             // 3. 准备目标路径
-            let userTemplatesDir = templateLoader.userTemplatesDirectory
+            let userTemplatesDir = templateRepository.userTemplatesDirectory
             try FileManager.default.createDirectory(at: userTemplatesDir, withIntermediateDirectories: true, attributes: nil)
 
             // 使用模板 ID 作为文件名

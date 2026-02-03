@@ -237,6 +237,14 @@ class FFmpegService: ObservableObject {
         }
         process.arguments = finalArgs
 
+        // 🔍 调试日志：输出实际 arguments
+        print("=== DEBUG: FFmpeg Arguments ===")
+        print("Arguments count: \(finalArgs.count)")
+        for (i, arg) in finalArgs.enumerated() {
+            print("  [\(i)] = \(arg)")
+        }
+        print("================================")
+
         // 设置管道
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -457,8 +465,10 @@ enum FFmpegError: LocalizedError {
 /// 包含 1MB 缓冲区上限，防止长时间任务导致内存溢出
 final class OutputDataCollector: @unchecked Sendable {
     private let lock = NSLock()
-    private var _stdoutData = Data()
-    private var _stderrData = Data()
+    private var stdoutChunks: [Data] = []
+    private var stderrChunks: [Data] = []
+    private var stdoutSize = 0
+    private var stderrSize = 0
 
     /// 最大缓冲区大小 (1MB)
     private let maxBufferSize = 1_000_000
@@ -466,33 +476,25 @@ final class OutputDataCollector: @unchecked Sendable {
     func appendStdout(_ data: Data) {
         lock.lock()
         defer { lock.unlock() }
-        _stdoutData.append(data)
-        // 限制缓冲区大小，保留最新数据
-        if _stdoutData.count > maxBufferSize {
-            _stdoutData.removeFirst(_stdoutData.count - maxBufferSize)
-        }
+        append(data, to: &stdoutChunks, size: &stdoutSize)
     }
 
     func appendStderr(_ data: Data) {
         lock.lock()
         defer { lock.unlock() }
-        _stderrData.append(data)
-        // 限制缓冲区大小，保留最新数据
-        if _stderrData.count > maxBufferSize {
-            _stderrData.removeFirst(_stderrData.count - maxBufferSize)
-        }
+        append(data, to: &stderrChunks, size: &stderrSize)
     }
 
     var stdoutData: Data {
         lock.lock()
         defer { lock.unlock() }
-        return _stdoutData
+        return combinedData(from: stdoutChunks, totalSize: stdoutSize)
     }
 
     var stderrData: Data {
         lock.lock()
         defer { lock.unlock() }
-        return _stderrData
+        return combinedData(from: stderrChunks, totalSize: stderrSize)
     }
 
     var stdoutString: String {
@@ -501,5 +503,39 @@ final class OutputDataCollector: @unchecked Sendable {
 
     var stderrString: String {
         String(data: stderrData, encoding: .utf8) ?? ""
+    }
+
+    // MARK: - Buffer Helpers
+
+    private func append(_ data: Data, to chunks: inout [Data], size: inout Int) {
+        guard !data.isEmpty else { return }
+        chunks.append(data)
+        size += data.count
+
+        guard size > maxBufferSize else { return }
+
+        var overflow = size - maxBufferSize
+        while overflow > 0, !chunks.isEmpty {
+            let first = chunks[0]
+            if first.count <= overflow {
+                overflow -= first.count
+                size -= first.count
+                chunks.removeFirst()
+            } else {
+                let trimmed = first.dropFirst(overflow)
+                size -= overflow
+                chunks[0] = Data(trimmed)
+                overflow = 0
+            }
+        }
+    }
+
+    private func combinedData(from chunks: [Data], totalSize: Int) -> Data {
+        var data = Data()
+        data.reserveCapacity(totalSize)
+        for chunk in chunks {
+            data.append(chunk)
+        }
+        return data
     }
 }

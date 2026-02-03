@@ -93,7 +93,7 @@ struct CommandPreviewView: View {
         ZStack {
             // 主内容
             ScrollView(viewModel.shouldWrap ? .vertical : [.horizontal, .vertical]) {
-                Text(viewModel.highlightedCommand())
+                Text(viewModel.highlightedCommand)
                     // 优化2：呼吸感
                     .lineSpacing(3)
                     .tracking(0.2)
