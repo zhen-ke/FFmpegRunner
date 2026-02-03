@@ -116,3 +116,41 @@ extension View {
         ))
     }
 }
+
+// MARK: - Command Path Detector
+
+enum CommandPathDetector {
+
+    /// 从参数数组中检测输出文件路径
+    static func detectOutputPath(from arguments: [String]) -> String? {
+        let validArgs = arguments.filter { !$0.isEmpty }
+        guard !validArgs.isEmpty else { return nil }
+
+        // 获取最后一个非选项参数作为输出路径
+        guard let lastArg = validArgs.last, !lastArg.hasPrefix("-") else { return nil }
+
+        // 跳过特殊输出（如 pipe:, null 等）
+        if lastArg.contains(":") && !lastArg.contains("/") {
+            return nil
+        }
+
+        return lastArg
+    }
+
+    /// 从参数数组中检测输出目录（仅绝对路径或 ~）
+    static func detectOutputDirectory(from arguments: [String]) -> URL? {
+        guard let outputPath = detectOutputPath(from: arguments) else { return nil }
+        guard outputPath.hasPrefix("/") || outputPath.hasPrefix("~") else { return nil }
+
+        let expanded = (outputPath as NSString).expandingTildeInPath
+        let fileURL = URL(fileURLWithPath: expanded)
+        return fileURL.deletingLastPathComponent()
+    }
+
+    /// 从参数数组中检测输出文件名（仅用于显示）
+    static func detectOutputFileName(from arguments: [String]) -> String? {
+        guard let outputPath = detectOutputPath(from: arguments) else { return nil }
+        let expanded = (outputPath as NSString).expandingTildeInPath
+        return URL(fileURLWithPath: expanded).lastPathComponent
+    }
+}

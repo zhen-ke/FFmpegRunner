@@ -20,11 +20,18 @@ struct ParameterFormView: View {
         VStack(alignment: .leading, spacing: 16) {
             if let template = viewModel.template {
                 ForEach(template.parameters) { parameter in
-                    ParameterFieldView(
-                        parameter: parameter,
-                        value: viewModel.binding(for: parameter.key),
-                        error: viewModel.validationErrors[parameter.key]
-                    )
+                    if template.id == "video_to_gif", parameter.key == "filter" {
+                        GifFpsWidthField(
+                            filterValue: viewModel.binding(for: parameter.key),
+                            validationError: viewModel.validationErrors[parameter.key]
+                        )
+                    } else {
+                        ParameterFieldView(
+                            parameter: parameter,
+                            value: viewModel.binding(for: parameter.key),
+                            error: viewModel.validationErrors[parameter.key]
+                        )
+                    }
                 }
             } else {
                 Text("请选择一个模板")
@@ -109,6 +116,144 @@ struct ParameterFieldView: View {
                 options: parameter.constraints?.options ?? []
             )
         }
+    }
+}
+
+// MARK: - GIF FPS + Width Field
+
+struct GifFpsWidthField: View {
+    @Binding var filterValue: String
+    let validationError: String?
+
+    @State private var widthText: String = ""
+    @State private var fpsText: String = ""
+    @State private var parseError: String?
+    @State private var lastFilterValue: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // 宽度
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("宽度 (像素)")
+                        .font(.headline)
+                    Text("*")
+                        .foregroundColor(.red)
+                }
+
+                TextField("例如 320, 480, 640", text: $widthText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.body.monospaced())
+                    .frame(maxWidth: 220, alignment: .leading)
+                    .onChange(of: widthText) { _ in
+                        updateFilterFromInputs()
+                    }
+            }
+
+            // 帧率
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("帧率 (FPS)")
+                        .font(.headline)
+                    Text("*")
+                        .foregroundColor(.red)
+                }
+
+                TextField("建议 10-24", text: $fpsText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.body.monospaced())
+                    .frame(maxWidth: 220, alignment: .leading)
+                    .onChange(of: fpsText) { _ in
+                        updateFilterFromInputs()
+                    }
+            }
+
+            if let error = parseError ?? validationError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            } else {
+                Text("将自动生成 GIF 的滤镜链（palettegen/paletteuse）")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .onAppear {
+            syncFromFilterIfNeeded(filterValue)
+        }
+        .onChange(of: filterValue) { newValue in
+            syncFromFilterIfNeeded(newValue)
+        }
+    }
+
+    private func syncFromFilterIfNeeded(_ value: String) {
+        guard value != lastFilterValue else { return }
+        lastFilterValue = value
+
+        if let parsed = parseFilterValue(value) {
+            if widthText != parsed.width {
+                widthText = parsed.width
+            }
+            if fpsText != parsed.fps {
+                fpsText = parsed.fps
+            }
+        } else if widthText.isEmpty && fpsText.isEmpty {
+            widthText = "480"
+            fpsText = "15"
+            updateFilterFromInputs()
+        }
+    }
+
+    private func updateFilter(_ value: String) {
+        if filterValue != value {
+            filterValue = value
+            lastFilterValue = value
+        }
+    }
+
+    private func updateFilterFromInputs() {
+        let width = widthText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fps = fpsText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !width.isEmpty && !fps.isEmpty else {
+            parseError = "请输入宽度和帧率"
+            updateFilter("")
+            return
+        }
+
+        guard (Double(width) ?? 0) > 0, (Double(fps) ?? 0) > 0 else {
+            parseError = "宽度和帧率必须为数字"
+            updateFilter("")
+            return
+        }
+
+        parseError = nil
+        updateFilter(buildFilter(fps: fps, width: width))
+    }
+
+    private func parseFilterValue(_ value: String) -> (fps: String, width: String)? {
+        guard !value.isEmpty else { return nil }
+        let fpsPattern = #"fps=([0-9]+(?:\.[0-9]+)?)"#
+        let widthPattern = #"scale=([0-9]+)"#
+
+        guard let fpsRegex = try? NSRegularExpression(pattern: fpsPattern),
+              let widthRegex = try? NSRegularExpression(pattern: widthPattern) else {
+            return nil
+        }
+
+        let range = NSRange(value.startIndex..., in: value)
+        guard let fpsMatch = fpsRegex.firstMatch(in: value, range: range),
+              let widthMatch = widthRegex.firstMatch(in: value, range: range),
+              let fpsRange = Range(fpsMatch.range(at: 1), in: value),
+              let widthRange = Range(widthMatch.range(at: 1), in: value) else {
+            return nil
+        }
+
+        return (String(value[fpsRange]), String(value[widthRange]))
+    }
+
+    private func buildFilter(fps: String, width: String) -> String {
+        "fps=\(fps),scale=\(width):-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse"
     }
 }
 

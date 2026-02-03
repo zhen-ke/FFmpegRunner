@@ -4,7 +4,7 @@
   "description": "生成高质量优化的 GIF 动图 (Palette Gen/Use)",
   "category": "格式转换",
   "icon": "photo.on.rectangle.angled",
-  "commandTemplate": "ffmpeg -ss {{startTime}} -t {{duration}} -i {{input}} -vf \"fps={{fps}},scale={{width}}:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse\" -loop 0 -y {{output}}",
+  "commandTemplate": "ffmpeg -ss {{startTime}} -t {{duration}} -i {{input}} -vf {{filter}} -loop 0 -y {{output}}",
   "parameters": [
     {
       "key": "input",
@@ -29,20 +29,16 @@
       "isRequired": true
     },
     {
-      "key": "width",
-      "label": "宽度 (像素)",
-      "type": "number",
-      "defaultValue": "480",
-      "placeholder": "例如 320, 480, 640",
-      "isRequired": true
-    },
-    {
-      "key": "fps",
-      "label": "帧率 (FPS)",
-      "type": "number",
-      "defaultValue": "15",
-      "placeholder": "建议 10-24",
-      "isRequired": true
+      "key": "filter",
+      "label": "滤镜 (FilterGraph)",
+      "type": "string",
+      "defaultValue": "fps=15,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+      "placeholder": "例如 fps=15,scale=480:-1:flags=lanczos,...",
+      "isRequired": true,
+      "uiHint": {
+        "multiline": true,
+        "monospace": true
+      }
     },
     {
       "key": "output",

@@ -6,6 +6,8 @@
 //
 
 import SwiftUI
+import UserNotifications
+import AppKit
 
 /// 用户设置
 class UserSettings: ObservableObject {
@@ -94,5 +96,111 @@ class UserSettings: ObservableObject {
         lastOutputDirectory = ""
         hasAcknowledgedSafetyWarning = false
         showCommandPreviewBeforeRun = true
+    }
+}
+
+// MARK: - Notification Service
+
+final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
+
+    static let shared = NotificationService()
+
+    private let center = UNUserNotificationCenter.current()
+    private let categoryId = "ffmpegrunner.execution"
+    private let actionOpenOutput = "open_output_directory"
+
+    private override init() {
+        super.init()
+    }
+
+    func configure() {
+        center.delegate = self
+
+        let openAction = UNNotificationAction(
+            identifier: actionOpenOutput,
+            title: "打开输出目录",
+            options: [.foreground]
+        )
+
+        let category = UNNotificationCategory(
+            identifier: categoryId,
+            actions: [openAction],
+            intentIdentifiers: [],
+            options: []
+        )
+
+        center.setNotificationCategories([category])
+    }
+
+    func sendExecutionNotification(
+        success: Bool,
+        message: String,
+        outputDirectory: String?
+    ) async {
+        guard UserSettings.shared.notifyOnComplete else { return }
+        let granted = await requestAuthorizationIfNeeded()
+        guard granted else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = success ? "FFmpeg 执行成功" : "FFmpeg 执行失败"
+        content.body = message
+        content.sound = .default
+
+        if success, let outputDirectory = outputDirectory {
+            content.categoryIdentifier = categoryId
+            content.userInfo["outputDirectory"] = outputDirectory
+            content.userInfo["shouldOpenOutput"] = true
+        }
+
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+
+        try? await center.add(request)
+    }
+
+    // MARK: - UNUserNotificationCenterDelegate
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let userInfo = response.notification.request.content.userInfo
+        let shouldOpen = (userInfo["shouldOpenOutput"] as? Bool) == true
+
+        if shouldOpen,
+           let outputDirectory = userInfo["outputDirectory"] as? String {
+            openOutputDirectory(outputDirectory)
+        }
+
+        completionHandler()
+    }
+
+    // MARK: - Authorization
+
+    private func requestAuthorizationIfNeeded() async -> Bool {
+        let settings = await center.notificationSettings()
+
+        switch settings.authorizationStatus {
+        case .authorized, .provisional:
+            return true
+        case .notDetermined:
+            return (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+        case .denied, .ephemeral:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func openOutputDirectory(_ outputDirectory: String) {
+        let expanded = (outputDirectory as NSString).expandingTildeInPath
+        let directoryURL = URL(fileURLWithPath: expanded)
+        NSWorkspace.shared.open(directoryURL)
     }
 }

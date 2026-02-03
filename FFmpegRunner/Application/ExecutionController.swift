@@ -171,6 +171,13 @@ final class ExecutionController: ObservableObject {
             // 保存到历史记录
             saveToHistory(command: plan.displayCommand, wasSuccessful: result.isSuccess)
 
+            // 通知（成功）
+            notifyCompletion(
+                success: true,
+                plan: plan,
+                message: "耗时: \(result.formattedDuration)"
+            )
+
             return result
 
         } catch is CancellationError {
@@ -187,6 +194,13 @@ final class ExecutionController: ObservableObject {
 
             // 失败也保存到历史
             saveToHistory(command: plan.displayCommand, wasSuccessful: false)
+
+            // 通知（失败）
+            notifyCompletion(
+                success: false,
+                plan: plan,
+                message: "执行失败，请查看日志"
+            )
 
             throw ExecutionError.executionFailed(error.localizedDescription)
         }
@@ -281,6 +295,19 @@ final class ExecutionController: ObservableObject {
             await MainActor.run {
                 self.onHistoryChanged?()
             }
+        }
+    }
+
+    private func notifyCompletion(success: Bool, plan: ExecutionPlan, message: String) {
+        Task {
+            let outputPath: String? = success
+                ? CommandPathDetector.detectOutputDirectory(from: plan.arguments)?.path
+                : nil
+            await NotificationService.shared.sendExecutionNotification(
+                success: success,
+                message: message,
+                outputDirectory: outputPath
+            )
         }
     }
 }

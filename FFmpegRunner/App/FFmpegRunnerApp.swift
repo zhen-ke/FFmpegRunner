@@ -31,6 +31,7 @@ struct FFmpegRunnerApp: App {
                 .environmentObject(historyViewModel)
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear {
+                    NotificationService.shared.configure()
                     // 设置历史记录变更回调
                     executionViewModel.onHistoryChanged = { [weak historyViewModel] in
                         historyViewModel?.loadHistory()

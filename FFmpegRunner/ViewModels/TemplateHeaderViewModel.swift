@@ -57,28 +57,7 @@ class TemplateHeaderViewModel: ObservableObject {
 
     /// 从参数数组中检测输出文件路径
     func detectOutputPath(from arguments: [String]) -> String? {
-        // 过滤掉空参数
-        let validArgs = arguments.filter { !$0.isEmpty }
-
-        // 至少要有一些参数
-        guard !validArgs.isEmpty else { return nil }
-
-        // 获取最后一个非选项参数作为输出路径
-        guard let lastArg = validArgs.last, !lastArg.hasPrefix("-") else { return nil }
-
-        var path = lastArg
-
-        // 跳过特殊输出（如 pipe:, null 等）
-        if path.contains(":") && !path.contains("/") {
-            return nil
-        }
-
-        // 展开 ~ 路径
-        if path.hasPrefix("~") {
-            path = (path as NSString).expandingTildeInPath
-        }
-
-        return path
+        CommandPathDetector.detectOutputPath(from: arguments)
     }
 
     /// 检查输出文件并决定是否执行
