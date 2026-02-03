@@ -120,6 +120,10 @@ struct StringField: View {
     var isMultiline: Bool = false
     var isMonospace: Bool = false
 
+    // MARK: - 防抖状态
+    @State private var localText: String = ""
+    @State private var debounceTask: Task<Void, Never>?
+
     var body: some View {
         Group {
             if isMultiline {
@@ -152,10 +156,27 @@ struct StringField: View {
                     }
                 }
             } else {
-                // 单行输入
-                TextField(placeholder ?? "", text: $value)
+                // 单行输入（带防抖）
+                TextField(placeholder ?? "", text: $localText)
                     .textFieldStyle(.roundedBorder)
                     .font(isMonospace ? .body.monospaced() : .body)
+                    .onAppear {
+                        localText = value
+                    }
+                    .onChange(of: localText) { newValue in
+                        debounceTask?.cancel()
+                        debounceTask = Task {
+                            try? await Task.sleep(for: .milliseconds(300))
+                            guard !Task.isCancelled else { return }
+                            value = newValue
+                        }
+                    }
+                    .onChange(of: value) { newValue in
+                        // 外部值变化时同步本地状态
+                        if localText != newValue {
+                            localText = newValue
+                        }
+                    }
             }
         }
     }
@@ -168,23 +189,50 @@ struct NumberField: View {
     let min: Double?
     let max: Double?
 
+    // MARK: - 本地状态缓存
+    @State private var localText: String = ""
+    @State private var sliderValue: Double = 0
+    @State private var debounceTask: Task<Void, Never>?
+
     var body: some View {
         HStack {
-            TextField("", text: $value)
+            TextField("", text: $localText)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 100)
+                .onAppear {
+                    localText = value
+                    sliderValue = Double(value) ?? min ?? 0
+                }
+                .onChange(of: localText) { newValue in
+                    // 更新滑块值（如果是有效数字）
+                    if let num = Double(newValue) {
+                        sliderValue = num
+                    }
+                    // 防抖同步到绑定
+                    debounceTask?.cancel()
+                    debounceTask = Task {
+                        try? await Task.sleep(for: .milliseconds(300))
+                        guard !Task.isCancelled else { return }
+                        value = newValue
+                    }
+                }
+                .onChange(of: value) { newValue in
+                    // 外部值变化时同步本地状态
+                    if localText != newValue {
+                        localText = newValue
+                        sliderValue = Double(newValue) ?? min ?? 0
+                    }
+                }
 
             if let min = min, let max = max {
-                Slider(
-                    value: Binding(
-                        get: { Double(value) ?? min },
-                        set: { value = String(Int($0)) }
-                    ),
-                    in: min...max,
-                    step: 1
-                )
+                Slider(value: $sliderValue, in: min...max, step: 1)
+                    .onChange(of: sliderValue) { newValue in
+                        let intValue = String(Int(newValue))
+                        localText = intValue
+                        value = intValue
+                    }
 
-                Text("\(Int(Double(value) ?? min))")
+                Text("\(Int(sliderValue))")
                     .foregroundColor(.secondary)
                     .frame(width: 40, alignment: .trailing)
             }

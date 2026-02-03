@@ -7,6 +7,23 @@
 
 import SwiftUI
 
+// MARK: - Alert Type Enum
+
+/// 统一的 Alert 类型管理
+enum SidebarAlertType: Identifiable {
+    case deleteConfirmation(Template)
+    case deleteError(String)
+
+    var id: String {
+        switch self {
+        case .deleteConfirmation(let template):
+            return "delete-\(template.id)"
+        case .deleteError(let message):
+            return "error-\(message)"
+        }
+    }
+}
+
 /// 模板列表视图
 struct TemplateListView: View {
 
@@ -66,8 +83,7 @@ struct SidebarContentView: View {
 
     @Binding var showHistorySheet: Bool
 
-    @State private var templateToDelete: Template?
-    @State private var showDeleteConfirm = false
+    @State private var activeAlert: SidebarAlertType?
 
     var body: some View {
         List(selection: Binding(
@@ -94,8 +110,7 @@ struct SidebarContentView: View {
                             .contextMenu {
                                 if TemplateLoader.shared.canDeleteTemplate(template) {
                                     Button(role: .destructive) {
-                                        templateToDelete = template
-                                        showDeleteConfirm = true
+                                        activeAlert = .deleteConfirmation(template)
                                     } label: {
                                         Label("删除模板", systemImage: "trash")
                                     }
@@ -106,29 +121,43 @@ struct SidebarContentView: View {
             }
         }
         .listStyle(.sidebar)
-        .alert("删除模板", isPresented: $showDeleteConfirm) {
-            Button("取消", role: .cancel) {}
-            Button("删除", role: .destructive) {
-                if let template = templateToDelete {
-                    deleteTemplate(template)
-                }
+        .alert(item: $activeAlert) { alertType in
+            switch alertType {
+            case .deleteConfirmation(let template):
+                Alert(
+                    title: Text("删除模板"),
+                    message: Text("确定要删除模板「\(template.name)」吗？此操作无法撤销。"),
+                    primaryButton: .destructive(Text("删除")) {
+                        Task {
+                            await deleteTemplate(template)
+                        }
+                    },
+                    secondaryButton: .cancel(Text("取消"))
+                )
+            case .deleteError(let message):
+                Alert(
+                    title: Text("删除失败"),
+                    message: Text(message),
+                    dismissButton: .default(Text("确定"))
+                )
             }
-        } message: {
-            Text("确定要删除模板「\(templateToDelete?.name ?? "")」吗？此操作无法撤销。")
         }
     }
 
     // MARK: - 模板操作
 
-    private func deleteTemplate(_ template: Template) {
-        if TemplateLoader.shared.deleteUserTemplate(template) {
-            // 如果删除的是当前选中的模板，清空选择
-            if viewModel.selectedTemplate?.id == template.id {
-                viewModel.selectedTemplate = nil
-            }
-            // 刷新模板列表
-            Task {
+    private func deleteTemplate(_ template: Template) async {
+        do {
+            let success = TemplateLoader.shared.deleteUserTemplate(template)
+            if success {
+                // 如果删除的是当前选中的模板，清空选择
+                if viewModel.selectedTemplate?.id == template.id {
+                    viewModel.selectedTemplate = nil
+                }
+                // 刷新模板列表
                 await viewModel.loadTemplates()
+            } else {
+                activeAlert = .deleteError("无法删除模板，请检查文件权限。")
             }
         }
     }
@@ -184,7 +213,10 @@ struct RecentHistorySection: View {
 
         if let raw = viewModel.templates.first(where: { $0.id == Template.rawCommandId }) {
             viewModel.selectedTemplate = raw
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            // 使用 Task 让 SwiftUI 完成视图更新后再设置命令值
+            Task { @MainActor in
+                // 让出一个 run loop 周期，确保模板切换完成
+                try? await Task.sleep(for: .milliseconds(50))
                 detailViewModel.updateValue(key: "command", value: entry.command)
             }
         }
@@ -245,24 +277,38 @@ struct HistorySheetView: View {
                     ForEach(filteredHistory) { entry in
                         HistoryRowView(entry: entry)
                             .contextMenu {
-                                Button("重命名…") {
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(entry.command, forType: .string)
+                                } label: {
+                                    Label("复制命令", systemImage: "doc.on.doc")
+                                }
+
+                                Button {
                                     selectedEntry = entry
                                     renameText = entry.displayName ?? ""
                                     showRenameSheet = true
+                                } label: {
+                                    Label("重命名…", systemImage: "pencil")
                                 }
 
-                                Button("保存为模板…") {
+                                Button {
                                     saveAsTemplate(entry)
+                                } label: {
+                                    Label("保存为模板…", systemImage: "square.and.arrow.down")
                                 }
 
                                 Divider()
 
-                                Button("删除", role: .destructive) {
+                                Button(role: .destructive) {
                                     historyViewModel.deleteEntry(entry)
+                                } label: {
+                                    Label("删除", systemImage: "trash")
                                 }
                             }
                     }
                 }
+                .listStyle(.inset)
             }
         }
         .frame(minWidth: 500, minHeight: 600)
@@ -310,25 +356,65 @@ struct HistorySheetView: View {
 struct HistoryRowView: View {
     let entry: CommandHistory
 
+    @State private var isHovered = false
+
     var body: some View {
-        HStack(spacing: 8) {
-            // 状态图标
+        HStack(spacing: 10) {
+            // 状态图标 - 紧凑设计
             Image(systemName: entry.wasSuccessful ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .foregroundColor(entry.wasSuccessful ? .green : .red)
-                .font(.caption)
+                .font(.system(size: 12))
 
             // 内容
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(entry.title)
-                    .font(.subheadline)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.primary)
                     .lineLimit(1)
 
-                Text(entry.relativeDate)
-                    .font(.caption2)
+                HStack(spacing: 6) {
+                    // 时间标签
+                    HStack(spacing: 3) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 9))
+                        Text(entry.relativeDate)
+                            .font(.system(size: 10))
+                    }
                     .foregroundColor(.secondary)
+
+                    // 状态标签
+                    Text(entry.wasSuccessful ? "成功" : "失败")
+                        .font(.system(size: 9, weight: .medium))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(entry.wasSuccessful ? Color.green.opacity(0.12) : Color.red.opacity(0.12))
+                        )
+                        .foregroundColor(entry.wasSuccessful ? .green : .red)
+                }
+
+                // 命令预览
+                Text(entry.command)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isHovered ? Color(NSColor.controlBackgroundColor) : Color.clear)
+        )
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
             }
         }
-        .padding(.vertical, 2)
     }
 }
 

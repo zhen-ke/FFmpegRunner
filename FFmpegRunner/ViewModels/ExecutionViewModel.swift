@@ -35,6 +35,12 @@ class ExecutionViewModel: ObservableObject {
     /// 日志条目
     @Published private(set) var logs: [LogEntry] = []
 
+    /// 日志过滤级别
+    @Published var logFilter: LogFilter = .all
+
+    /// 过滤后的日志（缓存结果，避免每次 body 刷新都重新过滤）
+    @Published private(set) var visibleLogs: [LogEntry] = []
+
     /// 最近的执行结果
     @Published private(set) var lastResult: ExecutionResult?
 
@@ -121,6 +127,22 @@ class ExecutionViewModel: ObservableObject {
         controller.onLogOutput = { [weak self] entry in
             self?.appendLog(entry)
         }
+
+        // 监听 logs 和 filter 变化，使用 throttle 防抖处理
+        // 避免每次 body 刷新都重新过滤整个日志数组
+        Publishers.CombineLatest($logs, $logFilter)
+            .throttle(for: .milliseconds(100), scheduler: RunLoop.main, latest: true)
+            .map { logs, filter -> [LogEntry] in
+                switch filter {
+                case .all:
+                    return logs
+                case .important:
+                    return logs.filter { $0.level == .error || $0.level == .warning }
+                case .noDebug:
+                    return logs.filter { $0.level != .debug }
+                }
+            }
+            .assign(to: &$visibleLogs)
     }
 
     // MARK: - Public Methods (Delegate to Controller)
@@ -211,6 +233,7 @@ class ExecutionViewModel: ObservableObject {
     /// 清空日志
     func clearLogs() {
         logs = []
+        visibleLogs = []
     }
 
     /// 添加日志条目

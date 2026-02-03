@@ -24,21 +24,7 @@ struct LogConsoleView: View {
 
     @State private var autoScroll = true
     @State private var showExportSheet = false
-    @State private var logFilter: LogFilter = .all
 
-    // MARK: - Computed
-
-    /// 根据过滤条件筛选日志
-    private var visibleLogs: [LogEntry] {
-        switch logFilter {
-        case .all:
-            return viewModel.logs
-        case .important:
-            return viewModel.logs.filter { $0.level == .error || $0.level == .warning }
-        case .noDebug:
-            return viewModel.logs.filter { $0.level != .debug }
-        }
-    }
 
     // MARK: - Body
 
@@ -47,7 +33,7 @@ struct LogConsoleView: View {
             // 标题栏
             ConsoleHeaderView(
                 autoScroll: $autoScroll,
-                logFilter: $logFilter,
+                logFilter: $viewModel.logFilter,
                 onClear: viewModel.clearLogs,
                 onExport: { showExportSheet = true },
                 state: viewModel.state,
@@ -58,7 +44,7 @@ struct LogConsoleView: View {
 
             // 日志内容
             LogContentView(
-                logs: visibleLogs,
+                logs: viewModel.visibleLogs,
                 autoScroll: autoScroll,
                 isRunning: viewModel.state.isRunning
             )
@@ -66,7 +52,7 @@ struct LogConsoleView: View {
             // 状态栏
 
             ConsoleStatusBar(
-                logCount: visibleLogs.count,
+                logCount: viewModel.visibleLogs.count,
                 lastResult: viewModel.lastResult,
                 ffmpegVersion: viewModel.ffmpegVersionShort,
                 state: viewModel.state
@@ -216,29 +202,66 @@ struct LogContentView: View {
     let autoScroll: Bool
     let isRunning: Bool
 
+    /// 滚动节流：防止高频日志输出时触发过多滚动动画
+    @State private var pendingScrollId: UUID?
+    @State private var scrollThrottleTask: Task<Void, Never>?
+
+    /// 滚动节流间隔（毫秒）
+    private let scrollThrottleInterval: UInt64 = 150 // ~6-7 fps，足够流畅
+
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(logs) { entry in
-                        LogEntryRow(
-                            entry: entry,
-                            isLatest: entry.id == logs.last?.id,
-                            isRunning: isRunning
-                        )
-                        .id(entry.id)
-                    }
+            logListContent
+                .background(Color(NSColor.textBackgroundColor))
+                .onChange(of: logs.count) { _ in
+                    handleScrollThrottle(proxy: proxy)
                 }
-                .padding(8)
-            }
-            .background(Color(NSColor.textBackgroundColor))
-            .onChange(of: logs.count) { _ in
-                if autoScroll, let lastId = logs.last?.id {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(lastId, anchor: .bottom)
-                    }
+        }
+    }
+
+    /// 日志列表内容（提取以简化 body 类型推断）
+    private var logListContent: some View {
+        let lastLogId = logs.last?.id
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(logs) { entry in
+                    LogEntryRow(
+                        entry: entry,
+                        isLatest: entry.id == lastLogId,
+                        isRunning: isRunning
+                    )
+                    .id(entry.id)
                 }
             }
+            .padding(8)
+        }
+    }
+
+    /// 节流滚动处理
+    private func handleScrollThrottle(proxy: ScrollViewProxy) {
+        guard autoScroll, let lastId = logs.last?.id else { return }
+
+        // 记录待滚动的 ID
+        pendingScrollId = lastId
+
+        // 如果已有节流任务在运行，则跳过（会使用最新的 pendingScrollId）
+        guard scrollThrottleTask == nil else { return }
+
+        // 创建节流任务
+        scrollThrottleTask = Task { @MainActor in
+            // 等待一小段时间，让多个日志合并为一次滚动
+            try? await Task.sleep(nanoseconds: scrollThrottleInterval * 1_000_000)
+
+            // 执行滚动到最新 ID
+            if let targetId = pendingScrollId {
+                withAnimation(.easeOut(duration: 0.15)) {
+                    proxy.scrollTo(targetId, anchor: .bottom)
+                }
+            }
+
+            // 清理状态
+            pendingScrollId = nil
+            scrollThrottleTask = nil
         }
     }
 }

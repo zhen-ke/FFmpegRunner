@@ -53,6 +53,7 @@
 		001A0034 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0034 /* SettingsView.swift */; };
 		002A0001 /* SplitCommandTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002B0001 /* SplitCommandTests.swift */; };
 		002A0002 /* CommandValidatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002B0002 /* CommandValidatorTests.swift */; };
+		001A0035 /* TemplateHeaderViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0035 /* TemplateHeaderViewModel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -104,6 +105,7 @@
 		002B0001 /* SplitCommandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitCommandTests.swift; sourceTree = "<group>"; };
 		002B0002 /* CommandValidatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandValidatorTests.swift; sourceTree = "<group>"; };
 		002B0003 /* FFmpegRunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FFmpegRunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		001B0035 /* TemplateHeaderViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateHeaderViewModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -203,6 +205,7 @@
 				001B0013 /* CommandPreviewViewModel.swift */,
 				001B0014 /* ExecutionViewModel.swift */,
 				001B0027 /* HistoryViewModel.swift */,
+				001B0035 /* TemplateHeaderViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -437,6 +440,7 @@
 				001A0032 /* CommandPlanner.swift in Sources */,
 				001A0033 /* FFmpegPathResolver.swift in Sources */,
 				001A0034 /* SettingsView.swift in Sources */,
+				001A0035 /* TemplateHeaderViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

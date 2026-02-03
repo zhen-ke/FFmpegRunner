@@ -15,6 +15,63 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+// MARK: - Throttler (通用节流器)
+
+/// 通用节流器，用于限制高频事件的执行频率
+final class Throttler {
+    private var workItem: DispatchWorkItem?
+    private let queue: DispatchQueue
+    private let interval: TimeInterval
+
+    init(interval: TimeInterval = 0.05, queue: DispatchQueue = .main) {
+        self.interval = interval
+        self.queue = queue
+    }
+
+    /// 节流执行闘包，在 interval 时间内只执行最后一次调用
+    func throttle(_ block: @escaping () -> Void) {
+        workItem?.cancel()
+        workItem = DispatchWorkItem(block: block)
+        queue.asyncAfter(deadline: .now() + interval, execute: workItem!)
+    }
+
+    /// 取消待执行的任务
+    func cancel() {
+        workItem?.cancel()
+        workItem = nil
+    }
+}
+
+// MARK: - String Extension (智能空格处理)
+
+extension String {
+    /// 智能包裹路径并添加必要空格
+    /// - Parameters:
+    ///   - range: 插入位置的范围
+    ///   - text: 原始文本
+    /// - Returns: 带有适当前后空格的字符串
+    func withSmartSpacing(at range: NSRange, in text: String) -> String {
+        var result = self
+        let chars = Array(text)
+
+        // 检查前一个字符，需要添加前导空格
+        if range.location > 0 {
+            let prevIndex = range.location - 1
+            if prevIndex < chars.count && !chars[prevIndex].isWhitespace {
+                result = " " + result
+            }
+        }
+
+        // 检查后一个字符，需要添加后缀空格
+        let nextIndex = range.location + range.length
+        if nextIndex < chars.count && !chars[nextIndex].isWhitespace {
+            result = result + " "
+        }
+
+        return result
+    }
+}
+
 // MARK: - CommandTextView
 
 /// 专业级命令输入视图（支持拖拽插入路径）
@@ -278,32 +335,10 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
             guard let textView = textView else { return }
 
             let range = textView.selectedRange()
-            let textWithSpacing = addSmartSpacing(for: path, at: range, in: textView.string)
+            let textWithSpacing = path.withSmartSpacing(at: range, in: textView.string)
 
             textView.insertText(textWithSpacing, replacementRange: range)
             parent.text = textView.string
-        }
-
-        /// 智能添加空格
-        private func addSmartSpacing(for path: String, at range: NSRange, in text: String) -> String {
-            var result = path
-            let chars = Array(text)
-
-            // 检查前一个字符
-            if range.location > 0 {
-                let prevIndex = range.location - 1
-                if prevIndex < chars.count && !chars[prevIndex].isWhitespace {
-                    result = " " + result
-                }
-            }
-
-            // 检查后一个字符
-            let nextIndex = range.location + range.length
-            if nextIndex < chars.count && !chars[nextIndex].isWhitespace {
-                result = result + " "
-            }
-
-            return result
         }
     }
 }
@@ -317,6 +352,16 @@ final class CommandNSTextView: NSTextView {
 
     /// hover 高亮的背景颜色
     private let pathHighlightColor = NSColor.controlAccentColor.withAlphaComponent(0.1)
+
+    /// mouseMoved 节流器，避免高频路径检测（50ms 间隔）
+    private lazy var mouseMoveThrottler = Throttler(interval: 0.05)
+
+    /// 路径检测缓存（文本变化时失效）
+    private var cachedPaths: [PathInfo] = []
+    private var cachedText: String = ""
+
+    /// 拖拽时的插入位置指示器
+    private var dragCaretView: NSView?
 
     // MARK: - Mouse Tracking
 
@@ -337,6 +382,14 @@ final class CommandNSTextView: NSTextView {
     override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
 
+        // 使用节流器限制高频路径检测
+        mouseMoveThrottler.throttle { [weak self] in
+            self?.handleMouseMoveThrottled(with: event)
+        }
+    }
+
+    /// 节流后的鼠标移动处理
+    private func handleMouseMoveThrottled(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
 
         if let pathInfo = detectPathInfoAt(point) {
@@ -393,27 +446,90 @@ final class CommandNSTextView: NSTextView {
         return super.draggingEntered(sender)
     }
 
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let point = convert(sender.draggingLocation, from: nil)
+        showDragCaret(at: point)
+        return .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        hideDragCaret()
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        hideDragCaret()
+    }
+
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        hideDragCaret()
+
         guard let urls = sender.draggingPasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
-        ) as? [URL], let url = urls.first else {
+        ) as? [URL], !urls.isEmpty else {
             return super.performDragOperation(sender)
         }
 
-        // 获取拖拽位置对应的字符索引
-        let point = convert(sender.draggingLocation, from: nil)
-        let characterIndex = getInsertionCharacterIndex(at: point)
+        // 使用当前选区位置（如果有选中文本则替换，否则在光标位置插入）
+        let range = selectedRange()
 
-        // 构建带引号的路径（带智能空格）
-        let escapedPath = "\"\(url.path)\""
-        let range = NSRange(location: characterIndex, length: 0)
-        let textWithSpacing = addSmartSpacing(for: escapedPath, at: range)
+        // 支持多文件拖拽：构建带引号的路径列表（用 -i 连接）
+        let escapedPaths: String
+        if urls.count == 1 {
+            escapedPaths = "\"\(urls[0].path)\""
+        } else {
+            // 多文件：每个路径前加 -i 前缀
+            escapedPaths = urls.map { "-i \"\($0.path)\"" }.joined(separator: " ")
+        }
 
-        // 在指定位置插入
+        let textWithSpacing = escapedPaths.withSmartSpacing(at: range, in: string)
+
+        // 在选区位置插入（替换选中内容）
         insertText(textWithSpacing, replacementRange: range)
 
         return true
+    }
+
+    // MARK: - Drag Caret (拖拽插入指示器)
+
+    /// 显示拖拽插入位置指示线
+    private func showDragCaret(at point: NSPoint) {
+        let insertionIndex = getInsertionCharacterIndex(at: point)
+
+        guard let layoutManager = layoutManager,
+              textContainer != nil else { return }
+
+        // 计算插入位置的矩形
+        let glyphIndex = layoutManager.glyphIndexForCharacter(at: insertionIndex)
+        var lineRect = layoutManager.lineFragmentRect(forGlyphAt: max(0, glyphIndex), effectiveRange: nil)
+        lineRect.origin.x += textContainerInset.width
+        lineRect.origin.y += textContainerInset.height
+
+        // 获取精确的 X 坐标
+        let location = layoutManager.location(forGlyphAt: max(0, glyphIndex))
+        let caretX = lineRect.origin.x + location.x
+
+        // 创建或更新指示线
+        if dragCaretView == nil {
+            let caret = NSView()
+            caret.wantsLayer = true
+            caret.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+            addSubview(caret)
+            dragCaretView = caret
+        }
+
+        dragCaretView?.frame = NSRect(
+            x: caretX - 1,
+            y: lineRect.origin.y,
+            width: 2,
+            height: lineRect.height
+        )
+        dragCaretView?.isHidden = false
+    }
+
+    /// 隐藏拖拽插入指示线
+    private func hideDragCaret() {
+        dragCaretView?.isHidden = true
     }
 
     /// 获取插入位置的字符索引
@@ -434,26 +550,56 @@ final class CommandNSTextView: NSTextView {
         return min(characterIndex, string.count)
     }
 
-    /// 智能添加空格
-    private func addSmartSpacing(for path: String, at range: NSRange) -> String {
-        var result = path
-        let chars = Array(string)
+    // MARK: - Path Cache Management
 
-        // 检查前一个字符
-        if range.location > 0 {
-            let prevIndex = range.location - 1
-            if prevIndex < chars.count && !chars[prevIndex].isWhitespace {
-                result = " " + result
+    /// 使路径缓存失效（文本变化时调用）
+    private func invalidatePathCache() {
+        if cachedText != string {
+            cachedPaths = []
+            cachedText = string
+        }
+    }
+
+    /// 获取缓存的路径列表，如果缓存失效则重新扫描
+    private func getCachedPaths() -> [PathInfo] {
+        invalidatePathCache()
+
+        if cachedPaths.isEmpty && !string.isEmpty {
+            cachedPaths = scanAllPaths(in: string)
+        }
+
+        return cachedPaths
+    }
+
+    /// 扫描文本中的所有路径
+    private func scanAllPaths(in text: String) -> [PathInfo] {
+        var paths: [PathInfo] = []
+        let chars = Array(text)
+        var i = 0
+
+        while i < chars.count {
+            // 检查引号包裹的路径
+            if chars[i] == "\"" {
+                if let info = findQuotedPathInfo(in: text, around: i + 1) {
+                    paths.append(info)
+                    i = info.range.location + info.range.length
+                    continue
+                }
             }
+
+            // 检查 / 开头的路径
+            if chars[i] == "/" && (i == 0 || chars[i - 1].isWhitespace) {
+                if let info = findSlashPathInfo(in: text, around: i) {
+                    paths.append(info)
+                    i = info.range.location + info.range.length
+                    continue
+                }
+            }
+
+            i += 1
         }
 
-        // 检查后一个字符
-        let nextIndex = range.location + range.length
-        if nextIndex < chars.count && !chars[nextIndex].isWhitespace {
-            result = result + " "
-        }
-
-        return result
+        return paths
     }
 
     // MARK: - Context Menu (路径右键菜单)
@@ -505,10 +651,10 @@ final class CommandNSTextView: NSTextView {
         let range: NSRange
     }
 
-    /// 检测点击位置的路径（带范围信息）
+    /// 检测点击位置的路径（带范围信息）- 使用缓存优化
     private func detectPathInfoAt(_ point: NSPoint) -> PathInfo? {
         guard let layoutManager = layoutManager,
-              let textContainer = textContainer else {
+              textContainer != nil else {
             return nil
         }
 
@@ -517,24 +663,14 @@ final class CommandNSTextView: NSTextView {
         adjustedPoint.x -= textContainerInset.width
         adjustedPoint.y -= textContainerInset.height
 
-        let glyphIndex = layoutManager.glyphIndex(for: adjustedPoint, in: textContainer)
+        let glyphIndex = layoutManager.glyphIndex(for: adjustedPoint, in: textContainer!)
         let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
 
-        // 在当前位置周围查找路径
-        let text = string
-        guard characterIndex < text.count else { return nil }
+        guard characterIndex < string.count else { return nil }
 
-        // 查找引号包裹的路径
-        if let info = findQuotedPathInfo(in: text, around: characterIndex) {
-            return info
-        }
-
-        // 查找以 / 开头的路径
-        if let info = findSlashPathInfo(in: text, around: characterIndex) {
-            return info
-        }
-
-        return nil
+        // 使用缓存的路径列表进行 O(n) 查找（n = 路径数量，通常很小）
+        let paths = getCachedPaths()
+        return paths.first { NSLocationInRange(characterIndex, $0.range) }
     }
 
     /// 查找引号包裹的路径 "..."
