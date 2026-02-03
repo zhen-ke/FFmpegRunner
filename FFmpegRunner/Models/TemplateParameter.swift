@@ -78,6 +78,26 @@ struct ParameterUIHint: Codable, Hashable {
         self.monospace = monospace
         self.placeholder = placeholder
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case multiline
+        case monospace
+        case placeholder
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        multiline = try container.decodeIfPresent(Bool.self, forKey: .multiline) ?? false
+        monospace = try container.decodeIfPresent(Bool.self, forKey: .monospace) ?? false
+        placeholder = try container.decodeIfPresent(String.self, forKey: .placeholder)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(multiline, forKey: .multiline)
+        try container.encode(monospace, forKey: .monospace)
+        try container.encodeIfPresent(placeholder, forKey: .placeholder)
+    }
 }
 
 // MARK: - Template Parameter

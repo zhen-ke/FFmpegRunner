@@ -1,0 +1,80 @@
+{
+  "id": "replace_audio_track",
+  "name": "替换音轨",
+  "description": "为视频替换新的音轨，保持画面不变",
+  "category": "音频处理",
+  "icon": "waveform",
+  "commandTemplate": "ffmpeg -i {{video}} -i {{audio}} -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a {{audioBitrate}} -shortest -movflags +faststart -y {{output}}",
+  "parameters": [
+    {
+      "key": "video",
+      "label": "视频文件",
+      "type": "file",
+      "defaultValue": "",
+      "placeholder": "选择视频文件",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "mp4",
+          "mov",
+          "avi",
+          "mkv",
+          "webm",
+          "flv",
+          "ts",
+          "m4v"
+        ]
+      }
+    },
+    {
+      "key": "audio",
+      "label": "音频文件",
+      "type": "file",
+      "defaultValue": "",
+      "placeholder": "选择音频文件",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "mp3",
+          "m4a",
+          "aac",
+          "flac",
+          "wav",
+          "ogg",
+          "opus"
+        ]
+      }
+    },
+    {
+      "key": "audioBitrate",
+      "label": "音频码率",
+      "type": "select",
+      "defaultValue": "192k",
+      "placeholder": null,
+      "isRequired": true,
+      "constraints": {
+        "options": [
+          "96k",
+          "128k",
+          "192k",
+          "256k",
+          "320k"
+        ]
+      }
+    },
+    {
+      "key": "output",
+      "label": "输出文件",
+      "type": "file",
+      "defaultValue": "",
+      "placeholder": "选择保存位置",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "mp4"
+        ],
+        "isOutputFile": true
+      }
+    }
+  ]
+}

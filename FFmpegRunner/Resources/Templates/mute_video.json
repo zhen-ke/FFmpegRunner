@@ -1,0 +1,44 @@
+{
+  "id": "mute_video",
+  "name": "视频静音",
+  "description": "移除音轨，仅保留画面（不重编码视频）",
+  "category": "音频处理",
+  "icon": "speaker.slash.fill",
+  "commandTemplate": "ffmpeg -i {{input}} -c:v copy -an -movflags +faststart -y {{output}}",
+  "parameters": [
+    {
+      "key": "input",
+      "label": "输入视频",
+      "type": "file",
+      "defaultValue": "",
+      "placeholder": "选择视频文件",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "mp4",
+          "mov",
+          "avi",
+          "mkv",
+          "webm",
+          "flv",
+          "ts",
+          "m4v"
+        ]
+      }
+    },
+    {
+      "key": "output",
+      "label": "输出文件",
+      "type": "file",
+      "defaultValue": "",
+      "placeholder": "选择保存位置",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "mp4"
+        ],
+        "isOutputFile": true
+      }
+    }
+  ]
+}

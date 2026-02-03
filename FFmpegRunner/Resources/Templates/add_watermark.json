@@ -1,0 +1,107 @@
+{
+  "id": "add_watermark",
+  "name": "添加水印",
+  "description": "叠加图片水印（overlay 滤镜）",
+  "category": "视频处理",
+  "icon": "photo.on.rectangle",
+  "commandTemplate": "ffmpeg -i {{input}} -i {{logo}} -filter_complex {{filter}} -c:v libx264 -crf {{crf}} -preset {{preset}} -c:a copy -movflags +faststart -y {{output}}",
+  "parameters": [
+    {
+      "key": "input",
+      "label": "输入视频",
+      "type": "file",
+      "defaultValue": "",
+      "placeholder": "选择视频文件",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "mp4",
+          "mov",
+          "avi",
+          "mkv",
+          "webm",
+          "flv",
+          "ts",
+          "m4v"
+        ]
+      }
+    },
+    {
+      "key": "logo",
+      "label": "水印图片",
+      "type": "file",
+      "defaultValue": "",
+      "placeholder": "选择图片 (PNG/JPG/WebP)",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "png",
+          "jpg",
+          "jpeg",
+          "webp",
+          "bmp",
+          "gif"
+        ]
+      }
+    },
+    {
+      "key": "filter",
+      "label": "叠加滤镜",
+      "type": "string",
+      "defaultValue": "overlay=10:10",
+      "isRequired": true,
+      "uiHint": {
+        "multiline": false,
+        "monospace": true,
+        "placeholder": "例如 overlay=10:10 或 overlay=W-w-10:H-h-10"
+      }
+    },
+    {
+      "key": "crf",
+      "label": "质量 (CRF)",
+      "type": "number",
+      "defaultValue": "23",
+      "placeholder": "0-51, 数值越小画质越好",
+      "isRequired": true,
+      "constraints": {
+        "min": 0,
+        "max": 51
+      }
+    },
+    {
+      "key": "preset",
+      "label": "编码速度",
+      "type": "select",
+      "defaultValue": "medium",
+      "placeholder": null,
+      "isRequired": true,
+      "constraints": {
+        "options": [
+          "ultrafast",
+          "superfast",
+          "veryfast",
+          "faster",
+          "fast",
+          "medium",
+          "slow",
+          "slower",
+          "veryslow"
+        ]
+      }
+    },
+    {
+      "key": "output",
+      "label": "输出文件",
+      "type": "file",
+      "defaultValue": "",
+      "placeholder": "选择保存位置",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "mp4"
+        ],
+        "isOutputFile": true
+      }
+    }
+  ]
+}

@@ -16,7 +16,7 @@ enum TemplateFileLoader {
     /// - Returns: 加载结果，成功时返回模板数组
     static func load(from directory: URL) async -> Result<[Template], TemplateLoadError> {
         // 使用 Task.detached 确保文件 IO 不阻塞当前线程
-        await Task.detached(priority: .utility) {
+        return await Task.detached(priority: .utility) {
             do {
                 let fm = FileManager.default
 
@@ -55,6 +55,16 @@ enum TemplateFileLoader {
                     }
                 }
 
+                let loadedIds = templates.map { $0.id }.sorted()
+                if loadedIds.isEmpty {
+                    AppLogger.debug(AppLogger.template, "Loaded 0 templates from \(directory.path)")
+                } else {
+                    AppLogger.debug(
+                        AppLogger.template,
+                        "Loaded \(loadedIds.count) templates from \(directory.path): \(loadedIds.joined(separator: ", "))"
+                    )
+                }
+
                 return .success(templates)
 
             } catch {
@@ -67,7 +77,7 @@ enum TemplateFileLoader {
     /// - Parameter url: 模板文件 URL
     /// - Returns: 加载结果
     static func loadSingle(from url: URL) async -> Result<Template, TemplateLoadError> {
-        await Task.detached(priority: .utility) {
+        return await Task.detached(priority: .utility) {
             do {
                 let data = try Data(contentsOf: url)
                 let template = try JSONDecoder().decode(Template.self, from: data)
