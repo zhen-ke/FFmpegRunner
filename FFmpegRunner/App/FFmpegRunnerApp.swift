@@ -18,6 +18,7 @@ struct FFmpegRunnerApp: App {
     @StateObject private var previewViewModel = CommandPreviewViewModel()
     @StateObject private var executionViewModel = ExecutionViewModel()
     @StateObject private var historyViewModel = HistoryViewModel()
+    @StateObject private var navigationState = NavigationState()
 
     // MARK: - Body
 
@@ -29,6 +30,7 @@ struct FFmpegRunnerApp: App {
                 .environmentObject(previewViewModel)
                 .environmentObject(executionViewModel)
                 .environmentObject(historyViewModel)
+                .environmentObject(navigationState)
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear {
                     NotificationService.shared.configure()
@@ -42,6 +44,7 @@ struct FFmpegRunnerApp: App {
         .windowResizability(.contentMinSize)
         .commands {
             AppCommands(
+                navigationState: navigationState,
                 listViewModel: listViewModel,
                 previewViewModel: previewViewModel,
                 executionViewModel: executionViewModel
@@ -63,6 +66,7 @@ struct AppCommands: Commands {
 
     // MARK: - Properties
 
+    let navigationState: NavigationState
     let listViewModel: TemplateListViewModel
     let previewViewModel: CommandPreviewViewModel
     let executionViewModel: ExecutionViewModel
@@ -70,8 +74,13 @@ struct AppCommands: Commands {
     // MARK: - Body
 
     var body: some Commands {
-        // 侧边栏控制 (显示在 View 菜单中)
-        SidebarCommands()
+        // 侧边栏控制 (自定义，避免系统 toggleSidebar 触发约束崩溃)
+        CommandGroup(replacing: .sidebar) {
+            Button("切换侧边栏") {
+                navigationState.toggleSidebar()
+            }
+            .keyboardShortcut("s", modifiers: [.command, .option])
+        }
 
         // 文件菜单
         CommandGroup(after: .newItem) {

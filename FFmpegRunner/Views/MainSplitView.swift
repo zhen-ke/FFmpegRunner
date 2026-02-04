@@ -16,15 +16,14 @@ struct MainSplitView: View {
     @EnvironmentObject var detailViewModel: TemplateDetailViewModel
     @EnvironmentObject var previewViewModel: CommandPreviewViewModel
     @EnvironmentObject var executionViewModel: ExecutionViewModel
+    @EnvironmentObject var navigationState: NavigationState
 
     // MARK: - State
-
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     // MARK: - Body
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView(columnVisibility: $navigationState.columnVisibility) {
             // 左侧：模板列表
             TemplateListView()
                 .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 350)
@@ -37,6 +36,7 @@ struct MainSplitView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .animation(nil, value: navigationState.columnVisibility)
         .task {
             await listViewModel.loadTemplates()
         }

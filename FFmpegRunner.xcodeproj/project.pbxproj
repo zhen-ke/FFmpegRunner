@@ -28,6 +28,7 @@
 		001A0012 /* TemplateDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0012 /* TemplateDetailViewModel.swift */; };
 		001A0013 /* CommandPreviewViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0013 /* CommandPreviewViewModel.swift */; };
 		001A0014 /* ExecutionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0014 /* ExecutionViewModel.swift */; };
+		85ACC138092D4846BC72047B /* NavigationState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 093ABD7BB34C42A5BB1067A0 /* NavigationState.swift */; };
 		001A0015 /* MainSplitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0015 /* MainSplitView.swift */; };
 		001A0016 /* TemplateListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0016 /* TemplateListView.swift */; };
 		001A0017 /* ParameterFormView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0017 /* ParameterFormView.swift */; };
@@ -79,6 +80,7 @@
 		001B0012 /* TemplateDetailViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateDetailViewModel.swift; sourceTree = "<group>"; };
 		001B0013 /* CommandPreviewViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPreviewViewModel.swift; sourceTree = "<group>"; };
 		001B0014 /* ExecutionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutionViewModel.swift; sourceTree = "<group>"; };
+		093ABD7BB34C42A5BB1067A0 /* NavigationState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationState.swift; sourceTree = "<group>"; };
 		001B0015 /* MainSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainSplitView.swift; sourceTree = "<group>"; };
 		001B0016 /* TemplateListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateListView.swift; sourceTree = "<group>"; };
 		001B0017 /* ParameterFormView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParameterFormView.swift; sourceTree = "<group>"; };
@@ -206,6 +208,7 @@
 				001B0012 /* TemplateDetailViewModel.swift */,
 				001B0013 /* CommandPreviewViewModel.swift */,
 				001B0014 /* ExecutionViewModel.swift */,
+				093ABD7BB34C42A5BB1067A0 /* NavigationState.swift */,
 				001B0027 /* HistoryViewModel.swift */,
 				001B0035 /* TemplateHeaderViewModel.swift */,
 			);
@@ -424,6 +427,7 @@
 				001A0012 /* TemplateDetailViewModel.swift in Sources */,
 				001A0013 /* CommandPreviewViewModel.swift in Sources */,
 				001A0014 /* ExecutionViewModel.swift in Sources */,
+				85ACC138092D4846BC72047B /* NavigationState.swift in Sources */,
 				001A0015 /* MainSplitView.swift in Sources */,
 				001A0016 /* TemplateListView.swift in Sources */,
 				001A0017 /* ParameterFormView.swift in Sources */,
