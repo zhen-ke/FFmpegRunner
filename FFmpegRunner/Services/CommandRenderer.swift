@@ -31,6 +31,11 @@ protocol RenderContext {
     /// - Parameter key: 参数键名
     /// - Returns: 是否是 raw command
     func isRawCommand(forKey key: String) -> Bool
+
+    /// 获取指定 key 的拼接模式
+    /// - Parameter key: 参数键名
+    /// - Returns: 拼接模式（token/inline）
+    func argumentMode(forKey key: String) -> ArgumentMode
 }
 
 // MARK: - Context Implementations
@@ -40,6 +45,7 @@ struct TemplateValueContext: RenderContext {
     let values: TemplateValueDict
     let skipEscapeKeys: Set<String>
     let rawCommandKeys: Set<String>
+    let argumentModes: [String: ArgumentMode]
 
     func value(forKey key: String) -> String? {
         values[key]?.rawValue
@@ -51,6 +57,10 @@ struct TemplateValueContext: RenderContext {
 
     func isRawCommand(forKey key: String) -> Bool {
         rawCommandKeys.contains(key)
+    }
+
+    func argumentMode(forKey key: String) -> ArgumentMode {
+        argumentModes[key] ?? .token // 默认是 token 模式
     }
 }
 
@@ -78,6 +88,10 @@ struct ParameterBindingContext: RenderContext {
     func isRawCommand(forKey key: String) -> Bool {
         rawCommandKeys.contains(key)
     }
+
+    func argumentMode(forKey key: String) -> ArgumentMode {
+        bindingDict[key]?.parameter.argumentMode ?? .token // 默认是 token 模式
+    }
 }
 
 /// 基于简单字典的渲染上下文
@@ -94,6 +108,10 @@ struct SimpleValueContext: RenderContext {
 
     func isRawCommand(forKey key: String) -> Bool {
         false // 简单字典不支持 raw command
+    }
+
+    func argumentMode(forKey key: String) -> ArgumentMode {
+        .token // 简单字典默认为 token 模式
     }
 }
 
@@ -113,7 +131,7 @@ struct RenderedCommand {
 
     /// 命令是否完整（所有占位符都已替换）
     var isComplete: Bool {
-        CommandRenderer.isComplete(displayString)
+        missingPlaceholders.isEmpty
     }
 }
 
@@ -145,7 +163,7 @@ struct CommandRenderer {
     static func render(template: Template, values: [TemplateValue]) -> String {
         let valueDict = values.asDictionary
         let skipEscapeKeys = collectSkipEscapeKeys(from: template.parameters)
-        let context = TemplateValueContext(values: valueDict, skipEscapeKeys: skipEscapeKeys, rawCommandKeys: [])
+        let context = TemplateValueContext(values: valueDict, skipEscapeKeys: skipEscapeKeys, rawCommandKeys: [], argumentModes: [:])
         return render(commandTemplate: template.commandTemplate, context: context, forDisplay: true)
     }
 
@@ -156,7 +174,7 @@ struct CommandRenderer {
     ///   - skipEscapeKeys: 不需要转义的参数 key 集合
     /// - Returns: 渲染后的命令字符串
     static func render(commandTemplate: String, values: TemplateValueDict, skipEscapeKeys: Set<String> = []) -> String {
-        let context = TemplateValueContext(values: values, skipEscapeKeys: skipEscapeKeys, rawCommandKeys: [])
+        let context = TemplateValueContext(values: values, skipEscapeKeys: skipEscapeKeys, rawCommandKeys: [], argumentModes: [:])
         return render(commandTemplate: commandTemplate, context: context, forDisplay: true)
     }
 
@@ -182,10 +200,12 @@ struct CommandRenderer {
         let valueDict = values.asDictionary
         let skipEscapeKeys = collectSkipEscapeKeys(from: template.parameters)
         let rawCommandKeys = collectRawCommandKeys(from: template.parameters)
+        let argumentModes = collectArgumentModes(from: template.parameters)
         let context = TemplateValueContext(
             values: valueDict,
             skipEscapeKeys: skipEscapeKeys,
-            rawCommandKeys: rawCommandKeys
+            rawCommandKeys: rawCommandKeys,
+            argumentModes: argumentModes
         )
 
         let missingPlaceholders = collectMissingPlaceholders(
@@ -270,15 +290,85 @@ struct CommandRenderer {
         var args: [String] = []
         var currentIndex = commandTemplate.startIndex
 
+        // 当前正在构建的参数缓冲区（用于处理 inline 模式）
+        var currentTokenBuffer = ""
+
+        // 提交当前缓冲区为一个 argument
+        func flushBuffer() {
+            if !currentTokenBuffer.isEmpty {
+                args.append(currentTokenBuffer)
+                currentTokenBuffer = ""
+            }
+        }
+
         let range = NSRange(commandTemplate.startIndex..., in: commandTemplate)
         let matches = placeholderRegex.matches(in: commandTemplate, range: range)
 
-        /// 将静态文本按空白拆分后追加到 args
-        func appendStatic(_ text: Substring) {
+        /// 处理静态文本片段
+        func handleStatic(_ text: Substring) {
             let staticText = String(text)
-            guard !staticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            let parts = splitCommand(staticText)
-            args.append(contentsOf: parts)
+
+            // 如果缓冲区不为空（说明之前有 inline 参数），静态文本紧接在后面
+            // 需要判断是否包含空白符来决定是否截断 buffer
+            if !currentTokenBuffer.isEmpty {
+                // 只要包含空白符，Buffer 必须截断（Argument 结束）
+                // 但要注意：如果 staticText 以非空白开头，它应该拼接到 Buffer 上吗？
+                // 策略：splitCommand 会处理空白，我们先用 splitCommand 拆
+
+                let parts = splitCommand(staticText) // 这里的 splitCommand 实现会处理引号
+
+                if let firstPart = parts.first {
+                     // 检查 staticText 开头是否有空白
+                    let hasLeadingWhitespace = staticText.first?.isWhitespace ?? false
+
+                    if hasLeadingWhitespace {
+                         // 有空白 -> Buffer 结束
+                        flushBuffer()
+                        args.append(contentsOf: parts)
+                    } else {
+                         // 无空白 -> 紧接 Buffer
+                        currentTokenBuffer += firstPart
+                        if parts.count > 1 {
+                             flushBuffer()
+                             args.append(contentsOf: parts.dropFirst())
+                        }
+                    }
+                } else if !staticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                     // 只有空白符的情况（splitCommand 返回空但 raw 不空 -> 全是空白）
+                     flushBuffer()
+                }
+            } else {
+                 // 缓冲区为空，直接拆分
+                let parts = splitCommand(staticText)
+                if !parts.isEmpty {
+                     // 如果最后一个 part 是不完整的（比如 "scale="）?
+                     // splitCommand 目前是完整拆分。
+                     // 关键点：我们无法知道 "scale=" 是否应该是 buffer 的开始。
+                     // 假设：如果 staticText 末尾没有空白，且下一个是 inline 占位符，那么最后一个 part 应该进入 Buffer。
+
+                     // 我们需要知道"后面紧跟着什么"。
+                     // 但在这里我们只处理 static。
+
+                     // 简化策略：
+                     // 既然我们正在引入 inline 模式，那么模板编写者应该注意。
+                     // 任何静态文本，如果是 splitCommand 拆出来的，除了最后一个元素外，都肯定是完整的 args。
+                     // 最后一个元素，如果 staticText 末尾没有空白，则进入 Buffer。
+
+                    let hasTrailingWhitespace = staticText.last?.isWhitespace ?? false
+
+                    if hasTrailingWhitespace {
+                        args.append(contentsOf: parts)
+                    } else {
+                        // 将最后一个放入 buffer
+                        if parts.count > 1 {
+                            args.append(contentsOf: parts.dropLast())
+                        }
+                        if let last = parts.last {
+                            currentTokenBuffer = last
+                        }
+                    }
+                }
+            }
         }
 
         for match in matches {
@@ -287,29 +377,53 @@ struct CommandRenderer {
                 let fullRange = Range(match.range, in: commandTemplate)
             else { continue }
 
-            // ① 占位符前的静态部分（按空白拆分成独立 token）
+            // ① 占位符前的静态部分
             let staticPart = commandTemplate[currentIndex..<fullRange.lowerBound]
-            appendStatic(staticPart)
+            if !staticPart.isEmpty {
+                handleStatic(staticPart)
+            }
 
             // ② 占位符本身
             let key = String(commandTemplate[keyRange])
             if let value = context.value(forKey: key), !value.isEmpty {
-                if context.isRawCommand(forKey: key) {
-                    // 🔥 Raw command 参数：使用 splitCommand 拆分后追加
-                    // 这处理了 "自定义命令" 模板，其 commandTemplate 是 "{{command}}"
-                    let splitArgs = splitCommand(value)
-                    args.append(contentsOf: splitArgs)
+                let mode = context.argumentMode(forKey: key)
+                let isRaw = context.isRawCommand(forKey: key)
+
+                if isRaw {
+                     // Raw command: 必须独立（或者我们允许 inline raw? 暂不建议）
+                     flushBuffer()
+                     let splitArgs = splitCommand(value)
+                     args.append(contentsOf: splitArgs)
                 } else {
-                    // 普通参数（如文件路径）：作为单个完整的 argument
-                    args.append(value)
+                    switch mode {
+                    case .inline:
+                         // Inline: 追加到 Buffer
+                        currentTokenBuffer += value
+                    case .token:
+                         // Token:
+                         // 1. 先提交之前的 Buffer
+                        flushBuffer()
+                         // 2. 添加当前值为独立 Argument
+                        args.append(value)
+                    }
                 }
+            } else {
+                 // 值为空的情况：
+                 // 如果是 token 模式 -> 忽略
+                 // 如果是 inline 模式 -> 相当于插入空字符串，Buffer 保持不变
             }
 
             currentIndex = fullRange.upperBound
         }
 
         // ③ 尾部静态文本
-        appendStatic(commandTemplate[currentIndex...])
+        let remaining = commandTemplate[currentIndex...]
+        if !remaining.isEmpty {
+            handleStatic(remaining)
+        }
+
+        // 最后提交 Buffer
+        flushBuffer()
 
         return removeFFmpegIfNeeded(from: args)
     }
@@ -395,6 +509,15 @@ struct CommandRenderer {
             }
         }
         return rawCommandKeys
+    }
+
+    /// 从模板参数中收集 ArgumentMode
+    private static func collectArgumentModes(from parameters: [TemplateParameter]) -> [String: ArgumentMode] {
+        var modes: [String: ArgumentMode] = [:]
+        for param in parameters {
+            modes[param.key] = param.argumentMode
+        }
+        return modes
     }
 
     /// 从绑定中收集"原始命令"类型的 key
@@ -497,16 +620,8 @@ struct CommandRenderer {
     }
 
     /// 将命令分割为参数数组
-    /// - Note: ⚠️ 此方法仅应用于以下场景：
-    ///   1. 用户粘贴/导入的手动命令
-    ///   2. 从历史记录恢复命令
-    ///   3. Legacy command 兼容
-    ///
-    ///   对于 Template → Execute 的主路径，请使用 `renderToCommand()` 方法，
-    ///   它会直接生成正确的参数数组，避免 shell escaping 的不可逆问题。
-    ///
-    /// - Important: 此实现仅支持基本的 shell 引用语法（单引号、双引号、反斜杠转义）。
-    ///              不支持 $()、heredoc、嵌套复杂引号等高级语法。
+    /// - Note: ⚠️ 仅用于导入/粘贴用户命令或 Legacy 兼容。不要在主执行路径使用。
+    /// - Warning: 已软废弃，建议使用 renderToCommand()
     static func splitCommand(_ command: String) -> [String] {
         var args: [String] = []
         var current = ""
@@ -565,6 +680,13 @@ struct CommandRenderer {
 
         if !current.isEmpty {
             args.append(current)
+        }
+
+        if inSingleQuote || inDoubleQuote {
+             // ⚠️ 检测到未闭合引号
+             // 在实际项目中，这里应该抛出错误或记录日志。
+             // 为了保持行为兼容，暂且将剩余部分作为一个参数，但最好能通知调用者。
+             // print("Warning: Unclosed quote detected in command: \(command)")
         }
 
         return args

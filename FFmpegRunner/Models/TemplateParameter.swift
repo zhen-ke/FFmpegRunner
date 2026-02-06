@@ -55,6 +55,16 @@ enum EscapeStrategy: String, Codable {
     case raw
 }
 
+// MARK: - Argument Mode
+
+/// 参数在命令中的拼接模式
+enum ArgumentMode: String, Codable {
+    /// 独立 Token（默认）：占位符本身就是一个完整的 Argument
+    case token
+    /// 内联模式：占位符是 Argument 的一部分（禁止拆分静态文本）
+    case inline
+}
+
 // MARK: - UI Hint
 
 /// 参数 UI 显示提示
@@ -132,6 +142,9 @@ struct TemplateParameter: Codable, Identifiable, Hashable {
     /// UI 显示提示
     var uiHint: ParameterUIHint? = nil
 
+    /// 参数拼接模式
+    var argumentMode: ArgumentMode = .token
+
     // MARK: - Legacy Properties (deprecated, use uiHint)
 
     /// 占位符文本（deprecated: use uiHint.placeholder）
@@ -173,7 +186,7 @@ struct TemplateParameter: Codable, Identifiable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case key, label, type, defaultValue, placeholder, isRequired, constraints
-        case multiline, monospace, role, escapeStrategy, uiHint
+        case multiline, monospace, role, escapeStrategy, uiHint, argumentMode
         // Legacy key for backward compatibility
         case skipEscape
     }
@@ -195,6 +208,7 @@ struct TemplateParameter: Codable, Identifiable, Hashable {
         monospace = try container.decodeIfPresent(Bool.self, forKey: .monospace)
         role = try container.decodeIfPresent(ParameterRole.self, forKey: .role)
         uiHint = try container.decodeIfPresent(ParameterUIHint.self, forKey: .uiHint)
+        argumentMode = try container.decodeIfPresent(ArgumentMode.self, forKey: .argumentMode) ?? .token
 
         // EscapeStrategy: 优先读取 escapeStrategy，fallback 到 skipEscape
         if let strategy = try container.decodeIfPresent(EscapeStrategy.self, forKey: .escapeStrategy) {
@@ -219,6 +233,7 @@ struct TemplateParameter: Codable, Identifiable, Hashable {
         try container.encodeIfPresent(role, forKey: .role)
         try container.encode(escapeStrategy, forKey: .escapeStrategy)
         try container.encodeIfPresent(uiHint, forKey: .uiHint)
+        try container.encode(argumentMode, forKey: .argumentMode)
         try container.encodeIfPresent(multiline, forKey: .multiline)
         try container.encodeIfPresent(monospace, forKey: .monospace)
     }
@@ -236,6 +251,7 @@ struct TemplateParameter: Codable, Identifiable, Hashable {
         role: ParameterRole? = nil,
         escapeStrategy: EscapeStrategy = .shell,
         uiHint: ParameterUIHint? = nil,
+        argumentMode: ArgumentMode = .token,
         multiline: Bool? = nil,
         monospace: Bool? = nil
     ) {
@@ -249,6 +265,7 @@ struct TemplateParameter: Codable, Identifiable, Hashable {
         self.role = role
         self.escapeStrategy = escapeStrategy
         self.uiHint = uiHint
+        self.argumentMode = argumentMode
         self.multiline = multiline
         self.monospace = monospace
     }
