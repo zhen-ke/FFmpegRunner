@@ -20,7 +20,6 @@
 		001A0004 /* TemplateParameter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0004 /* TemplateParameter.swift */; };
 		001A0005 /* TemplateValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0005 /* TemplateValue.swift */; };
 		001A0006 /* ExecutionResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0006 /* ExecutionResult.swift */; };
-		001A0007 /* TemplateLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0007 /* TemplateLoader.swift */; };
 		001A0008 /* CommandRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0008 /* CommandRenderer.swift */; };
 		001A0009 /* FFmpegService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0009 /* FFmpegService.swift */; };
 		001A0010 /* ProcessLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0010 /* ProcessLogger.swift */; };
@@ -72,7 +71,6 @@
 		001B0004 /* TemplateParameter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateParameter.swift; sourceTree = "<group>"; };
 		001B0005 /* TemplateValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateValue.swift; sourceTree = "<group>"; };
 		001B0006 /* ExecutionResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutionResult.swift; sourceTree = "<group>"; };
-		001B0007 /* TemplateLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateLoader.swift; sourceTree = "<group>"; };
 		001B0008 /* CommandRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandRenderer.swift; sourceTree = "<group>"; };
 		001B0009 /* FFmpegService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFmpegService.swift; sourceTree = "<group>"; };
 		001B0010 /* ProcessLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessLogger.swift; sourceTree = "<group>"; };
@@ -190,7 +188,6 @@
 				FA5DAA0F6C8C4BADA831EA35 /* TemplateValidator.swift */,
 				3F18260226DD42C193DB5E8D /* TemplateSorter.swift */,
 				69A961845DB84B18B9E0C1A0 /* TemplateRepository.swift */,
-				001B0007 /* TemplateLoader.swift */,
 				001B0008 /* CommandRenderer.swift */,
 				001B0009 /* FFmpegService.swift */,
 				001B0010 /* ProcessLogger.swift */,
@@ -419,7 +416,6 @@
 				001A0004 /* TemplateParameter.swift in Sources */,
 				001A0005 /* TemplateValue.swift in Sources */,
 				001A0006 /* ExecutionResult.swift in Sources */,
-				001A0007 /* TemplateLoader.swift in Sources */,
 				001A0008 /* CommandRenderer.swift in Sources */,
 				001A0009 /* FFmpegService.swift in Sources */,
 				001A0010 /* ProcessLogger.swift in Sources */,

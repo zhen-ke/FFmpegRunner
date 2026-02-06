@@ -550,6 +550,17 @@ final class CommandNSTextView: NSTextView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        // 1. 优先命中测试：如果鼠标当前不在本视图（或其子视图）上（例如在覆盖的按钮上），则直接返回
+        // 这样可以避免 super.mouseMoved 设置 I-Beam 光标，覆盖上层 SwiftUI 视图手型光标
+        if let window = self.window,
+           let hitView = window.contentView?.hitTest(event.locationInWindow) {
+
+            // 如果命中的视图不是自己且不是自己的子视图，说明是在更上层的视图上
+            if hitView !== self && !hitView.isDescendant(of: self) {
+                return
+            }
+        }
+
         super.mouseMoved(with: event)
 
         // 使用节流器限制高频路径检测
