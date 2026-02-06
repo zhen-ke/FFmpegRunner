@@ -15,32 +15,7 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-// MARK: - Throttler (通用节流器)
 
-/// 通用节流器，用于限制高频事件的执行频率
-final class Throttler {
-    private var workItem: DispatchWorkItem?
-    private let queue: DispatchQueue
-    private let interval: TimeInterval
-
-    init(interval: TimeInterval = 0.05, queue: DispatchQueue = .main) {
-        self.interval = interval
-        self.queue = queue
-    }
-
-    /// 节流执行闘包，在 interval 时间内只执行最后一次调用
-    func throttle(_ block: @escaping () -> Void) {
-        workItem?.cancel()
-        workItem = DispatchWorkItem(block: block)
-        queue.asyncAfter(deadline: .now() + interval, execute: workItem!)
-    }
-
-    /// 取消待执行的任务
-    func cancel() {
-        workItem?.cancel()
-        workItem = nil
-    }
-}
 
 // MARK: - String Extension (智能空格处理)
 
@@ -523,9 +498,6 @@ final class CommandNSTextView: NSTextView {
     /// hover 高亮的背景颜色
     private let pathHighlightColor = NSColor.controlAccentColor.withAlphaComponent(0.1)
 
-    /// mouseMoved 节流器，避免高频路径检测（50ms 间隔）
-    private lazy var mouseMoveThrottler = Throttler(interval: 0.05)
-
     /// 路径检测缓存（文本变化时失效）
     private var cachedPaths: [PathInfo] = []
     private var cachedText: String = ""
@@ -563,14 +535,12 @@ final class CommandNSTextView: NSTextView {
 
         super.mouseMoved(with: event)
 
-        // 使用节流器限制高频路径检测
-        mouseMoveThrottler.throttle { [weak self] in
-            self?.handleMouseMoveThrottled(with: event)
-        }
+        // 直接处理（不再节流，避免光标闪烁）
+        handleMouseMove(with: event)
     }
 
-    /// 节流后的鼠标移动处理
-    private func handleMouseMoveThrottled(with event: NSEvent) {
+    /// 鼠标移动处理
+    private func handleMouseMove(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
 
         if let pathInfo = detectPathInfoAt(point) {
