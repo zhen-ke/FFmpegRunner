@@ -39,6 +39,8 @@ class FFmpegService: ObservableObject {
 
     // MARK: - Singleton
 
+    // NOTE: First access must happen on @MainActor (Swift 6 requirement).
+    // Thread safety is generally handled by @MainActor on the class.
     static let shared = FFmpegService()
 
     // MARK: - Published Properties
@@ -183,29 +185,29 @@ class FFmpegService: ObservableObject {
             return cached
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: ffmpegPath)
-        process.arguments = ["-version"]
+        let path = self.ffmpegPath
+        guard !path.isEmpty else { throw FFmpegError.ffmpegNotFound }
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
+        // 在后台线程执行阻塞操作
+        let version = try await Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: path)
+            process.arguments = ["-version"]
 
-        try process.run()
-        process.waitUntilExit()
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8) ?? ""
+            try process.run()
+            process.waitUntilExit()
 
-        // 提取第一行版本信息
-        if let firstLine = output.split(separator: "\n").first {
-            let version = String(firstLine)
-            self.cachedVersion = version
-            return version
-        }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            return output.split(separator: "\n").first.map(String.init) ?? output
+        }.value
 
-        self.cachedVersion = output
-        return output
+        self.cachedVersion = version
+        return version
     }
 
     /// 执行 FFmpeg 命令（使用参数数组，推荐路径）
@@ -249,7 +251,7 @@ class FFmpegService: ObservableObject {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
-        // 使用线程安全的数据收集器
+        // 使用线程安全的数据收集器 (shared across threads, safe due to internal locking)
         let dataCollector = OutputDataCollector()
 
         // 状态管理
@@ -264,32 +266,22 @@ class FFmpegService: ObservableObject {
             }
         }
 
-        // 清理函数：关闭文件句柄，重置状态
-        let cleanup = {
-            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-            stderrPipe.fileHandleForReading.readabilityHandler = nil
-            try? stdoutPipe.fileHandleForReading.close()
-            try? stderrPipe.fileHandleForReading.close()
-        }
-
         // 开始流式读取
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            if !data.isEmpty {
-                dataCollector.appendStderr(data)
-                if let text = String(data: data, encoding: .utf8) {
-                    processLogger.processOutput(text, isError: true)
-                }
+            guard !data.isEmpty else { return }
+            dataCollector.appendStdout(data)
+            if let text = String(data: data, encoding: .utf8) {
+                processLogger.processOutput(text, isError: false)
             }
         }
 
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            if !data.isEmpty {
-                dataCollector.appendStdout(data)
-                if let text = String(data: data, encoding: .utf8) {
-                    processLogger.processOutput(text, isError: false)
-                }
+            guard !data.isEmpty else { return }
+            dataCollector.appendStderr(data)
+            if let text = String(data: data, encoding: .utf8) {
+                processLogger.processOutput(text, isError: true)
             }
         }
 
@@ -311,13 +303,35 @@ class FFmpegService: ObservableObject {
                     }
                 }
 
-                cleanup()
+                // 清理并读取剩余数据（严格顺序：移除handler -> 读剩余 -> 关闭）
 
-                // 在主线程更新状态
-                Task { @MainActor in
-                    self.isRunning = false
-                    self.currentProcess = nil
+                // 1. 停止异步读取
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+
+                // 2. 读取管道中剩余的数据（防止丢失）
+                // 使用 try? 忽略错误，确保能走到关闭和状态重置
+                if let remainingStdout = try? stdoutPipe.fileHandleForReading.readDataToEndOfFile(), !remainingStdout.isEmpty {
+                    dataCollector.appendStdout(remainingStdout)
+                    if let text = String(data: remainingStdout, encoding: .utf8) {
+                        processLogger.processOutput(text, isError: false)
+                    }
                 }
+
+                if let remainingStderr = try? stderrPipe.fileHandleForReading.readDataToEndOfFile(), !remainingStderr.isEmpty {
+                    dataCollector.appendStderr(remainingStderr)
+                    if let text = String(data: remainingStderr, encoding: .utf8) {
+                        processLogger.processOutput(text, isError: true)
+                    }
+                }
+
+                // 3. 关闭文件句柄
+                try? stdoutPipe.fileHandleForReading.close()
+                try? stderrPipe.fileHandleForReading.close()
+
+                // 同步更新状态 (已在 MainActor)
+                self.isRunning = false
+                self.currentProcess = nil
 
                 let endTime = Date()
                 let result = ExecutionResult(
@@ -340,21 +354,24 @@ class FFmpegService: ObservableObject {
                 return result
 
             } catch {
-                cleanup()
-                Task { @MainActor in
-                    self.isRunning = false
-                    self.currentProcess = nil
-                }
+                // 出错时的清理
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+                try? stdoutPipe.fileHandleForReading.close()
+                try? stderrPipe.fileHandleForReading.close()
 
-                // 记录错误
+                // 同步更新状态
+                self.isRunning = false
+                self.currentProcess = nil
+
+                // 记录错误 (先记录再 throw)
                 let errorMsg = error.localizedDescription
-                Task { @MainActor in
-                    self.onLogOutput?(LogEntry(
-                        timestamp: Date(),
-                        level: .error,
-                        message: "执行异常: \(errorMsg)"
-                    ))
-                }
+                self.onLogOutput?(LogEntry(
+                    timestamp: Date(),
+                    level: .error,
+                    message: "执行异常: \(errorMsg)"
+                ))
+
                 throw FFmpegError.executionFailed(errorMsg)
             }
 
@@ -391,45 +408,56 @@ class FFmpegService: ObservableObject {
     /// 取消当前执行
     func cancel() {
         guard let process = currentProcess, process.isRunning else { return }
-        gracefullyTerminate(process)
+        // 触发异步终止逻辑
+        Task {
+            await gracefullyTerminate(process)
+        }
     }
 
     /// 优雅终止进程
     /// 先发送 SIGINT (Ctrl+C)，如果超时未退出则发送 SIGKILL
-    private func gracefullyTerminate(_ process: Process) {
+    /// - Note: 这是一个异步方法，以免阻塞调用者
+    private func gracefullyTerminate(_ process: Process) async {
         let pid = process.processIdentifier
         guard pid > 0 else { return }
 
-        onLogOutput?(LogEntry(
-            timestamp: Date(),
-            level: .warning,
-            message: "正在停止执行..."
-        ))
+        // 此方法可能被 Task wrapper 调用多次，需要确保状态已被重置
+        // 这里的 log 是为了提示用户正在尝试停止
+        await MainActor.run {
+             onLogOutput?(LogEntry(
+                timestamp: Date(),
+                level: .warning,
+                message: "正在停止执行..."
+            ))
+        }
 
         // 1. 尝试优雅终止 (SIGINT)
         kill(pid, SIGINT)
 
         // 2. 延迟检查并强制终止
-        DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            // check if process is still running
-            if kill(pid, 0) == 0 {
-                kill(pid, SIGKILL)
+        // 等待 3 秒 (3 * 1_000_000_000 nanoseconds)
+        try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
 
-                Task { @MainActor [weak self] in
-                    self?.onLogOutput?(LogEntry(
-                        timestamp: Date(),
-                        level: .warning,
-                        message: "进程未响应，已强制终止"
-                    ))
-                }
-            } else {
-                 Task { @MainActor [weak self] in
-                    self?.onLogOutput?(LogEntry(
-                        timestamp: Date(),
-                        level: .warning,
-                        message: "执行已取消"
-                    ))
-                }
+        // 检查进程是否仍在运行
+        if process.isRunning {
+             // 强制终止
+             process.terminate() // 内部通常调用 SIGTERM，或手动 kill(pid, SIGKILL)
+             // kill(pid, SIGKILL) // 如果 process.terminate() 不够强力，可以使用这个
+
+             await MainActor.run {
+                onLogOutput?(LogEntry(
+                    timestamp: Date(),
+                    level: .warning,
+                    message: "进程未响应，已强制终止"
+                ))
+            }
+        } else {
+             await MainActor.run {
+                onLogOutput?(LogEntry(
+                    timestamp: Date(),
+                    level: .warning,
+                    message: "执行已取消"
+                ))
             }
         }
     }
@@ -510,21 +538,11 @@ final class OutputDataCollector: @unchecked Sendable {
         chunks.append(data)
         size += data.count
 
-        guard size > maxBufferSize else { return }
-
-        var overflow = size - maxBufferSize
-        while overflow > 0, !chunks.isEmpty {
-            let first = chunks[0]
-            if first.count <= overflow {
-                overflow -= first.count
-                size -= first.count
-                chunks.removeFirst()
-            } else {
-                let trimmed = first.dropFirst(overflow)
-                size -= overflow
-                chunks[0] = Data(trimmed)
-                overflow = 0
-            }
+        // 如果超出限制，移除最早的块，直到满足大小限制
+        // 注意：这里按块移除，避免从中间截断 Data 导致 invalid UTF-8 序列
+        while size > maxBufferSize, !chunks.isEmpty {
+            let removed = chunks.removeFirst()
+            size -= removed.count
         }
     }
 
