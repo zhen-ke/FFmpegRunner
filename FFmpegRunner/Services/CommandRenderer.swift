@@ -119,7 +119,7 @@ struct SimpleValueContext: RenderContext {
 
 /// 渲染后的命令
 /// 同时包含用于执行的参数数组和用于显示的字符串
-struct RenderedCommand {
+struct RenderedCommand: Sendable {
     /// 用于 Process.arguments 的参数数组（不包含 ffmpeg 本身）
     let arguments: [String]
 
@@ -162,7 +162,7 @@ struct CommandRenderer {
     /// - Returns: 渲染后的命令字符串
     static func render(template: Template, values: [TemplateValue]) -> String {
         let valueDict = values.asDictionary
-        let skipEscapeKeys = collectSkipEscapeKeys(from: template.parameters)
+        let skipEscapeKeys = collectKeys(from: template.parameters, where: { $0.skipEscape == true }, key: \.key)
         let context = TemplateValueContext(values: valueDict, skipEscapeKeys: skipEscapeKeys, rawCommandKeys: [], argumentModes: [:])
         return render(commandTemplate: template.commandTemplate, context: context, forDisplay: true)
     }
@@ -198,8 +198,8 @@ struct CommandRenderer {
     /// - Note: 这是执行命令的推荐路径，直接生成参数数组，避免 shell escaping 的不可逆问题
     static func renderToCommand(template: Template, values: [TemplateValue]) -> RenderedCommand {
         let valueDict = values.asDictionary
-        let skipEscapeKeys = collectSkipEscapeKeys(from: template.parameters)
-        let rawCommandKeys = collectRawCommandKeys(from: template.parameters)
+        let skipEscapeKeys = collectKeys(from: template.parameters, where: { $0.skipEscape == true }, key: \.key)
+        let rawCommandKeys = collectKeys(from: template.parameters, where: { $0.role == .raw }, key: \.key)
         let argumentModes = collectArgumentModes(from: template.parameters)
         let context = TemplateValueContext(
             values: valueDict,
@@ -208,29 +208,8 @@ struct CommandRenderer {
             argumentModes: argumentModes
         )
 
-        let missingPlaceholders = collectMissingPlaceholders(
-            commandTemplate: template.commandTemplate,
-            context: context
-        )
-
-        // UI 展示字符串（允许 shell escaping）
-        let displayString = render(
-            commandTemplate: template.commandTemplate,
-            context: context,
-            forDisplay: true
-        )
-
-        // ✅ 执行参数数组（arguments-first，不经过字符串拼接和转义）
-        let arguments = renderArguments(
-            commandTemplate: template.commandTemplate,
-            context: context
-        )
-
-        return RenderedCommand(
-            arguments: arguments,
-            displayString: displayString,
-            missingPlaceholders: missingPlaceholders
-        )
+        // ✅ 单次正则匹配，同时生成 arguments、displayString、missingPlaceholders
+        return renderAll(commandTemplate: template.commandTemplate, context: context)
     }
 
     /// 渲染命令（使用 TemplateBinding，语义闭环路径）
@@ -238,51 +217,166 @@ struct CommandRenderer {
     /// - Returns: 包含参数数组和显示字符串的 RenderedCommand
     /// - Note: 这是"语义闭环"路径，优先消费 ParsedValue 而非 rawValue
     static func renderToCommand(binding: TemplateBinding) -> RenderedCommand {
-        let skipEscapeKeys = collectSkipEscapeKeysFromBindings(binding.bindings)
-        let rawCommandKeys = collectRawCommandKeysFromBindings(binding.bindings)
+        let skipEscapeKeys = collectKeys(from: binding.bindings, where: { $0.escapeStrategy == .raw }, key: \.key)
+        let rawCommandKeys = collectKeys(from: binding.bindings, where: { $0.role == .raw }, key: \.key)
         let context = ParameterBindingContext(
             bindings: binding.bindings,
             skipEscapeKeys: skipEscapeKeys,
             rawCommandKeys: rawCommandKeys
         )
 
-        let missingPlaceholders = collectMissingPlaceholders(
-            commandTemplate: binding.template.commandTemplate,
-            context: context
-        )
+        // ✅ 单次正则匹配，同时生成 arguments、displayString、missingPlaceholders
+        return renderAll(commandTemplate: binding.template.commandTemplate, context: context)
+    }
 
-        // UI 展示字符串（允许 shell escaping）
-        let displayString = render(
-            commandTemplate: binding.template.commandTemplate,
-            context: context,
-            forDisplay: true
-        )
+    // MARK: - Unified Render (Single-Pass)
 
-        // ✅ 执行参数数组（arguments-first，使用 ParsedValue）
-        let arguments = renderArguments(
-            commandTemplate: binding.template.commandTemplate,
-            context: context
-        )
+    /// 统一渲染：单次正则匹配同时生成 arguments、displayString、missingPlaceholders
+    /// - Parameters:
+    ///   - commandTemplate: 命令模板
+    ///   - context: 渲染上下文
+    /// - Returns: RenderedCommand 包含所有渲染结果
+    /// - Note: 🔥 性能优化：合并原来的 3 次正则匹配为 1 次
+    private static func renderAll(
+        commandTemplate: String,
+        context: RenderContext
+    ) -> RenderedCommand {
+        let range = NSRange(commandTemplate.startIndex..., in: commandTemplate)
+        let matches = placeholderRegex.matches(in: commandTemplate, range: range)
+
+        var args: [String] = []
+        var display = ""
+        var missing: [String] = []
+        var seenKeys: Set<String> = []
+        var currentIndex = commandTemplate.startIndex
+        var currentTokenBuffer = ""
+
+        // 提交当前缓冲区为一个 argument
+        func flushBuffer() {
+            if !currentTokenBuffer.isEmpty {
+                args.append(currentTokenBuffer)
+                currentTokenBuffer = ""
+            }
+        }
+
+        /// 处理静态文本片段（用于 arguments 路径）
+        func handleStaticForArgs(_ text: Substring) {
+            let staticText = String(text)
+            if staticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // 只有空白符：结束当前 buffer
+                flushBuffer()
+                return
+            }
+
+            // 使用简单空白分隔（不处理引号），适用于模板静态文本
+            let parts = splitStaticText(staticText)
+
+            if !currentTokenBuffer.isEmpty {
+                let hasLeadingWhitespace = staticText.first?.isWhitespace ?? false
+                if hasLeadingWhitespace {
+                    flushBuffer()
+                    args.append(contentsOf: parts)
+                } else if let firstPart = parts.first {
+                    currentTokenBuffer += firstPart
+                    if parts.count > 1 {
+                        flushBuffer()
+                        args.append(contentsOf: parts.dropFirst())
+                    }
+                }
+            } else {
+                let hasTrailingWhitespace = staticText.last?.isWhitespace ?? false
+                if hasTrailingWhitespace {
+                    args.append(contentsOf: parts)
+                } else if !parts.isEmpty {
+                    if parts.count > 1 {
+                        args.append(contentsOf: parts.dropLast())
+                    }
+                    if let last = parts.last {
+                        currentTokenBuffer = last
+                    }
+                }
+            }
+        }
+
+        for match in matches {
+            guard
+                let keyRange = Range(match.range(at: 1), in: commandTemplate),
+                let fullRange = Range(match.range, in: commandTemplate)
+            else { continue }
+
+            let staticPart = commandTemplate[currentIndex..<fullRange.lowerBound]
+            let key = String(commandTemplate[keyRange])
+            let value = context.value(forKey: key) ?? ""
+            let isEmpty = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+            // ① Display 路径：追加静态文本
+            display.append(contentsOf: staticPart)
+
+            // ② Args 路径：处理静态文本
+            if !staticPart.isEmpty {
+                handleStaticForArgs(staticPart)
+            }
+
+            // ③ Missing 检查（去重）
+            if seenKeys.insert(key).inserted && isEmpty {
+                missing.append(key)
+            }
+
+            // ④ Display 路径：处理占位符值
+            if isEmpty {
+                // 空值保留原始占位符，与执行语义对齐
+                display.append("{{\(key)}}")
+            } else if !context.shouldSkipEscape(forKey: key) {
+                display.append(escapeForDisplay(value))
+            } else {
+                display.append(value)
+            }
+
+            // ⑤ Args 路径：处理占位符值
+            if !isEmpty {
+                let mode = context.argumentMode(forKey: key)
+                let isRaw = context.isRawCommand(forKey: key)
+
+                if isRaw {
+                    flushBuffer()
+                    args.append(contentsOf: splitCommand(value))
+                } else {
+                    switch mode {
+                    case .inline:
+                        currentTokenBuffer += value
+                    case .token:
+                        flushBuffer()
+                        args.append(value)
+                    }
+                }
+            }
+
+            currentIndex = fullRange.upperBound
+        }
+
+        // 尾部静态文本
+        let remaining = commandTemplate[currentIndex...]
+        display.append(contentsOf: remaining)
+        if !remaining.isEmpty {
+            handleStaticForArgs(remaining)
+        }
+        flushBuffer()
 
         return RenderedCommand(
-            arguments: arguments,
-            displayString: displayString,
-            missingPlaceholders: missingPlaceholders
+            arguments: removeFFmpegIfNeeded(from: args),
+            displayString: display,
+            missingPlaceholders: missing
         )
     }
 
-    // MARK: - Arguments Builder (Execution-Only)
+    // MARK: - Arguments Builder (Legacy, kept for reference)
 
     /// 直接生成参数数组的核心函数（执行路径）
+    /// - Note: 此方法已被 renderAll 替代，保留用于特殊场景
     /// - Parameters:
     ///   - commandTemplate: 命令模板
     ///   - context: 渲染上下文
     /// - Returns: 参数数组（不包含 ffmpeg 本身）
-    /// - Note: 🔥 关键设计：
-    ///   - 不生成字符串，不做 shell escaping
-    ///   - 模板中的静态文本按空白拆分
-    ///   - 占位符 {{key}} 的值直接成为一个完整的 argument
-    ///   - 这从根本上解决了特殊字符（中文、空格、?、emoji）导致的问题
     private static func renderArguments(
         commandTemplate: String,
         context: RenderContext
@@ -478,57 +572,23 @@ struct CommandRenderer {
 
     // MARK: - Helper Methods
 
-    /// 从模板参数中收集需要跳过转义的 key
-    private static func collectSkipEscapeKeys(from parameters: [TemplateParameter]) -> Set<String> {
-        var skipEscapeKeys: Set<String> = []
-        for param in parameters {
-            if param.skipEscape == true {
-                skipEscapeKeys.insert(param.key)
-            }
-        }
-        return skipEscapeKeys
-    }
-
-    /// 从绑定中收集需要跳过转义的 key
-    private static func collectSkipEscapeKeysFromBindings(_ bindings: [ParameterBinding]) -> Set<String> {
-        var skipEscapeKeys: Set<String> = []
-        for binding in bindings {
-            if binding.escapeStrategy == .raw {
-                skipEscapeKeys.insert(binding.key)
-            }
-        }
-        return skipEscapeKeys
-    }
-
-    /// 从模板参数中收集"原始命令"类型的 key（role == .raw）
-    private static func collectRawCommandKeys(from parameters: [TemplateParameter]) -> Set<String> {
-        var rawCommandKeys: Set<String> = []
-        for param in parameters {
-            if param.role == .raw {
-                rawCommandKeys.insert(param.key)
-            }
-        }
-        return rawCommandKeys
+    /// 通用的 key 收集方法（消除重复代码）
+    /// - Parameters:
+    ///   - items: 要筛选的元素数组
+    ///   - predicate: 筛选条件
+    ///   - keyPath: 提取 key 的路径
+    /// - Returns: 符合条件的 key 集合
+    private static func collectKeys<T>(
+        from items: [T],
+        where predicate: (T) -> Bool,
+        key keyPath: KeyPath<T, String>
+    ) -> Set<String> {
+        Set(items.filter(predicate).map { $0[keyPath: keyPath] })
     }
 
     /// 从模板参数中收集 ArgumentMode
     private static func collectArgumentModes(from parameters: [TemplateParameter]) -> [String: ArgumentMode] {
-        var modes: [String: ArgumentMode] = [:]
-        for param in parameters {
-            modes[param.key] = param.argumentMode
-        }
-        return modes
-    }
-
-    /// 从绑定中收集"原始命令"类型的 key
-    private static func collectRawCommandKeysFromBindings(_ bindings: [ParameterBinding]) -> Set<String> {
-        var rawCommandKeys: Set<String> = []
-        for binding in bindings {
-            if binding.role == .raw {
-                rawCommandKeys.insert(binding.key)
-            }
-        }
-        return rawCommandKeys
+        Dictionary(uniqueKeysWithValues: parameters.map { ($0.key, $0.argumentMode) })
     }
 
     /// 从参数数组中移除 ffmpeg 本身
@@ -600,9 +660,10 @@ struct CommandRenderer {
     /// - 包含元字符的值用单引号包裹
     /// - 单引号内部的单引号转义为 '\''
     private static func escapeForDisplay(_ value: String) -> String {
-        // 空值特殊处理
+        // 空值：不应该到达这里，调用方应该已经处理
+        // 但作为防御性编程，返回空字符串而非 ''
         if value.isEmpty {
-            return "''"
+            return ""
         }
 
         // 检查是否需要转义
@@ -619,8 +680,15 @@ struct CommandRenderer {
         return value
     }
 
+    /// 拆分静态模板文本（简单空白分隔，不处理引号）
+    /// - Note: 用于模板静态文本，避免 splitCommand 的引号处理逻辑干扰
+    private static func splitStaticText(_ text: String) -> [String] {
+        text.split(omittingEmptySubsequences: true) { $0.isWhitespace }
+            .map(String.init)
+    }
+
     /// 将命令分割为参数数组
-    /// - Note: ⚠️ 仅用于导入/粘贴用户命令或 Legacy 兼容。不要在主执行路径使用。
+    /// - Note: ⚠️ 仅用于导入/粘贴用户命令或 raw command 值。不要对模板静态文本使用。
     /// - Warning: 已软废弃，建议使用 renderToCommand()
     static func splitCommand(_ command: String) -> [String] {
         var args: [String] = []
