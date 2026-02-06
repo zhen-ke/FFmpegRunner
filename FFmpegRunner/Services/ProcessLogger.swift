@@ -28,11 +28,17 @@ class ProcessLogger: ProcessLoggerProviding {
     /// 日志回调
     var onLog: ((LogEntry) -> Void)?
 
+    /// 回调队列（默认主线程，UI 友好）
+    var callbackQueue: DispatchQueue = .main
+
     /// 待处理的行缓冲
     private var lineBuffer = ""
 
     /// 串行队列 - 确保日志按顺序处理且线程安全
-    private let logQueue = DispatchQueue(label: "com.ffmpegrunner.processlogger.queue")
+    private let logQueue: DispatchQueue
+
+    /// 队列标识 key（用于死锁检测）
+    private static let queueKey = DispatchSpecificKey<Bool>()
 
     /// 缓冲区最大大小（防止内存溢出）
     private let maxBufferSize = 10_000
@@ -49,6 +55,13 @@ class ProcessLogger: ProcessLoggerProviding {
         var speed: String = ""
     }
 
+    // MARK: - Initializer
+
+    init() {
+        logQueue = DispatchQueue(label: "com.ffmpegrunner.processlogger.queue")
+        logQueue.setSpecific(key: Self.queueKey, value: true)
+    }
+
     // MARK: - Public Methods
 
     /// 处理进程输出
@@ -59,7 +72,7 @@ class ProcessLogger: ProcessLoggerProviding {
 
             // 缓冲区溢出保护
             if self.lineBuffer.count + text.count > self.maxBufferSize {
-                self.flushBuffer(isError: isError)
+                self.dropBufferDueToOverflow(isError: isError)
             }
 
             self.lineBuffer += text
@@ -75,9 +88,15 @@ class ProcessLogger: ProcessLoggerProviding {
     }
 
     /// 同步清空缓冲区（用于需要立即清空的场景）
+    /// - Note: 内置死锁保护，在 logQueue 内部调用时直接执行而非 sync
     func clearSync() {
-        logQueue.sync { [weak self] in
-            self?.lineBuffer.removeAll(keepingCapacity: true)
+        if DispatchQueue.getSpecific(key: Self.queueKey) != nil {
+            // 已在 logQueue 内，直接执行避免死锁
+            lineBuffer.removeAll(keepingCapacity: true)
+        } else {
+            logQueue.sync {
+                lineBuffer.removeAll(keepingCapacity: true)
+            }
         }
     }
 
@@ -102,8 +121,9 @@ class ProcessLogger: ProcessLoggerProviding {
         lineBuffer = String(remaining)
     }
 
-    /// 强制刷新缓冲区（处理未完成的行）
-    private func flushBuffer(isError: Bool) {
+    /// 缓冲区溢出时丢弃内容并记录告警
+    /// - Note: 不会处理不完整的行，而是直接丢弃整个缓冲区
+    private func dropBufferDueToOverflow(isError: Bool) {
         guard !lineBuffer.isEmpty else { return }
 
         let droppedCount = lineBuffer.count
@@ -117,7 +137,7 @@ class ProcessLogger: ProcessLoggerProviding {
             message: "[缓冲区溢出] 日志输出过快，已丢弃 \(droppedCount) 字符\(snippetSuffix)",
             isStderr: isError
         )
-        onLog?(entry)
+        emit(entry)
         lineBuffer.removeAll()
     }
 
@@ -141,7 +161,14 @@ class ProcessLogger: ProcessLoggerProviding {
             isProgress: isProgress
         )
 
-        onLog?(entry)
+        emit(entry)
+    }
+
+    /// 在指定队列上发送日志回调（默认主线程）
+    private func emit(_ entry: LogEntry) {
+        callbackQueue.async { [weak self] in
+            self?.onLog?(entry)
+        }
     }
 
     /// 检测日志级别
@@ -171,13 +198,18 @@ class ProcessLogger: ProcessLoggerProviding {
     }
 
     /// 是否为 FFmpeg 进度行
+    /// - Note: 需要至少匹配 2 个关键字段，减少误判率
     private func isProgressLine(_ lowercased: String) -> Bool {
-        lowercased.contains("frame=") ||
-        lowercased.contains("fps=") ||
-        lowercased.contains("size=") ||
-        lowercased.contains("time=") ||
-        lowercased.contains("bitrate=") ||
-        lowercased.contains("speed=")
+        let progressKeywords = [
+            "frame=",
+            "fps=",
+            "size=",
+            "time=",
+            "bitrate=",
+            "speed="
+        ]
+        let matchCount = progressKeywords.filter { lowercased.contains($0) }.count
+        return matchCount >= 2
     }
 
     /// 解析 FFmpeg 进度行（使用字符串分割，性能优于正则表达式）
