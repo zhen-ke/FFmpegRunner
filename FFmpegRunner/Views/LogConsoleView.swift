@@ -202,19 +202,23 @@ struct LogContentView: View {
     let autoScroll: Bool
     let isRunning: Bool
 
-    /// 滚动节流：防止高频日志输出时触发过多滚动动画
-    @State private var pendingScrollId: UUID?
-    @State private var scrollThrottleTask: Task<Void, Never>?
+    /// 滚动节流：使用 Task + cancel 模式
+    /// - 天然节流：新请求自动取消旧任务
+    /// - 不会排队：始终只有一个 pending task
+    /// - View 重建安全：Task 引用比布尔锁更可靠
+    @State private var scrollTask: Task<Void, Never>?
 
-    /// 滚动节流间隔（毫秒）
-    private let scrollThrottleInterval: UInt64 = 150 // ~6-7 fps，足够流畅
+    /// 滚动节流间隔（秒）
+    private let scrollThrottleInterval: Double = 0.05 // 50ms，约 20 fps
 
     var body: some View {
         ScrollViewReader { proxy in
             logListContent
                 .background(Color(NSColor.textBackgroundColor))
-                .onChange(of: logs.count) { _ in
-                    handleScrollThrottle(proxy: proxy)
+                // 监听最后一条日志的 id，比 count 更语义化
+                // 支持：批量插入、替换日志、过滤器切换等场景
+                .onChange(of: logs.last?.id) { _ in
+                    requestScrollToBottom(proxy: proxy)
                 }
         }
     }
@@ -237,31 +241,28 @@ struct LogContentView: View {
         }
     }
 
-    /// 节流滚动处理
-    private func handleScrollThrottle(proxy: ScrollViewProxy) {
-        guard autoScroll, let lastId = logs.last?.id else { return }
+    /// 节流滚动请求
+    /// - 使用 Task + cancel 确保同一时间只有一个滚动任务
+    /// - 新请求自动取消旧任务，天然防抖
+    /// - 滚动时取最新的 logs.last，确保始终滚动到最底部
+    private func requestScrollToBottom(proxy: ScrollViewProxy) {
+        guard autoScroll else { return }
 
-        // 记录待滚动的 ID
-        pendingScrollId = lastId
+        // 取消旧的滚动任务（如果存在）
+        scrollTask?.cancel()
 
-        // 如果已有节流任务在运行，则跳过（会使用最新的 pendingScrollId）
-        guard scrollThrottleTask == nil else { return }
+        scrollTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(scrollThrottleInterval * 1_000_000_000))
 
-        // 创建节流任务
-        scrollThrottleTask = Task { @MainActor in
-            // 等待一小段时间，让多个日志合并为一次滚动
-            try? await Task.sleep(nanoseconds: scrollThrottleInterval * 1_000_000)
+            // 检查是否被取消
+            guard !Task.isCancelled else { return }
 
-            // 执行滚动到最新 ID
-            if let targetId = pendingScrollId {
-                withAnimation(.easeOut(duration: 0.15)) {
-                    proxy.scrollTo(targetId, anchor: .bottom)
+            // 滚动到当前最新的日志
+            if let lastId = logs.last?.id {
+                withAnimation(.easeOut(duration: 0.1)) {
+                    proxy.scrollTo(lastId, anchor: .bottom)
                 }
             }
-
-            // 清理状态
-            pendingScrollId = nil
-            scrollThrottleTask = nil
         }
     }
 }
