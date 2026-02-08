@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SwiftUI
 
 /// FFmpeg 命令执行结果
 struct ExecutionResult {
@@ -104,6 +105,30 @@ enum ExecutionState: Equatable {
             return false
         }
     }
+
+    /// 状态显示文本
+    var displayText: String {
+        switch self {
+        case .idle: return "就绪"
+        case .preparing: return "准备中"
+        case .running: return "执行中"
+        case .cancelling: return "取消中"
+        case .completed(let result): return result.isSuccess ? "完成" : "失败"
+        case .cancelled: return "已取消"
+        case .error: return "错误"
+        }
+    }
+
+    /// 状态显示颜色
+    var displayColor: Color {
+        switch self {
+        case .idle: return .secondary
+        case .preparing, .running: return .blue
+        case .cancelling, .cancelled: return .orange
+        case .completed(let result): return result.isSuccess ? .green : .red
+        case .error: return .red
+        }
+    }
 }
 
 // MARK: - Equatable for ExecutionResult
@@ -126,10 +151,16 @@ struct LogEntry: Identifiable, Equatable {
     let message: String
 
     /// 是否来自 stderr（用于颜色区分）
-    var isStderr: Bool
+    let isStderr: Bool
 
     /// 是否为进度日志（frame= / time= 等）
-    var isProgress: Bool
+    let isProgress: Bool
+
+    /// 是否包含错误关键字（构造时预计算，避免重复字符串搜索）
+    let containsErrorKeyword: Bool
+
+    /// 错误关键字列表
+    private static let errorKeywords = ["error", "failed", "invalid", "cannot", "no such", "not found", "denied", "fatal"]
 
     /// 初始化器
     init(
@@ -146,6 +177,9 @@ struct LogEntry: Identifiable, Equatable {
         self.message = message
         self.isStderr = isStderr
         self.isProgress = isProgress
+        // 预计算错误关键字检测，避免每次 View 刷新都重新搜索
+        let lowercased = message.lowercased()
+        self.containsErrorKeyword = Self.errorKeywords.contains { lowercased.contains($0) }
     }
 
     /// 格式化的时间戳
@@ -159,19 +193,13 @@ struct LogEntry: Identifiable, Equatable {
         return formatter
     }()
 
-    /// 检测消息中是否包含错误关键字
-    var containsErrorKeyword: Bool {
-        let lowercased = message.lowercased()
-        let errorKeywords = ["error", "failed", "invalid", "cannot", "no such", "not found", "denied", "fatal"]
-        return errorKeywords.contains { lowercased.contains($0) }
-    }
-
     /// 是否为重要日志（错误/警告）
     var isImportant: Bool {
         level == .error || level == .warning
     }
 
     /// 使用指定 ID 创建副本（用于合并进度日志）
+    /// - Note: 使用私有初始化器保留预计算的 containsErrorKeyword
     func withId(_ id: UUID) -> LogEntry {
         LogEntry(
             id: id,
@@ -179,8 +207,28 @@ struct LogEntry: Identifiable, Equatable {
             level: level,
             message: message,
             isStderr: isStderr,
-            isProgress: isProgress
+            isProgress: isProgress,
+            containsErrorKeyword: containsErrorKeyword
         )
+    }
+
+    /// 私有初始化器：用于 withId 等内部复制，直接传入预计算值
+    private init(
+        id: UUID,
+        timestamp: Date,
+        level: LogLevel,
+        message: String,
+        isStderr: Bool,
+        isProgress: Bool,
+        containsErrorKeyword: Bool
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.level = level
+        self.message = message
+        self.isStderr = isStderr
+        self.isProgress = isProgress
+        self.containsErrorKeyword = containsErrorKeyword
     }
 }
 

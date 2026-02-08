@@ -6,13 +6,28 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
-/// 日志过滤级别
-enum LogFilter: String, CaseIterable {
-    case all = "全部"
-    case important = "仅错误/警告"
-    case noDebug = "隐藏 Debug"
+// MARK: - 语义颜色定义
+
+extension Color {
+    enum Console {
+        /// 错误行背景
+        static let errorBackground = Color.red.opacity(0.08)
+        /// 当前活动行高亮
+        static let activeHighlight = Color.accentColor.opacity(0.05)
+        /// stderr 文本颜色
+        static let stderrText = Color(NSColor.systemOrange).opacity(0.9)
+    }
 }
+
+// MARK: - 文件名格式化
+
+private let filenameFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyyMMdd_HHmmss"
+    return formatter
+}()
 
 struct LogConsoleView: View {
 
@@ -24,6 +39,7 @@ struct LogConsoleView: View {
 
     @State private var autoScroll = true
     @State private var showExportSheet = false
+    @State private var showClearConfirm = false
 
 
     // MARK: - Body
@@ -62,7 +78,7 @@ struct LogConsoleView: View {
             isPresented: $showExportSheet,
             document: LogDocument(content: viewModel.exportLogs()),
             contentType: .plainText,
-            defaultFilename: "ffmpeg_log_\(Date().formatted(.iso8601)).txt"
+            defaultFilename: "ffmpeg_log_\(filenameFormatter.string(from: Date())).txt"
         ) { result in
             // 处理导出结果
         }
@@ -78,6 +94,8 @@ struct ConsoleHeaderView: View {
     let onExport: () -> Void
     let state: ExecutionState
     let isFFmpegAvailable: Bool
+
+    @State private var showClearConfirm = false
 
     var body: some View {
         HStack {
@@ -132,11 +150,21 @@ struct ConsoleHeaderView: View {
             .help("导出日志")
 
             // 清空按钮
-            Button(action: onClear) {
+            Button {
+                showClearConfirm = true
+            } label: {
                 Image(systemName: "trash")
             }
             .buttonStyle(.bordered)
             .help("清空日志")
+            .confirmationDialog(
+                "确定要清空所有日志吗？",
+                isPresented: $showClearConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("清空", role: .destructive, action: onClear)
+                Button("取消", role: .cancel) {}
+            }
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -157,41 +185,17 @@ struct ExecutionStatusBadge: View {
                     .frame(width: 12, height: 12)
             } else {
                 Circle()
-                    .fill(statusColor)
+                    .fill(state.displayColor)
                     .frame(width: 8, height: 8)
             }
 
-            Text(statusText)
+            Text(state.displayText)
                 .font(.caption)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(statusColor.opacity(0.1))
+        .background(state.displayColor.opacity(0.1))
         .cornerRadius(4)
-    }
-
-    private var statusText: String {
-        switch state {
-        case .idle: return "就绪"
-        case .preparing: return "准备中"
-        case .running: return "执行中"
-        case .cancelling: return "取消中"
-        case .completed(let result): return result.isSuccess ? "完成" : "失败"
-        case .cancelled: return "已取消"
-        case .error: return "错误"
-        }
-    }
-
-    private var statusColor: Color {
-        switch state {
-        case .idle: return .secondary
-        case .preparing: return .blue
-        case .running: return .blue
-        case .cancelling: return .orange
-        case .completed(let result): return result.isSuccess ? .green : .red
-        case .cancelled: return .orange
-        case .error: return .red
-        }
     }
 }
 
@@ -221,20 +225,31 @@ struct LogContentView: View {
                     requestScrollToBottom(proxy: proxy)
                 }
         }
+        .onDisappear {
+            // 修复 Task 泄漏：View 销毁时取消滚动任务
+            scrollTask?.cancel()
+            scrollTask = nil
+        }
     }
 
     /// 日志列表内容（提取以简化 body 类型推断）
+    /// - 优化：拆分最后一行单独渲染，避免每行都计算 isLatest
     private var logListContent: some View {
-        let lastLogId = logs.last?.id
-        return ScrollView {
+        ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(logs) { entry in
-                    LogEntryRow(
-                        entry: entry,
-                        isLatest: entry.id == lastLogId,
-                        isRunning: isRunning
+                // 非最后一行：isLatest 固定为 false
+                ForEach(logs.dropLast(1), id: \.id) { entry in
+                    EquatableView(content:
+                        LogEntryRow(entry: entry, isLatest: false, isRunning: isRunning)
                     )
                     .id(entry.id)
+                }
+                // 最后一行：isLatest 为 true
+                if let last = logs.last {
+                    EquatableView(content:
+                        LogEntryRow(entry: last, isLatest: true, isRunning: isRunning)
+                    )
+                    .id(last.id)
                 }
             }
             .padding(8)
@@ -269,10 +284,18 @@ struct LogContentView: View {
 
 // MARK: - 日志条目行
 
-struct LogEntryRow: View {
+struct LogEntryRow: View, Equatable {
     let entry: LogEntry
     let isLatest: Bool
     let isRunning: Bool
+
+    // MARK: - Equatable
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.entry.id == rhs.entry.id
+            && lhs.isLatest == rhs.isLatest
+            && lhs.isRunning == rhs.isRunning
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
@@ -339,7 +362,7 @@ struct LogEntryRow: View {
             return .red
         }
         if entry.isStderr {
-            return Color(NSColor.systemOrange).opacity(0.9)
+            return Color.Console.stderrText
         }
         switch entry.level {
         case .debug: return .secondary
@@ -351,11 +374,11 @@ struct LogEntryRow: View {
     private var backgroundColor: Color {
         // 错误行高亮
         if entry.level == .error || entry.containsErrorKeyword {
-            return Color.red.opacity(0.08)
+            return Color.Console.errorBackground
         }
         // 运行中最新行的"呼吸感"
         if isLatest && isRunning {
-            return Color.accentColor.opacity(0.05)
+            return Color.Console.activeHighlight
         }
         return .clear
     }
@@ -410,34 +433,12 @@ struct ConsoleStatusBar: View {
     private var statusIndicator: some View {
         HStack(spacing: 4) {
             Circle()
-                .fill(statusColor)
+                .fill(state.displayColor)
                 .frame(width: 6, height: 6)
-            Text(statusText)
+            Text(state.displayText)
                 .font(.caption2)
                 .fontWeight(.medium)
-                .foregroundColor(statusColor)
-        }
-    }
-
-    private var statusText: String {
-        switch state {
-        case .idle: return "就绪"
-        case .preparing: return "准备中"
-        case .running: return "执行中"
-        case .cancelling: return "取消中"
-        case .completed(let result): return result.isSuccess ? "完成" : "失败"
-        case .cancelled: return "已取消"
-        case .error: return "错误"
-        }
-    }
-
-    private var statusColor: Color {
-        switch state {
-        case .idle: return .secondary
-        case .preparing, .running: return .blue
-        case .cancelling, .cancelled: return .orange
-        case .completed(let result): return result.isSuccess ? .green : .red
-        case .error: return .red
+                .foregroundColor(state.displayColor)
         }
     }
 }
@@ -466,8 +467,6 @@ struct LogDocument: FileDocument {
         return FileWrapper(regularFileWithContents: data)
     }
 }
-
-import UniformTypeIdentifiers
 
 // MARK: - Preview
 
