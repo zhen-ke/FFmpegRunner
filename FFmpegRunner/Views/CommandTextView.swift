@@ -258,13 +258,29 @@ struct CommandTextView: View {
     }
 
     private func findOutputPath(in args: [String]) -> String? {
-        var output: String?
-        for arg in args {
-            if arg.hasPrefix("-") { continue }
-            if arg.contains(":") && !arg.contains("/") { continue }
-            output = arg
+        // 需要跳过值的常见 FFmpeg flags
+        let flagsWithValue: Set<String> = [
+            "-i", "-f", "-c", "-c:v", "-c:a", "-b:v", "-b:a",
+            "-r", "-s", "-vf", "-af", "-preset", "-crf",
+            "-map", "-t", "-ss", "-to", "-filter_complex"
+        ]
+
+        var i = 0
+        var lastPositional: String?
+
+        while i < args.count {
+            let arg = args[i]
+            if flagsWithValue.contains(arg) {
+                i += 2 // 跳过 flag 及其值
+            } else if arg.hasPrefix("-") {
+                i += 1 // 跳过无值 flag
+            } else {
+                lastPositional = arg
+                i += 1
+            }
         }
-        return output
+
+        return lastPositional
     }
 
     private func findLastFormat(in args: [String]) -> String? {
