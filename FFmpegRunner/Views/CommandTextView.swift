@@ -749,7 +749,7 @@ final class CommandNSTextView: NSTextView {
         while i < chars.count {
             // 检查引号包裹的路径
             if chars[i] == "\"" {
-                if let info = findQuotedPathInfo(in: text, around: i + 1) {
+                if let info = findQuotedPathInfo(in: text, startingAt: i) {
                     paths.append(info)
                     i = info.range.location + info.range.length
                     continue
@@ -843,40 +843,33 @@ final class CommandNSTextView: NSTextView {
     }
 
     /// 查找引号包裹的路径 "..."
-    private func findQuotedPathInfo(in text: String, around index: Int) -> PathInfo? {
+    /// - Parameters:
+    ///   - text: 完整文本
+    ///   - quoteStart: 开始引号的位置（chars[quoteStart] == '"'）
+    /// - Returns: 路径信息，包含路径字符串和完整范围（含引号）
+    private func findQuotedPathInfo(in text: String, startingAt quoteStart: Int) -> PathInfo? {
         let chars = Array(text)
-        guard index < chars.count else { return nil }
+        guard quoteStart < chars.count, chars[quoteStart] == "\"" else { return nil }
 
-        // 向前查找引号
-        var startQuote = -1
-        for i in stride(from: index, through: 0, by: -1) {
-            if chars[i] == "\"" {
-                startQuote = i
-                break
-            }
-        }
-
-        guard startQuote >= 0 else { return nil }
-
-        // 向后查找引号
+        // 向后查找结束引号
         var endQuote = -1
-        for i in (startQuote + 1)..<chars.count {
+        for i in (quoteStart + 1)..<chars.count {
             if chars[i] == "\"" {
                 endQuote = i
                 break
             }
         }
 
-        guard endQuote > startQuote + 1 else { return nil }
-        guard index >= startQuote && index <= endQuote else { return nil }
+        // 确保引号配对且内容非空
+        guard endQuote > quoteStart + 1 else { return nil }
 
-        let pathStart = text.index(text.startIndex, offsetBy: startQuote + 1)
+        let pathStart = text.index(text.startIndex, offsetBy: quoteStart + 1)
         let pathEnd = text.index(text.startIndex, offsetBy: endQuote)
         let path = String(text[pathStart..<pathEnd])
 
         // 验证是否像路径
         if path.hasPrefix("/") || path.hasPrefix("~") {
-            let range = NSRange(location: startQuote, length: endQuote - startQuote + 1)
+            let range = NSRange(location: quoteStart, length: endQuote - quoteStart + 1)
             return PathInfo(path: path, range: range)
         }
 
