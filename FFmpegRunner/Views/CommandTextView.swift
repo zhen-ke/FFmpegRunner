@@ -22,31 +22,34 @@ import UniformTypeIdentifiers
 extension String {
     /// 智能包裹路径并添加必要空格
     /// - Parameters:
-    ///   - range: 插入位置的范围
+    ///   - range: 插入位置的范围 (NSRange, UTF-16 编码)
     ///   - text: 原始文本
     /// - Returns: 带有适当前后空格的字符串
     func withSmartSpacing(at range: NSRange, in text: String) -> String {
         var result = self
-        let chars = Array(text)
+
+        // 将 NSRange (UTF-16) 转换为 Swift String.Index 范围
+        guard let swiftRange = Range(range, in: text) else { return result }
 
         // 检查前一个字符，需要添加前导空格
-        if range.location > 0 {
-            let prevIndex = range.location - 1
-            if prevIndex < chars.count && !chars[prevIndex].isWhitespace {
+        if swiftRange.lowerBound > text.startIndex {
+            let prevChar = text[text.index(before: swiftRange.lowerBound)]
+            if !prevChar.isWhitespace {
                 result = " " + result
             }
         }
 
         // 检查后一个字符，需要添加后缀空格
-        let nextIndex = range.location + range.length
-        if nextIndex < chars.count && !chars[nextIndex].isWhitespace {
-            result = result + " "
+        if swiftRange.upperBound < text.endIndex {
+            let nextChar = text[swiftRange.upperBound]
+            if !nextChar.isWhitespace {
+                result = result + " "
+            }
         }
 
         return result
     }
 }
-
 // MARK: - CommandTextView
 
 /// 专业级命令输入视图（支持拖拽插入路径）
