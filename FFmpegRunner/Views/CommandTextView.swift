@@ -58,8 +58,8 @@ struct CommandTextView: View {
     @Binding var text: String
     var placeholder: String?
 
-    /// 用于 closure-based 路径插入的引用
-    @State private var insertPathHandler: ((String) -> Void)?
+    /// Coordinator 引用（用于直接调用插入方法，避免 async closure 时序问题）
+    @State private var coordinator: CommandTextViewRepresentable.Coordinator?
 
     /// 是否悬停或聚焦（显示工具入口）
     @State private var isHovering = false
@@ -85,7 +85,7 @@ struct CommandTextView: View {
                 ZStack(alignment: .topLeading) {
                     CommandTextViewRepresentable(
                         text: $text,
-                        insertPathHandler: $insertPathHandler,
+                        coordinator: $coordinator,
                         isFocused: $isFocused,
                         selectionRange: $selectionRange,
                         onInsertFile: { insertFile(isDirectory: false) },
@@ -179,8 +179,8 @@ struct CommandTextView: View {
 
     private func insertPathAtCursor(_ path: String) {
         let escapedPath = "\"\(path)\""
-        // 使用 closure 直接插入（而非 Notification）
-        insertPathHandler?(escapedPath)
+        // 直接通过 Coordinator 插入（同步设置，无时序问题）
+        coordinator?.insertAtCursor(escapedPath)
     }
 
     /// 检测是否在 -i 后（高亮按钮）
@@ -368,7 +368,7 @@ private extension String {
 
 struct CommandTextViewRepresentable: NSViewRepresentable {
     @Binding var text: String
-    @Binding var insertPathHandler: ((String) -> Void)?
+    @Binding var coordinator: Coordinator?
     @Binding var isFocused: Bool
     @Binding var selectionRange: NSRange
     var onInsertFile: (() -> Void)?
@@ -413,12 +413,9 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
 
         scrollView.documentView = textView
 
-        // 设置 closure-based 插入处理器
-        let coordinator = context.coordinator
+        // 同步设置 coordinator 引用（避免 async 时序问题）
         DispatchQueue.main.async {
-            self.insertPathHandler = { [weak coordinator] path in
-                coordinator?.insertAtCursor(path)
-            }
+            self.coordinator = context.coordinator
         }
 
         return scrollView
