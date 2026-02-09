@@ -14,6 +14,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import Combine
 
 
 
@@ -72,7 +73,10 @@ struct CommandTextView: View {
 
     /// 路径校验提示
     @State private var validationIssues: [CommandPathIssue] = []
-    @State private var validationTask: Task<Void, Never>?
+
+    /// Combine-based debounce: 使用单一订阅替代反复创建 Task
+    private let validationSubject = PassthroughSubject<String, Never>()
+    @State private var validationCancellable: AnyCancellable?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -141,11 +145,15 @@ struct CommandTextView: View {
         }
         .onAppear {
             updateMenuHint(for: text, selection: selectionRange)
-            scheduleValidation(for: text)
+            setupValidationSubscription()
+            validationSubject.send(text)
+        }
+        .onDisappear {
+            validationCancellable?.cancel()
         }
         .onChange(of: text) { newValue in
             updateMenuHint(for: newValue, selection: selectionRange)
-            scheduleValidation(for: newValue)
+            validationSubject.send(newValue)
         }
         .onChange(of: selectionRange) { newRange in
             updateMenuHint(for: text, selection: newRange)
@@ -193,13 +201,13 @@ struct CommandTextView: View {
 
     // MARK: - Path Validation
 
-    private func scheduleValidation(for text: String) {
-        validationTask?.cancel()
-        validationTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
-            validationIssues = collectValidationIssues(from: text)
-        }
+    /// 设置 Combine 订阅（仅在 onAppear 调用一次）
+    private func setupValidationSubscription() {
+        validationCancellable = validationSubject
+            .debounce(for: .milliseconds(250), scheduler: DispatchQueue.main)
+            .sink { [self] newText in
+                validationIssues = collectValidationIssues(from: newText)
+            }
     }
 
     private func collectValidationIssues(from text: String) -> [CommandPathIssue] {
