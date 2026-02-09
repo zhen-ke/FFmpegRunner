@@ -605,6 +605,25 @@ final class CommandNSTextView: NSTextView {
         }
     }
 
+    // MARK: - Mouse Click
+
+    override func mouseDown(with event: NSEvent) {
+        // 双击路径时在 Finder 中显示
+        if event.clickCount == 2 {
+            let point = convert(event.locationInWindow, from: nil)
+            if let pathInfo = detectPathInfoAt(point) {
+                let expanded = (pathInfo.path as NSString).expandingTildeInPath
+                if FileManager.default.fileExists(atPath: expanded) {
+                    NSWorkspace.shared.activateFileViewerSelecting(
+                        [URL(fileURLWithPath: expanded)]
+                    )
+                    return
+                }
+            }
+        }
+        super.mouseDown(with: event)
+    }
+
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
         NSCursor.iBeam.set()
@@ -635,9 +654,10 @@ final class CommandNSTextView: NSTextView {
 
     override func keyDown(with event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // 使用 ⌘O 插入文件，⌘⇧O 插入目录（避免与系统 ⌘I 冲突）
         if flags.contains(.command),
            let key = event.charactersIgnoringModifiers?.lowercased(),
-           key == "i" {
+           key == "o" {
             if flags.contains(.shift) {
                 onInsertDirectory?()
             } else {
@@ -685,14 +705,8 @@ final class CommandNSTextView: NSTextView {
         // 使用当前选区位置（如果有选中文本则替换，否则在光标位置插入）
         let range = selectedRange()
 
-        // 支持多文件拖拽：构建带引号的路径列表（用 -i 连接）
-        let escapedPaths: String
-        if urls.count == 1 {
-            escapedPaths = "\"\(urls[0].path)\""
-        } else {
-            // 多文件：每个路径前加 -i 前缀
-            escapedPaths = urls.map { "-i \"\($0.path)\"" }.joined(separator: " ")
-        }
+        // 拖拽文件：统一用引号包裹，不自动添加 -i（让用户自行组织）
+        let escapedPaths = urls.map { "\"\($0.path)\"" }.joined(separator: " ")
 
         let textWithSpacing = escapedPaths.withSmartSpacing(at: range, in: string)
 
