@@ -756,9 +756,9 @@ final class CommandNSTextView: NSTextView {
                 }
             }
 
-            // 检查 / 开头的路径
+            // 检查 / 开头的路径（未被引号包裹）
             if chars[i] == "/" && (i == 0 || chars[i - 1].isWhitespace) {
-                if let info = findSlashPathInfo(in: text, around: i) {
+                if let info = findSlashPathInfo(in: text, startingAt: i) {
                     paths.append(info)
                     i = info.range.location + info.range.length
                     continue
@@ -876,30 +876,18 @@ final class CommandNSTextView: NSTextView {
         return nil
     }
 
-    /// 查找以 / 开头的路径
-    private func findSlashPathInfo(in text: String, around index: Int) -> PathInfo? {
+    /// 查找以 / 开头的非引号包裹路径
+    /// - Parameters:
+    ///   - text: 完整文本
+    ///   - slashStart: 路径起始位置（chars[slashStart] == '/'）
+    /// - Returns: 路径信息，包含路径字符串和范围
+    private func findSlashPathInfo(in text: String, startingAt slashStart: Int) -> PathInfo? {
         let chars = Array(text)
-        guard index < chars.count else { return nil }
+        guard slashStart < chars.count, chars[slashStart] == "/" else { return nil }
 
-        // 向前查找路径起始
-        var start = index
-        for i in stride(from: index, through: 0, by: -1) {
-            let c = chars[i]
-            if c.isWhitespace || c == "\"" || c == "'" {
-                start = i + 1
-                break
-            }
-            if i == 0 {
-                start = 0
-            }
-        }
-
-        // 确保以 / 开头
-        guard start < chars.count, chars[start] == "/" else { return nil }
-
-        // 向后查找路径结束
-        var end = index
-        for i in index..<chars.count {
+        // 向后查找路径结束（遇到空格、引号或文本结束）
+        var end = slashStart
+        for i in slashStart..<chars.count {
             let c = chars[i]
             if c.isWhitespace || c == "\"" || c == "'" {
                 end = i
@@ -910,12 +898,12 @@ final class CommandNSTextView: NSTextView {
             }
         }
 
-        guard end > start else { return nil }
+        guard end > slashStart else { return nil }
 
-        let pathStart = text.index(text.startIndex, offsetBy: start)
+        let pathStart = text.index(text.startIndex, offsetBy: slashStart)
         let pathEnd = text.index(text.startIndex, offsetBy: end)
         let path = String(text[pathStart..<pathEnd])
-        let range = NSRange(location: start, length: end - start)
+        let range = NSRange(location: slashStart, length: end - slashStart)
 
         return PathInfo(path: path, range: range)
     }
