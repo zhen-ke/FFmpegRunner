@@ -464,7 +464,9 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
         }
 
         func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
+            guard let textView = notification.object as? CommandNSTextView else { return }
+            // 主动失效路径缓存（避免 mouseMoved 中做 O(n) 字符串比较）
+            textView.invalidatePathCacheExternally()
             parent.text = textView.string
         }
 
@@ -503,7 +505,7 @@ final class CommandNSTextView: NSTextView {
 
     /// 路径检测缓存（文本变化时失效）
     private var cachedPaths: [PathInfo] = []
-    private var cachedText: String = ""
+    private var cachedTextHash: Int = 0
 
     /// 拖拽时的插入位置指示器
     private var dragCaretView: NSView?
@@ -724,11 +726,18 @@ final class CommandNSTextView: NSTextView {
 
     // MARK: - Path Cache Management
 
-    /// 使路径缓存失效（文本变化时调用）
+    /// 外部调用的缓存失效方法（在 textDidChange 时调用）
+    func invalidatePathCacheExternally() {
+        cachedPaths = []
+        cachedTextHash = 0
+    }
+
+    /// 使路径缓存失效（使用 hash 做 O(1) 快速判断）
     private func invalidatePathCache() {
-        if cachedText != string {
+        let currentHash = string.hashValue
+        if cachedTextHash != currentHash {
             cachedPaths = []
-            cachedText = string
+            cachedTextHash = currentHash
         }
     }
 
