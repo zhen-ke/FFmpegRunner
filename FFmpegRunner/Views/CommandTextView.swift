@@ -500,7 +500,12 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
 
         /// 在光标位置插入文本（带智能空格）
         func insertAtCursor(_ path: String) {
-            guard let textView = textView else { return }
+            guard let textView = textView else {
+                #if DEBUG
+                print("[CommandTextView] insertAtCursor: textView 已释放，跳过插入")
+                #endif
+                return
+            }
 
             let range = textView.selectedRange()
             let textWithSpacing = path.withSmartSpacing(at: range, in: textView.string)
@@ -533,6 +538,14 @@ final class CommandNSTextView: NSTextView {
 
     /// 自己管理的 tracking area（避免移除系统管理的）
     private var mouseTrackingArea: NSTrackingArea?
+
+    // MARK: - Lifecycle
+
+    deinit {
+        // 清理 dragCaretView（虽然它是子视图会自动移除，但显式清理更好）
+        dragCaretView?.removeFromSuperview()
+        dragCaretView = nil
+    }
 
     // MARK: - Mouse Tracking
 
