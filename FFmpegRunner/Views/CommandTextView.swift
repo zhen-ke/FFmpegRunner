@@ -518,20 +518,24 @@ final class CommandNSTextView: NSTextView {
     /// 拖拽时的插入位置指示器
     private var dragCaretView: NSView?
 
+    /// 自己管理的 tracking area（避免移除系统管理的）
+    private var mouseTrackingArea: NSTrackingArea?
+
     // MARK: - Mouse Tracking
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
 
-        // 移除旧的 tracking area
-        for area in trackingAreas {
-            removeTrackingArea(area)
+        // 只移除自己管理的 tracking area，不影响 NSTextView 系统管理的
+        if let existing = mouseTrackingArea {
+            removeTrackingArea(existing)
         }
 
         // 添加新的 tracking area
-        let options: NSTrackingArea.Options = [.mouseMoved, .activeInKeyWindow, .inVisibleRect]
-        let trackingArea = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
-        addTrackingArea(trackingArea)
+        let options: NSTrackingArea.Options = [.mouseMoved, .activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited]
+        let area = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
+        addTrackingArea(area)
+        mouseTrackingArea = area
     }
 
     override func mouseMoved(with event: NSEvent) {
