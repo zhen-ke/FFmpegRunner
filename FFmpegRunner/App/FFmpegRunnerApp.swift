@@ -18,6 +18,7 @@ struct FFmpegRunnerApp: App {
     @StateObject private var previewViewModel = CommandPreviewViewModel()
     @StateObject private var executionViewModel = ExecutionViewModel()
     @StateObject private var historyViewModel = HistoryViewModel()
+    @StateObject private var headerViewModel = TemplateHeaderViewModel()
     @StateObject private var navigationState = NavigationState()
 
     // MARK: - Body
@@ -30,6 +31,7 @@ struct FFmpegRunnerApp: App {
                 .environmentObject(previewViewModel)
                 .environmentObject(executionViewModel)
                 .environmentObject(historyViewModel)
+                .environmentObject(headerViewModel)
                 .environmentObject(navigationState)
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear {

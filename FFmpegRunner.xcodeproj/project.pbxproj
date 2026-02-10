@@ -56,6 +56,9 @@
 		002A0002 /* CommandValidatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002B0002 /* CommandValidatorTests.swift */; };
 		001A0035 /* TemplateHeaderViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0035 /* TemplateHeaderViewModel.swift */; };
 		001A0036 /* LogFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0036 /* LogFilter.swift */; };
+		001A0037 /* TemplateHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0037 /* TemplateHeaderView.swift */; };
+		001A0038 /* SaveAsTemplateSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0038 /* SaveAsTemplateSheet.swift */; };
+		001A0039 /* EmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0039 /* EmptyStateView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -110,6 +113,9 @@
 		002B0003 /* FFmpegRunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FFmpegRunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		001B0035 /* TemplateHeaderViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateHeaderViewModel.swift; sourceTree = "<group>"; };
 		001B0036 /* LogFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogFilter.swift; sourceTree = "<group>"; };
+		001B0037 /* TemplateHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateHeaderView.swift; sourceTree = "<group>"; };
+		001B0038 /* SaveAsTemplateSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaveAsTemplateSheet.swift; sourceTree = "<group>"; };
+		001B0039 /* EmptyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyStateView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -225,6 +231,9 @@
 				001B0018 /* CommandPreviewView.swift */,
 				001B0019 /* LogConsoleView.swift */,
 				001B0034 /* SettingsView.swift */,
+				001B0037 /* TemplateHeaderView.swift */,
+				001B0038 /* SaveAsTemplateSheet.swift */,
+				001B0039 /* EmptyStateView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -450,6 +459,9 @@
 				001A0034 /* SettingsView.swift in Sources */,
 				001A0035 /* TemplateHeaderViewModel.swift in Sources */,
 				001A0036 /* LogFilter.swift in Sources */,
+				001A0037 /* TemplateHeaderView.swift in Sources */,
+				001A0038 /* SaveAsTemplateSheet.swift in Sources */,
+				001A0039 /* EmptyStateView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
