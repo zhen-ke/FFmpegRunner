@@ -65,6 +65,9 @@ struct CommandTextView: View {
     @State private var isHovering = false
     @State private var isFocused = false
 
+    /// 是否正在拖拽文件到输入区域
+    @State private var isDragging = false
+
     /// 是否应该高亮工具入口（-i 后缀检测）
     @State private var shouldHighlightMenu = false
 
@@ -87,6 +90,7 @@ struct CommandTextView: View {
                         text: $text,
                         coordinator: $coordinator,
                         isFocused: $isFocused,
+                        isDragging: $isDragging,
                         selectionRange: $selectionRange,
                         onInsertFile: { insertFile(isDirectory: false) },
                         onInsertDirectory: { insertFile(isDirectory: true) }
@@ -119,8 +123,12 @@ struct CommandTextView: View {
             .cornerRadius(6)
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                    .stroke(
+                        isDragging ? Color.accentColor : Color.secondary.opacity(0.2),
+                        lineWidth: isDragging ? 2 : 1
+                    )
             )
+            .animation(.easeInOut(duration: 0.15), value: isDragging)
             .onHover { hovering in
                 withAnimation(.easeInOut(duration: 0.15)) {
                     isHovering = hovering
@@ -386,6 +394,7 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
     @Binding var text: String
     @Binding var coordinator: Coordinator?
     @Binding var isFocused: Bool
+    @Binding var isDragging: Bool
     @Binding var selectionRange: NSRange
     var onInsertFile: (() -> Void)?
     var onInsertDirectory: (() -> Void)?
@@ -398,6 +407,11 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
         scrollView.borderType = .noBorder
 
         let textView = CommandNSTextView()
+        textView.onDragStateChanged = { [self] dragging in
+            DispatchQueue.main.async {
+                self.isDragging = dragging
+            }
+        }
         textView.isRichText = false
         textView.allowsUndo = true
         textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -533,19 +547,14 @@ final class CommandNSTextView: NSTextView {
     private var cachedPaths: [PathInfo] = []
     private var cachedTextHash: Int = 0
 
-    /// 拖拽时的插入位置指示器
-    private var dragCaretView: NSView?
+    /// 拖拽状态变化回调（通知 SwiftUI 层显示高亮边框）
+    var onDragStateChanged: ((Bool) -> Void)?
+
+    /// 拖拽过程中计算的插入字符索引（performDragOperation 使用）
+    private var dragInsertionIndex: Int?
 
     /// 自己管理的 tracking area（避免移除系统管理的）
     private var mouseTrackingArea: NSTrackingArea?
-
-    // MARK: - Lifecycle
-
-    deinit {
-        // 清理 dragCaretView（虽然它是子视图会自动移除，但显式清理更好）
-        dragCaretView?.removeFromSuperview()
-        dragCaretView = nil
-    }
 
     // MARK: - Mouse Tracking
 
@@ -635,7 +644,7 @@ final class CommandNSTextView: NSTextView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        // 绘制路径高亮背景
+        // 绘制路径高亮背景（在文字下层）
         if let range = hoveredPathRange, let layoutManager = layoutManager, let textContainer = textContainer {
             let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
@@ -673,92 +682,77 @@ final class CommandNSTextView: NSTextView {
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         if sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: nil) {
+            // 让 NSTextView 初始化内部拖拽状态（显示原生插入光标）
+            let _ = super.draggingEntered(sender)
+            onDragStateChanged?(true)
             return .copy
         }
         return super.draggingEntered(sender)
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        // 调用 super 让 NSTextView 显示原生拖拽插入光标
+        let _ = super.draggingUpdated(sender)
+
+        // 记录插入位置供 performDragOperation 使用
         let point = convert(sender.draggingLocation, from: nil)
-        showDragCaret(at: point)
+        dragInsertionIndex = getInsertionCharacterIndex(at: point)
         return .copy
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
-        hideDragCaret()
+        super.draggingExited(sender)
+        onDragStateChanged?(false)
+        dragInsertionIndex = nil
     }
 
     override func draggingEnded(_ sender: NSDraggingInfo) {
-        hideDragCaret()
+        super.draggingEnded(sender)
+        onDragStateChanged?(false)
+        dragInsertionIndex = nil
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        hideDragCaret()
+        onDragStateChanged?(false)
 
         guard let urls = sender.draggingPasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ) as? [URL], !urls.isEmpty else {
+            dragInsertionIndex = nil
             return super.performDragOperation(sender)
         }
 
-        // 使用当前选区位置（如果有选中文本则替换，否则在光标位置插入）
-        let range = selectedRange()
+        // 使用拖拽过程中计算的插入位置，而非当前光标选区
+        let insertionIndex: Int
+        if let savedIndex = dragInsertionIndex {
+            insertionIndex = savedIndex
+        } else {
+            // fallback: 从 drop 坐标重新计算
+            let point = convert(sender.draggingLocation, from: nil)
+            insertionIndex = getInsertionCharacterIndex(at: point)
+        }
+        dragInsertionIndex = nil
+
+        let range = NSRange(location: insertionIndex, length: 0)
 
         // 拖拽文件：统一用引号包裹，不自动添加 -i（让用户自行组织）
         let escapedPaths = urls.map { "\"\($0.path)\"" }.joined(separator: " ")
 
         let textWithSpacing = escapedPaths.withSmartSpacing(at: range, in: string)
 
-        // 在选区位置插入（替换选中内容）
+        // 在拖拽位置插入
         insertText(textWithSpacing, replacementRange: range)
 
         return true
     }
 
-    // MARK: - Drag Caret (拖拽插入指示器)
-
-    /// 显示拖拽插入位置指示线
-    private func showDragCaret(at point: NSPoint) {
-        let insertionIndex = getInsertionCharacterIndex(at: point)
-
-        guard let layoutManager = layoutManager,
-              textContainer != nil else { return }
-
-        // 计算插入位置的矩形
-        let glyphIndex = layoutManager.glyphIndexForCharacter(at: insertionIndex)
-        var lineRect = layoutManager.lineFragmentRect(forGlyphAt: max(0, glyphIndex), effectiveRange: nil)
-        lineRect.origin.x += textContainerInset.width
-        lineRect.origin.y += textContainerInset.height
-
-        // 获取精确的 X 坐标
-        let location = layoutManager.location(forGlyphAt: max(0, glyphIndex))
-        let caretX = lineRect.origin.x + location.x
-
-        // 创建或更新指示线
-        if dragCaretView == nil {
-            let caret = NSView()
-            caret.wantsLayer = true
-            caret.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-            addSubview(caret)
-            dragCaretView = caret
-        }
-
-        dragCaretView?.frame = NSRect(
-            x: caretX - 1,
-            y: lineRect.origin.y,
-            width: 2,
-            height: lineRect.height
-        )
-        dragCaretView?.isHidden = false
-    }
-
-    /// 隐藏拖拽插入指示线
-    private func hideDragCaret() {
-        dragCaretView?.isHidden = true
-    }
-
     /// 获取插入位置的字符索引
+    ///
+    /// 使用 `characterIndex(for:in:fractionOfDistanceBetweenInsertionPoints:)` 代替
+    /// `glyphIndex(for:in:)` + `characterIndexForGlyph(at:)` 来获取准确的插入边界位置。
+    /// 前者会根据鼠标在字符左半/右半来决定返回该字符还是下一个字符的索引，
+    /// 后者只返回最近的 glyph 索引，不区分字符边界。
     func getInsertionCharacterIndex(at point: NSPoint) -> Int {
         guard let layoutManager = layoutManager,
               let textContainer = textContainer else {
@@ -770,11 +764,20 @@ final class CommandNSTextView: NSTextView {
         adjustedPoint.x -= textContainerInset.width
         adjustedPoint.y -= textContainerInset.height
 
-        let glyphIndex = layoutManager.glyphIndex(for: adjustedPoint, in: textContainer)
-        let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+        // 使用 fractionOfDistanceBetweenInsertionPoints 精确判断插入点
+        var fraction: CGFloat = 0
+        let characterIndex = layoutManager.characterIndex(
+            for: adjustedPoint,
+            in: textContainer,
+            fractionOfDistanceBetweenInsertionPoints: &fraction
+        )
 
-        return min(characterIndex, string.count)
+        // fraction > 0.5 表示鼠标在字符的右半部分，应插入到下一个字符位置
+        let insertionIndex = fraction > 0.5 ? characterIndex + 1 : characterIndex
+
+        return min(insertionIndex, string.count)
     }
+
 
     // MARK: - Path Cache Management
 
