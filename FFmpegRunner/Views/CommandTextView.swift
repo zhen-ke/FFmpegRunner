@@ -14,7 +14,6 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
-import Combine
 
 
 
@@ -60,6 +59,8 @@ struct CommandTextView: View {
 
     /// Coordinator 引用（用于直接调用插入方法，避免 async closure 时序问题）
     @State private var coordinator: CommandTextViewRepresentable.Coordinator?
+    /// coordinator 尚未就绪时暂存插入请求，避免首次点击丢失
+    @State private var pendingInsertions: [String] = []
 
     /// 是否悬停或聚焦（显示工具入口）
     @State private var isHovering = false
@@ -76,10 +77,6 @@ struct CommandTextView: View {
 
     /// 路径校验提示
     @State private var validationIssues: [CommandPathIssue] = []
-
-    /// Combine-based debounce: 使用单一订阅替代反复创建 Task
-    private let validationSubject = PassthroughSubject<String, Never>()
-    @State private var validationCancellable: AnyCancellable?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -153,18 +150,28 @@ struct CommandTextView: View {
         }
         .onAppear {
             updateMenuHint(for: text, selection: selectionRange)
-            setupValidationSubscription()
-            validationSubject.send(text)
-        }
-        .onDisappear {
-            validationCancellable?.cancel()
+            flushPendingInsertionsIfPossible()
         }
         .onChange(of: text) { newValue in
             updateMenuHint(for: newValue, selection: selectionRange)
-            validationSubject.send(newValue)
         }
         .onChange(of: selectionRange) { newRange in
             updateMenuHint(for: text, selection: newRange)
+        }
+        .task(id: coordinator != nil) {
+            await MainActor.run {
+                flushPendingInsertionsIfPossible()
+            }
+        }
+        .task(id: text) {
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled else { return }
+            validationIssues = collectValidationIssues(from: text)
         }
     }
 
@@ -186,9 +193,18 @@ struct CommandTextView: View {
     }
 
     private func insertPathAtCursor(_ path: String) {
-        let escapedPath = "\"\(path)\""
-        // 直接通过 Coordinator 插入（同步设置，无时序问题）
-        coordinator?.insertAtCursor(escapedPath)
+        let escapedPath = path.shellQuotedPathForCommand
+        pendingInsertions.append(escapedPath)
+        flushPendingInsertionsIfPossible()
+    }
+
+    private func flushPendingInsertionsIfPossible() {
+        guard let coordinator, !pendingInsertions.isEmpty else { return }
+        let insertions = pendingInsertions
+        pendingInsertions.removeAll(keepingCapacity: true)
+        for insertion in insertions {
+            coordinator.insertAtCursor(insertion)
+        }
     }
 
     /// 检测是否在 -i 后（高亮按钮）
@@ -197,8 +213,9 @@ struct CommandTextView: View {
             shouldHighlightMenu = false
             return
         }
-        let caretIndex = min(selection.location, text.count)
-        let prefix = text.prefix(caretIndex)
+        let caretUTF16Offset = min(max(selection.location, 0), text.utf16.count)
+        let caretIndex = stringIndexForUTF16Offset(caretUTF16Offset, in: text)
+        let prefix = text[..<caretIndex]
         let trimmed = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
         let endsWithInputFlag = trimmed.hasSuffix("-i")
 
@@ -209,13 +226,10 @@ struct CommandTextView: View {
 
     // MARK: - Path Validation
 
-    /// 设置 Combine 订阅（仅在 onAppear 调用一次）
-    private func setupValidationSubscription() {
-        validationCancellable = validationSubject
-            .debounce(for: .milliseconds(250), scheduler: DispatchQueue.main)
-            .sink { [self] newText in
-                validationIssues = collectValidationIssues(from: newText)
-            }
+    private func stringIndexForUTF16Offset(_ offset: Int, in text: String) -> String.Index {
+        let clampedOffset = min(max(offset, 0), text.utf16.count)
+        let utf16Index = text.utf16.index(text.utf16.startIndex, offsetBy: clampedOffset)
+        return String.Index(utf16Index, within: text) ?? text.endIndex
     }
 
     private func collectValidationIssues(from text: String) -> [CommandPathIssue] {
@@ -386,6 +400,14 @@ private extension String {
         let ext = (self as NSString).pathExtension.lowercased()
         return ext.isEmpty ? nil : ext
     }
+
+    /// 用于命令字符串展示/编辑：双引号包裹并转义内部反斜杠与双引号
+    var shellQuotedPathForCommand: String {
+        let escaped = self
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
 }
 
 // MARK: - NSViewRepresentable
@@ -458,15 +480,26 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
         if textView.string != text {
             let selectedRange = textView.selectedRange()
             textView.string = text
-            // 尝试恢复光标位置
-            if selectedRange.location <= text.count {
-                textView.setSelectedRange(selectedRange)
-            }
+            let clampedRange = clampedUTF16Range(selectedRange, for: text)
+            textView.setSelectedRange(clampedRange)
+            (textView as? CommandNSTextView)?.invalidatePathCacheExternally()
         }
         if let commandTextView = textView as? CommandNSTextView {
             commandTextView.onInsertFile = onInsertFile
             commandTextView.onInsertDirectory = onInsertDirectory
         }
+    }
+
+    private func clampedUTF16Range(_ range: NSRange, for text: String) -> NSRange {
+        let maxLength = text.utf16.count
+        guard range.location != NSNotFound else {
+            return NSRange(location: maxLength, length: 0)
+        }
+
+        let location = min(max(range.location, 0), maxLength)
+        let maxLengthAtLocation = max(0, maxLength - location)
+        let length = min(max(range.length, 0), maxLengthAtLocation)
+        return NSRange(location: location, length: length)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -545,7 +578,7 @@ final class CommandNSTextView: NSTextView {
 
     /// 路径检测缓存（文本变化时失效）
     private var cachedPaths: [PathInfo] = []
-    private var cachedTextHash: Int = 0
+    private var isPathCacheDirty = true
 
     /// 拖拽状态变化回调（通知 SwiftUI 层显示高亮边框）
     var onDragStateChanged: ((Bool) -> Void)?
@@ -745,7 +778,7 @@ final class CommandNSTextView: NSTextView {
         let range = NSRange(location: insertionIndex, length: 0)
 
         // 拖拽文件：统一用引号包裹，不自动添加 -i（让用户自行组织）
-        let escapedPaths = urls.map { "\"\($0.path)\"" }.joined(separator: " ")
+        let escapedPaths = urls.map { $0.path.shellQuotedPathForCommand }.joined(separator: " ")
 
         let textWithSpacing = escapedPaths.withSmartSpacing(at: range, in: string)
 
@@ -837,25 +870,21 @@ final class CommandNSTextView: NSTextView {
 
     /// 外部调用的缓存失效方法（在 textDidChange 时调用）
     func invalidatePathCacheExternally() {
-        cachedPaths = []
-        cachedTextHash = 0
-    }
-
-    /// 使路径缓存失效（使用 hash 做 O(1) 快速判断）
-    private func invalidatePathCache() {
-        let currentHash = string.hashValue
-        if cachedTextHash != currentHash {
-            cachedPaths = []
-            cachedTextHash = currentHash
-        }
+        cachedPaths.removeAll(keepingCapacity: true)
+        isPathCacheDirty = true
     }
 
     /// 获取缓存的路径列表，如果缓存失效则重新扫描
     private func getCachedPaths() -> [PathInfo] {
-        invalidatePathCache()
+        guard !string.isEmpty else {
+            cachedPaths.removeAll(keepingCapacity: true)
+            isPathCacheDirty = false
+            return []
+        }
 
-        if cachedPaths.isEmpty && !string.isEmpty {
+        if isPathCacheDirty {
             cachedPaths = scanAllPaths(in: string)
+            isPathCacheDirty = false
         }
 
         return cachedPaths
@@ -863,14 +892,17 @@ final class CommandNSTextView: NSTextView {
 
     /// 扫描文本中的所有路径
     private func scanAllPaths(in text: String) -> [PathInfo] {
+        guard !text.isEmpty else { return [] }
+
         var paths: [PathInfo] = []
-        let chars = Array(text)
+        let nsText = text as NSString
+        let length = nsText.length
         var i = 0
 
-        while i < chars.count {
+        while i < length {
             // 检查引号包裹的路径
-            if chars[i] == "\"" {
-                if let info = findQuotedPathInfo(in: text, startingAt: i) {
+            if nsText.character(at: i) == UTF16Code.doubleQuote {
+                if let info = findQuotedPathInfo(in: nsText, startingAtUTF16: i) {
                     paths.append(info)
                     i = info.range.location + info.range.length
                     continue
@@ -878,8 +910,9 @@ final class CommandNSTextView: NSTextView {
             }
 
             // 检查 / 开头的路径（未被引号包裹）
-            if chars[i] == "/" && (i == 0 || chars[i - 1].isWhitespace) {
-                if let info = findSlashPathInfo(in: text, startingAt: i) {
+            if nsText.character(at: i) == UTF16Code.slash,
+               (i == 0 || isWhitespace(nsText.character(at: i - 1))) {
+                if let info = findSlashPathInfo(in: nsText, startingAtUTF16: i) {
                     paths.append(info)
                     i = info.range.location + info.range.length
                     continue
@@ -956,7 +989,7 @@ final class CommandNSTextView: NSTextView {
         let glyphIndex = layoutManager.glyphIndex(for: adjustedPoint, in: textContainer!)
         let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
 
-        guard characterIndex < string.count else { return nil }
+        guard characterIndex < string.utf16.count else { return nil }
 
         // 使用缓存的路径列表进行 O(n) 查找（n = 路径数量，通常很小）
         let paths = getCachedPaths()
@@ -968,33 +1001,31 @@ final class CommandNSTextView: NSTextView {
     ///   - text: 完整文本
     ///   - quoteStart: 开始引号的位置（chars[quoteStart] == '"'）
     /// - Returns: 路径信息，包含路径字符串和完整范围（含引号）
-    private func findQuotedPathInfo(in text: String, startingAt quoteStart: Int) -> PathInfo? {
-        let chars = Array(text)
-        guard quoteStart < chars.count, chars[quoteStart] == "\"" else { return nil }
+    private func findQuotedPathInfo(in text: NSString, startingAtUTF16 quoteStart: Int) -> PathInfo? {
+        guard quoteStart < text.length, text.character(at: quoteStart) == UTF16Code.doubleQuote else {
+            return nil
+        }
 
         // 向后查找结束引号
-        var endQuote = -1
-        for i in (quoteStart + 1)..<chars.count {
-            if chars[i] == "\"" {
-                endQuote = i
+        var endQuote = quoteStart + 1
+        while endQuote < text.length {
+            if text.character(at: endQuote) == UTF16Code.doubleQuote {
                 break
             }
+            endQuote += 1
         }
 
         // 确保引号配对且内容非空
-        guard endQuote > quoteStart + 1 else { return nil }
+        guard endQuote < text.length, endQuote > quoteStart + 1 else { return nil }
 
-        let pathStart = text.index(text.startIndex, offsetBy: quoteStart + 1)
-        let pathEnd = text.index(text.startIndex, offsetBy: endQuote)
-        let path = String(text[pathStart..<pathEnd])
+        let pathRange = NSRange(location: quoteStart + 1, length: endQuote - quoteStart - 1)
+        let path = text.substring(with: pathRange)
 
         // 验证是否像路径
-        if path.hasPrefix("/") || path.hasPrefix("~") {
-            let range = NSRange(location: quoteStart, length: endQuote - quoteStart + 1)
-            return PathInfo(path: path, range: range)
-        }
+        guard path.hasPrefix("/") || path.hasPrefix("~") else { return nil }
 
-        return nil
+        let range = NSRange(location: quoteStart, length: endQuote - quoteStart + 1)
+        return PathInfo(path: path, range: range)
     }
 
     /// 查找以 / 开头的非引号包裹路径
@@ -1002,31 +1033,45 @@ final class CommandNSTextView: NSTextView {
     ///   - text: 完整文本
     ///   - slashStart: 路径起始位置（chars[slashStart] == '/'）
     /// - Returns: 路径信息，包含路径字符串和范围
-    private func findSlashPathInfo(in text: String, startingAt slashStart: Int) -> PathInfo? {
-        let chars = Array(text)
-        guard slashStart < chars.count, chars[slashStart] == "/" else { return nil }
+    private func findSlashPathInfo(in text: NSString, startingAtUTF16 slashStart: Int) -> PathInfo? {
+        guard slashStart < text.length, text.character(at: slashStart) == UTF16Code.slash else {
+            return nil
+        }
 
         // 向后查找路径结束（遇到空格、引号或文本结束）
         var end = slashStart
-        for i in slashStart..<chars.count {
-            let c = chars[i]
-            if c.isWhitespace || c == "\"" || c == "'" {
-                end = i
+        while end < text.length {
+            let c = text.character(at: end)
+            if isWhitespace(c) || c == UTF16Code.doubleQuote || c == UTF16Code.singleQuote {
                 break
             }
-            if i == chars.count - 1 {
-                end = chars.count
-            }
+            end += 1
         }
 
         guard end > slashStart else { return nil }
 
-        let pathStart = text.index(text.startIndex, offsetBy: slashStart)
-        let pathEnd = text.index(text.startIndex, offsetBy: end)
-        let path = String(text[pathStart..<pathEnd])
         let range = NSRange(location: slashStart, length: end - slashStart)
-
+        let path = text.substring(with: range)
         return PathInfo(path: path, range: range)
+    }
+
+    private func isWhitespace(_ character: unichar) -> Bool {
+        switch character {
+        case UTF16Code.space, UTF16Code.tab, UTF16Code.newline, UTF16Code.carriageReturn:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private enum UTF16Code {
+        static let space: unichar = 32
+        static let tab: unichar = 9
+        static let newline: unichar = 10
+        static let carriageReturn: unichar = 13
+        static let slash: unichar = 47
+        static let doubleQuote: unichar = 34
+        static let singleQuote: unichar = 39
     }
 
     @objc private func revealInFinder(_ sender: NSMenuItem) {
