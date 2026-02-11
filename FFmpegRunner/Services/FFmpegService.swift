@@ -43,6 +43,13 @@ class FFmpegService: ObservableObject {
     // Thread safety is generally handled by @MainActor on the class.
     static let shared = FFmpegService()
 
+#if DEBUG
+    /// 测试用工厂：允许注入 mock resolver 验证并发与取消边界条件
+    static func makeForTesting(pathResolver: FFmpegPathProviding) -> FFmpegService {
+        FFmpegService(pathResolver: pathResolver)
+    }
+#endif
+
     // MARK: - Published Properties
 
     @Published private(set) var isRunning = false
@@ -56,6 +63,7 @@ class FFmpegService: ObservableObject {
         get { UserSettings.shared.ffmpegSource }
         set {
             UserSettings.shared.ffmpegSource = newValue
+            cachedVersion = nil // 来源变化时清除缓存
             objectWillChange.send()
             Task { await updateFFmpegPathAsync() }
         }
@@ -123,11 +131,19 @@ class FFmpegService: ObservableObject {
 
     /// 异步更新 FFmpeg 路径
     private func updateFFmpegPathAsync() async {
-        let path = await pathResolver.resolvePath(for: ffmpegSource, customPath: customFFmpegPath)
+        let sourceSnapshot = ffmpegSource
+        let customPathSnapshot = customFFmpegPath
+        pathUpdateGeneration &+= 1
+        let generation = pathUpdateGeneration
+
+        let path = await pathResolver.resolvePath(for: sourceSnapshot, customPath: customPathSnapshot)
+
+        // 丢弃过时任务结果，避免快速切换来源时旧结果覆盖新状态
+        guard generation == pathUpdateGeneration else { return }
         ffmpegPath = path ?? ""
 
         // 同时更新缓存的系统路径
-        if ffmpegSource == .system {
+        if sourceSnapshot == .system {
             cachedSystemPath = path
         }
     }
@@ -158,6 +174,9 @@ class FFmpegService: ObservableObject {
 
     /// 缓存的 FFmpeg 版本
     private var cachedVersion: String?
+
+    /// 路径更新代号（用于丢弃过时异步结果，避免乱序覆盖）
+    private var pathUpdateGeneration: UInt64 = 0
 
     /// 设置 FFmpeg 来源
     func setSource(_ source: FFmpegSource, customPath: String? = nil) {
@@ -294,14 +313,8 @@ class FFmpegService: ObservableObject {
 
         return try await withTaskCancellationHandler {
             do {
-                try process.run()
-
-                // 等待进程结束
-                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                    process.terminationHandler = { _ in
-                        continuation.resume()
-                    }
-                }
+                // 先绑定 terminationHandler 再启动进程，避免快速退出竞态
+                try await runProcessAndWait(process)
 
                 // 清理并读取剩余数据（严格顺序：移除handler -> 读剩余 -> 关闭）
 
@@ -414,6 +427,24 @@ class FFmpegService: ObservableObject {
         }
     }
 
+    /// 启动并等待进程结束
+    /// - Note: 必须先设置 `terminationHandler` 再 `run()`，避免快速退出竞态
+    private func runProcessAndWait(_ process: Process) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            process.terminationHandler = { terminatedProcess in
+                terminatedProcess.terminationHandler = nil
+                continuation.resume(returning: ())
+            }
+
+            do {
+                try process.run()
+            } catch {
+                process.terminationHandler = nil
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+
     /// 优雅终止进程
     /// 先发送 SIGINT (Ctrl+C)，如果超时未退出则发送 SIGKILL
     /// - Note: 这是一个异步方法，以免阻塞调用者
@@ -440,15 +471,14 @@ class FFmpegService: ObservableObject {
 
         // 检查进程是否仍在运行
         if process.isRunning {
-             // 强制终止
-             process.terminate() // 内部通常调用 SIGTERM，或手动 kill(pid, SIGKILL)
-             // kill(pid, SIGKILL) // 如果 process.terminate() 不够强力，可以使用这个
+             // 强制终止（SIGKILL）
+             kill(pid, SIGKILL)
 
              await MainActor.run {
                 onLogOutput?(LogEntry(
                     timestamp: Date(),
                     level: .warning,
-                    message: "进程未响应，已强制终止"
+                    message: "进程未响应，已发送 SIGKILL 强制终止"
                 ))
             }
         } else {
