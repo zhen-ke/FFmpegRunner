@@ -553,6 +553,12 @@ final class CommandNSTextView: NSTextView {
     /// 拖拽过程中计算的插入字符索引（performDragOperation 使用）
     private var dragInsertionIndex: Int?
 
+    /// 拖拽开始前的原始选区（用于取消拖拽时恢复）
+    private var dragOriginalSelectionRange: NSRange?
+
+    /// 当前拖拽是否已经执行了插入
+    private var didPerformDragInsertion = false
+
     /// 自己管理的 tracking area（避免移除系统管理的）
     private var mouseTrackingArea: NSTrackingArea?
 
@@ -682,8 +688,10 @@ final class CommandNSTextView: NSTextView {
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         if sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: nil) {
+            beginDragSessionIfNeeded()
             // 让 NSTextView 初始化内部拖拽状态（显示原生插入光标）
             let _ = super.draggingEntered(sender)
+            updateDragInsertionPoint(with: sender)
             onDragStateChanged?(true)
             return .copy
         }
@@ -694,22 +702,22 @@ final class CommandNSTextView: NSTextView {
         // 调用 super 让 NSTextView 显示原生拖拽插入光标
         let _ = super.draggingUpdated(sender)
 
-        // 记录插入位置供 performDragOperation 使用
-        let point = convert(sender.draggingLocation, from: nil)
-        dragInsertionIndex = getInsertionCharacterIndex(at: point)
+        // 实时更新插入位置并同步显示光标
+        updateDragInsertionPoint(with: sender)
         return .copy
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
         super.draggingExited(sender)
         onDragStateChanged?(false)
-        dragInsertionIndex = nil
+        endDragSession(restoreSelection: true)
     }
 
     override func draggingEnded(_ sender: NSDraggingInfo) {
         super.draggingEnded(sender)
         onDragStateChanged?(false)
-        dragInsertionIndex = nil
+        guard dragOriginalSelectionRange != nil else { return }
+        endDragSession(restoreSelection: !didPerformDragInsertion)
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
@@ -719,7 +727,7 @@ final class CommandNSTextView: NSTextView {
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ) as? [URL], !urls.isEmpty else {
-            dragInsertionIndex = nil
+            endDragSession(restoreSelection: true)
             return super.performDragOperation(sender)
         }
 
@@ -743,6 +751,14 @@ final class CommandNSTextView: NSTextView {
 
         // 在拖拽位置插入
         insertText(textWithSpacing, replacementRange: range)
+        didPerformDragInsertion = true
+
+        // 将光标放到插入内容末尾，保持后续输入连续
+        let insertedUTF16Length = (textWithSpacing as NSString).length
+        let caretLocation = min(range.location + insertedUTF16Length, string.utf16.count)
+        setSelectedRange(NSRange(location: caretLocation, length: 0))
+        scrollRangeToVisible(NSRange(location: caretLocation, length: 0))
+        endDragSession(restoreSelection: false)
 
         return true
     }
@@ -756,7 +772,7 @@ final class CommandNSTextView: NSTextView {
     func getInsertionCharacterIndex(at point: NSPoint) -> Int {
         guard let layoutManager = layoutManager,
               let textContainer = textContainer else {
-            return string.count
+            return string.utf16.count
         }
 
         // 调整坐标以考虑文本容器的边距
@@ -775,7 +791,45 @@ final class CommandNSTextView: NSTextView {
         // fraction > 0.5 表示鼠标在字符的右半部分，应插入到下一个字符位置
         let insertionIndex = fraction > 0.5 ? characterIndex + 1 : characterIndex
 
-        return min(insertionIndex, string.count)
+        return min(insertionIndex, string.utf16.count)
+    }
+
+    private func beginDragSessionIfNeeded() {
+        if dragOriginalSelectionRange == nil {
+            dragOriginalSelectionRange = selectedRange()
+        }
+        didPerformDragInsertion = false
+        window?.makeFirstResponder(self)
+    }
+
+    private func updateDragInsertionPoint(with sender: NSDraggingInfo) {
+        let point = convert(sender.draggingLocation, from: nil)
+        let insertionIndex = getInsertionCharacterIndex(at: point)
+        dragInsertionIndex = insertionIndex
+
+        let insertionRange = NSRange(location: insertionIndex, length: 0)
+        if !NSEqualRanges(selectedRange(), insertionRange) {
+            setSelectedRange(insertionRange)
+            scrollRangeToVisible(insertionRange)
+        }
+    }
+
+    private func endDragSession(restoreSelection: Bool) {
+        if restoreSelection, let originalRange = dragOriginalSelectionRange {
+            let clampedRange = clamp(range: originalRange, maxUTF16Length: string.utf16.count)
+            setSelectedRange(clampedRange)
+            scrollRangeToVisible(clampedRange)
+        }
+        dragOriginalSelectionRange = nil
+        dragInsertionIndex = nil
+        didPerformDragInsertion = false
+    }
+
+    private func clamp(range: NSRange, maxUTF16Length: Int) -> NSRange {
+        let location = min(max(range.location, 0), maxUTF16Length)
+        let maxLengthAtLocation = max(0, maxUTF16Length - location)
+        let length = min(max(range.length, 0), maxLengthAtLocation)
+        return NSRange(location: location, length: length)
     }
 
 
