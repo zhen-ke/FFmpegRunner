@@ -171,11 +171,17 @@ final class ExecutionController: ObservableObject {
             // 保存到历史记录
             saveToHistory(command: plan.displayCommand, wasSuccessful: result.isSuccess)
 
-            // 通知（成功）
+            // 通知（按实际退出码区分成功/失败）
+            let notificationMessage: String
+            if result.isSuccess {
+                notificationMessage = "耗时: \(result.formattedDuration)"
+            } else {
+                notificationMessage = "退出码: \(result.exitCode)，耗时: \(result.formattedDuration)"
+            }
             notifyCompletion(
-                success: true,
+                success: result.isSuccess,
                 plan: plan,
-                message: "耗时: \(result.formattedDuration)"
+                message: notificationMessage
             )
 
             return result
