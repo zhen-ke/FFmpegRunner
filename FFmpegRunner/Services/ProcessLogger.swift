@@ -100,6 +100,26 @@ class ProcessLogger: ProcessLoggerProviding {
         }
     }
 
+    /// 同步刷新缓冲区中的最后一行（即使没有换行符）
+    /// - Parameter asError: 将尾行按 stderr 还是 stdout 语义处理
+    func flushPendingLineSync(asError: Bool = false) {
+        let flushBlock = {
+            let trimmed = self.lineBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                self.lineBuffer.removeAll(keepingCapacity: true)
+                return
+            }
+            self.lineBuffer.removeAll(keepingCapacity: true)
+            self.processLine(trimmed, isError: asError)
+        }
+
+        if DispatchQueue.getSpecific(key: Self.queueKey) != nil {
+            flushBlock()
+        } else {
+            logQueue.sync(execute: flushBlock)
+        }
+    }
+
     // MARK: - Private Methods
 
     /// 处理缓冲区中的完整行（使用索引遍历，避免数组分配）
@@ -166,8 +186,9 @@ class ProcessLogger: ProcessLoggerProviding {
 
     /// 在指定队列上发送日志回调（默认主线程）
     private func emit(_ entry: LogEntry) {
-        callbackQueue.async { [weak self] in
-            self?.onLog?(entry)
+        let callback = onLog
+        callbackQueue.async {
+            callback?(entry)
         }
     }
 

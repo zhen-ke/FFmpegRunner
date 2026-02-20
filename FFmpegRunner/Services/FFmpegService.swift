@@ -29,7 +29,7 @@ enum FFmpegSource: String, CaseIterable, Codable, Sendable {
 /// - Responsibility:
 ///   - Execute prepared ffmpeg arguments
 ///   - Manage process lifecycle (isRunning, currentProcess)
-///   - Handle cancellation with graceful shutdown (SIGINT → SIGKILL)
+///   - Handle cancellation with graceful shutdown (stdin "q" → SIGTERM → SIGKILL)
 /// - Non-responsibility:
 ///   - Command parsing (use CommandRenderer)
 ///   - Template binding (use CommandRenderer)
@@ -219,13 +219,29 @@ class FFmpegService: ObservableObject {
         process.standardError = pipe
 
         try await self.runProcessAndWait(process)
+        let exitCode = process.terminationStatus
 
-        let version = await Task.detached {
+        let output = await Task.detached {
             let data = try? pipe.fileHandleForReading.readDataToEndOfFile()
             let output = String(decoding: data ?? Data(), as: UTF8.self)
-            return output.split(separator: "\n").first.map(String.init) ?? output
+            return output
         }.value
 
+        let firstLine = output
+            .split(whereSeparator: \.isNewline)
+            .first
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+
+        guard exitCode == 0 else {
+            let reason = firstLine.isEmpty ? "未知错误" : firstLine
+            throw FFmpegError.executionFailed("读取 FFmpeg 版本失败（退出码: \(exitCode)）：\(reason)")
+        }
+
+        guard firstLine.lowercased().hasPrefix("ffmpeg version") else {
+            throw FFmpegError.executionFailed("无法解析 FFmpeg 版本输出")
+        }
+
+        let version = firstLine
         self.cachedVersion = version
         return version
     }
@@ -352,6 +368,9 @@ class FFmpegService: ObservableObject {
                     processLogger.processOutput(text, isError: true)
                 }
 
+                // 3. 刷新尾行，避免最后一行没有换行符时丢日志
+                processLogger.flushPendingLineSync()
+
                 // 同步更新状态 (已在 MainActor)
                 if self.activeTaskId == currentTaskId {
                     self.isRunning = false
@@ -469,7 +488,7 @@ class FFmpegService: ObservableObject {
     }
 
     /// 优雅终止进程
-    /// 先发送 SIGINT (Ctrl+C)，如果超时未退出则发送 SIGKILL
+    /// 先尝试写入 'q'，无响应则升级到 SIGTERM，最后 SIGKILL
     /// - Note: 这是一个异步方法，以免阻塞调用者
     private func gracefullyTerminate(_ process: Process) async {
         let pid = process.processIdentifier
@@ -494,14 +513,24 @@ class FFmpegService: ObservableObject {
             }
         }
 
-        // 备用手段，如果上述无响应，尝试发送 SIGTERM
-        process.terminate()
+        // 2. 等待最多 2 秒，给 FFmpeg 时间优雅退出并写完尾部信息
+        for _ in 0..<20 {
+            if !process.isRunning { return }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
 
-        // 2. 延迟检查并强制终止
-        // 等待 5 秒 (5 * 1_000_000_000 nanoseconds) 让 FFmpeg 有足够的时间处理缓冲区和写入文件尾部信息
-        try? await Task.sleep(nanoseconds: 5 * 1_000_000_000)
+        // 3. 备用手段：发送 SIGTERM
+        if process.isRunning {
+            process.terminate()
+        }
 
-        // 检查进程是否仍在运行
+        // 4. 再等待最多 2 秒
+        for _ in 0..<20 {
+            if !process.isRunning { return }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        // 5. 超时后强制终止
         if process.isRunning {
              // 强制终止（SIGKILL）
              kill(pid, SIGKILL)
