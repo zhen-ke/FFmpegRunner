@@ -55,6 +55,9 @@ class FFmpegService: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var currentProcess: Process?
 
+    /// 当前执行任务的唯一标识，防止并发取消时的误杀
+    private var activeTaskId: UUID?
+
     /// 系统 FFmpeg 路径的缓存（用于 UI 展示）
     @Published private(set) var cachedSystemPath: String?
 
@@ -207,21 +210,19 @@ class FFmpegService: ObservableObject {
         let path = self.ffmpegPath
         guard !path.isEmpty else { throw FFmpegError.ffmpegNotFound }
 
-        // 在后台线程执行阻塞操作
-        let version = try await Task.detached {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = ["-version"]
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = ["-version"]
 
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
 
-            try process.run()
-            process.waitUntilExit()
+        try await self.runProcessAndWait(process)
 
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
+        let version = await Task.detached {
+            let data = try? pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(decoding: data ?? Data(), as: UTF8.self)
             return output.split(separator: "\n").first.map(String.init) ?? output
         }.value
 
@@ -251,10 +252,11 @@ class FFmpegService: ObservableObject {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ffmpegPath)
 
-        // 自动添加 -nostdin 防止因等待输入而死锁
+        // 动态处理参数：移除 -nostdin 允许 stdin 通信；添加 -y 防止阻塞等待用户输入
         var finalArgs = arguments
-        if !finalArgs.contains("-nostdin") {
-            finalArgs.insert("-nostdin", at: 0)
+        finalArgs.removeAll { $0 == "-nostdin" }
+        if !finalArgs.contains("-y") && !finalArgs.contains("-n") {
+            finalArgs.insert("-y", at: 0)
         }
         process.arguments = finalArgs
 
@@ -267,8 +269,10 @@ class FFmpegService: ObservableObject {
         // 设置管道
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
+        let stdinPipe = Pipe()
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
+        process.standardInput = stdinPipe
 
         // 使用线程安全的数据收集器 (shared across threads, safe due to internal locking)
         let dataCollector = OutputDataCollector()
@@ -276,6 +280,8 @@ class FFmpegService: ObservableObject {
         // 状态管理
         isRunning = true
         currentProcess = process
+        let currentTaskId = UUID()
+        activeTaskId = currentTaskId
 
         // 设置输出处理
         let processLogger = ProcessLogger()
@@ -290,18 +296,16 @@ class FFmpegService: ObservableObject {
             let data = handle.availableData
             guard !data.isEmpty else { return }
             dataCollector.appendStdout(data)
-            if let text = String(data: data, encoding: .utf8) {
-                processLogger.processOutput(text, isError: false)
-            }
+            let text = String(decoding: data, as: UTF8.self)
+            processLogger.processOutput(text, isError: false)
         }
 
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
             dataCollector.appendStderr(data)
-            if let text = String(data: data, encoding: .utf8) {
-                processLogger.processOutput(text, isError: true)
-            }
+            let text = String(decoding: data, as: UTF8.self)
+            processLogger.processOutput(text, isError: true)
         }
 
         // 记录开始
@@ -312,39 +316,48 @@ class FFmpegService: ObservableObject {
         ))
 
         return try await withTaskCancellationHandler {
+            // 使用 defer 确保严格的资源释放，防止崩溃或异常导致句柄泄露
+            defer {
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+                try? stdoutPipe.fileHandleForReading.close()
+                try? stderrPipe.fileHandleForReading.close()
+                try? stdinPipe.fileHandleForWriting.close()
+            }
+
             do {
                 // 先绑定 terminationHandler 再启动进程，避免快速退出竞态
                 try await runProcessAndWait(process)
-
-                // 清理并读取剩余数据（严格顺序：移除handler -> 读剩余 -> 关闭）
 
                 // 1. 停止异步读取
                 stdoutPipe.fileHandleForReading.readabilityHandler = nil
                 stderrPipe.fileHandleForReading.readabilityHandler = nil
 
-                // 2. 读取管道中剩余的数据（防止丢失）
-                // 使用 try? 忽略错误，确保能走到关闭和状态重置
-                if let remainingStdout = try? stdoutPipe.fileHandleForReading.readDataToEndOfFile(), !remainingStdout.isEmpty {
-                    dataCollector.appendStdout(remainingStdout)
-                    if let text = String(data: remainingStdout, encoding: .utf8) {
-                        processLogger.processOutput(text, isError: false)
-                    }
+                // 2. 异步读取剩余数据，避免读满缓冲区时阻塞主线程
+                let (remainingStdout, remainingStderr) = await Task.detached {
+                    let out = try? stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                    let err = try? stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                    return (out, err)
+                }.value
+
+                if let stdoutData = remainingStdout, !stdoutData.isEmpty {
+                    dataCollector.appendStdout(stdoutData)
+                    let text = String(decoding: stdoutData, as: UTF8.self)
+                    processLogger.processOutput(text, isError: false)
                 }
 
-                if let remainingStderr = try? stderrPipe.fileHandleForReading.readDataToEndOfFile(), !remainingStderr.isEmpty {
-                    dataCollector.appendStderr(remainingStderr)
-                    if let text = String(data: remainingStderr, encoding: .utf8) {
-                        processLogger.processOutput(text, isError: true)
-                    }
+                if let stderrData = remainingStderr, !stderrData.isEmpty {
+                    dataCollector.appendStderr(stderrData)
+                    let text = String(decoding: stderrData, as: UTF8.self)
+                    processLogger.processOutput(text, isError: true)
                 }
-
-                // 3. 关闭文件句柄
-                try? stdoutPipe.fileHandleForReading.close()
-                try? stderrPipe.fileHandleForReading.close()
 
                 // 同步更新状态 (已在 MainActor)
-                self.isRunning = false
-                self.currentProcess = nil
+                if self.activeTaskId == currentTaskId {
+                    self.isRunning = false
+                    self.currentProcess = nil
+                    self.activeTaskId = nil
+                }
 
                 let endTime = Date()
                 let result = ExecutionResult(
@@ -357,25 +370,35 @@ class FFmpegService: ObservableObject {
                 )
 
                 // 记录结束
-                let statusMessage = result.isSuccess ? "执行成功" : "执行失败 (退出码: \(result.exitCode))"
+                let statusMessage: String
+                let statusLevel: LogLevel
+
+                if result.isCancelled || Task.isCancelled {
+                    statusMessage = "执行已取消"
+                    statusLevel = .warning
+                } else if result.isSuccess {
+                    statusMessage = "执行成功"
+                    statusLevel = .info
+                } else {
+                    statusMessage = "执行失败 (退出码: \(result.exitCode))"
+                    statusLevel = .error
+                }
+
                 onLogOutput?(LogEntry(
                     timestamp: Date(),
-                    level: result.isSuccess ? .info : .error,
+                    level: statusLevel,
                     message: "\(statusMessage)，耗时: \(result.formattedDuration)"
                 ))
 
                 return result
 
             } catch {
-                // 出错时的清理
-                stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                stderrPipe.fileHandleForReading.readabilityHandler = nil
-                try? stdoutPipe.fileHandleForReading.close()
-                try? stderrPipe.fileHandleForReading.close()
-
                 // 同步更新状态
-                self.isRunning = false
-                self.currentProcess = nil
+                if self.activeTaskId == currentTaskId {
+                    self.isRunning = false
+                    self.currentProcess = nil
+                    self.activeTaskId = nil
+                }
 
                 // 记录错误 (先记录再 throw)
                 let errorMsg = error.localizedDescription
@@ -462,12 +485,21 @@ class FFmpegService: ObservableObject {
             ))
         }
 
-        // 1. 尝试优雅终止 (SIGINT)
-        kill(pid, SIGINT)
+        // 1. 尝试优雅终止：向标准输入写入 'q' 字符
+        // 在 macOS 图形化应用中，信号（SIGTERM/SIGINT）经常遭到父进程屏蔽导致传递失败。
+        // 使用 pipe 直接将 'q' 写入 FFmpeg 的标准输入是最安全可靠的退出方式。
+        if let stdinPipe = process.standardInput as? Pipe {
+            if let qData = "q\n".data(using: .utf8) {
+                try? stdinPipe.fileHandleForWriting.write(contentsOf: qData)
+            }
+        }
+
+        // 备用手段，如果上述无响应，尝试发送 SIGTERM
+        process.terminate()
 
         // 2. 延迟检查并强制终止
-        // 等待 3 秒 (3 * 1_000_000_000 nanoseconds)
-        try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
+        // 等待 5 秒 (5 * 1_000_000_000 nanoseconds) 让 FFmpeg 有足够的时间处理缓冲区和写入文件尾部信息
+        try? await Task.sleep(nanoseconds: 5 * 1_000_000_000)
 
         // 检查进程是否仍在运行
         if process.isRunning {
@@ -479,14 +511,6 @@ class FFmpegService: ObservableObject {
                     timestamp: Date(),
                     level: .warning,
                     message: "进程未响应，已发送 SIGKILL 强制终止"
-                ))
-            }
-        } else {
-             await MainActor.run {
-                onLogOutput?(LogEntry(
-                    timestamp: Date(),
-                    level: .warning,
-                    message: "执行已取消"
                 ))
             }
         }
@@ -554,11 +578,11 @@ final class OutputDataCollector: @unchecked Sendable {
     }
 
     var stdoutString: String {
-        String(data: stdoutData, encoding: .utf8) ?? ""
+        String(decoding: stdoutData, as: UTF8.self)
     }
 
     var stderrString: String {
-        String(data: stderrData, encoding: .utf8) ?? ""
+        String(decoding: stderrData, as: UTF8.self)
     }
 
     // MARK: - Buffer Helpers

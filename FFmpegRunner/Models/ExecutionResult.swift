@@ -33,6 +33,11 @@ struct ExecutionResult {
         exitCode == 0
     }
 
+    /// 是否被取消 (FFmpeg 收到 q 退出通常为 255，被 kill 通常为 SIGTERM(15) 或 SIGKILL(9))
+    var isCancelled: Bool {
+        exitCode == 255 || exitCode == 15 || exitCode == 9 || exitCode == 2
+    }
+
     /// 执行耗时（秒）
     var duration: TimeInterval {
         endTime.timeIntervalSince(startTime)
