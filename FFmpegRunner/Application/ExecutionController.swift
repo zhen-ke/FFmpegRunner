@@ -82,6 +82,7 @@ final class ExecutionController: ObservableObject {
 
     private let ffmpegService: FFmpegService
     private let historyService: HistoryService
+    private var cancellables = Set<AnyCancellable>()
 
     // MARK: - Callbacks
 
@@ -107,6 +108,14 @@ final class ExecutionController: ObservableObject {
             }
         }
 
+        self.ffmpegService.$ffmpegPath
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshFFmpegState()
+            }
+            .store(in: &cancellables)
+
         // 检查 FFmpeg 可用性
         checkFFmpegAvailability()
     }
@@ -115,19 +124,7 @@ final class ExecutionController: ObservableObject {
 
     /// 检查 FFmpeg 可用性
     func checkFFmpegAvailability() {
-        isFFmpegAvailable = ffmpegService.isFFmpegAvailable()
-
-        if isFFmpegAvailable {
-            Task {
-                do {
-                    ffmpegVersion = try await ffmpegService.getFFmpegVersion()
-                } catch {
-                    ffmpegVersion = nil
-                }
-            }
-        } else {
-            ffmpegVersion = nil
-        }
+        refreshFFmpegState()
     }
 
     /// 设置 FFmpeg 来源
@@ -354,6 +351,30 @@ final class ExecutionController: ObservableObject {
                 message: message,
                 outputDirectory: outputPath
             )
+        }
+    }
+
+    private func refreshFFmpegState() {
+        isFFmpegAvailable = ffmpegService.isFFmpegAvailable()
+
+        guard isFFmpegAvailable else {
+            ffmpegVersion = nil
+            return
+        }
+
+        let pathSnapshot = ffmpegService.ffmpegPath
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let version = try await ffmpegService.getFFmpegVersion()
+                if ffmpegService.ffmpegPath == pathSnapshot {
+                    ffmpegVersion = version
+                }
+            } catch {
+                if ffmpegService.ffmpegPath == pathSnapshot {
+                    ffmpegVersion = nil
+                }
+            }
         }
     }
 }

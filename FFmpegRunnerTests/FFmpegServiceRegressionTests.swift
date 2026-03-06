@@ -152,8 +152,16 @@ final class FFmpegServiceRegressionTests: XCTestCase {
         let settings = snapshotSettings()
         defer { restoreSettings(settings) }
 
+        let ffmpegScript = try makeExecutableScript(body: """
+        #!/bin/sh
+        echo "ffmpeg-script"
+        exit 7
+        """)
+        defer { try? FileManager.default.removeItem(atPath: ffmpegScript) }
+
         let ffprobeScript = try makeExecutableScript(body: """
         #!/bin/sh
+        echo "ffprobe-script"
         exit 0
         """)
         defer { try? FileManager.default.removeItem(atPath: ffprobeScript) }
@@ -164,29 +172,136 @@ final class FFmpegServiceRegressionTests: XCTestCase {
         )
         let service = FFmpegService.makeForTesting(pathResolver: resolver)
 
-        service.setSource(.custom, customPath: ffprobeScript)
+        UserSettings.shared.ffprobePath = ffprobeScript
+        service.setSource(.custom, customPath: ffmpegScript)
         try await waitForCondition {
-            service.ffmpegPath == ffprobeScript
+            service.ffmpegPath == ffmpegScript
         }
 
         let result = try await service.execute(
-            arguments: [],
-            displayCommand: ffprobeScript,
+            arguments: ["-version"],
+            displayCommand: "ffprobe -version",
             executable: .ffprobe
         )
 
         XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines), "ffprobe-script")
+    }
+
+    func testExecutePreservesArgumentsWithoutImplicitMutation() async throws {
+        let settings = snapshotSettings()
+        defer { restoreSettings(settings) }
+
+        let argsScript = try makeExecutableScript(body: """
+        #!/bin/sh
+        for arg in "$@"; do
+          printf '%s\\n' "$arg"
+        done
+        """)
+        defer { try? FileManager.default.removeItem(atPath: argsScript) }
+
+        let resolver = MockPathResolver(
+            bundledPath: nil,
+            systemPathValue: nil
+        )
+        let service = FFmpegService.makeForTesting(pathResolver: resolver)
+
+        service.setSource(.custom, customPath: argsScript)
+        try await waitForCondition {
+            service.ffmpegPath == argsScript
+        }
+
+        let result = try await service.execute(
+            arguments: ["-nostdin", "-i", "input.mp4"],
+            displayCommand: "ffmpeg -nostdin -i input.mp4"
+        )
+
+        let lines = result.standardOutput
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+        XCTAssertEqual(lines, ["-nostdin", "-i", "input.mp4"])
+    }
+
+    func testLogsKeepStdoutAndStderrSeparatedForTrailingLines() async throws {
+        let settings = snapshotSettings()
+        defer { restoreSettings(settings) }
+
+        let loggingScript = try makeExecutableScript(body: """
+        #!/bin/sh
+        printf 'stdout-tail'
+        printf 'stderr-tail' >&2
+        """)
+        defer { try? FileManager.default.removeItem(atPath: loggingScript) }
+
+        let resolver = MockPathResolver(
+            bundledPath: nil,
+            systemPathValue: nil
+        )
+        let service = FFmpegService.makeForTesting(pathResolver: resolver)
+        var capturedLogs: [LogEntry] = []
+        service.onLogOutput = { entry in
+            capturedLogs.append(entry)
+        }
+
+        service.setSource(.custom, customPath: loggingScript)
+        try await waitForCondition {
+            service.ffmpegPath == loggingScript
+        }
+
+        _ = try await service.execute(arguments: [], displayCommand: loggingScript)
+
+        try await waitForCondition(timeout: 1.0) {
+            capturedLogs.contains(where: { $0.message == "stdout-tail" }) &&
+            capturedLogs.contains(where: { $0.message == "stderr-tail" })
+        }
+
+        let stdoutLog = try XCTUnwrap(capturedLogs.first(where: { $0.message == "stdout-tail" }))
+        let stderrLog = try XCTUnwrap(capturedLogs.first(where: { $0.message == "stderr-tail" }))
+        XCTAssertFalse(stdoutLog.isStderr)
+        XCTAssertTrue(stderrLog.isStderr)
+    }
+
+    func testExecutionControllerTracksAsyncSystemPathResolution() async throws {
+        let settings = snapshotSettings()
+        defer { restoreSettings(settings) }
+
+        let systemScript = try makeExecutableScript(body: """
+        #!/bin/sh
+        echo "ffmpeg version controller-system"
+        """)
+        defer { try? FileManager.default.removeItem(atPath: systemScript) }
+
+        UserSettings.shared.ffmpegSource = .system
+        UserSettings.shared.customFFmpegPath = ""
+
+        let resolver = MockPathResolver(
+            bundledPath: nil,
+            systemPathValue: systemScript,
+            delays: [.system: 150_000_000]
+        )
+        let service = FFmpegService.makeForTesting(pathResolver: resolver)
+        let controller = ExecutionController(ffmpegService: service)
+
+        try await waitForCondition(timeout: 2.0) {
+            controller.isFFmpegAvailable &&
+            controller.ffmpegVersion == "ffmpeg version controller-system"
+        }
     }
 
     // MARK: - Helpers
 
-    private func snapshotSettings() -> (source: FFmpegSource, customPath: String) {
-        (UserSettings.shared.ffmpegSource, UserSettings.shared.customFFmpegPath)
+    private func snapshotSettings() -> (source: FFmpegSource, customPath: String, ffprobePath: String) {
+        (
+            UserSettings.shared.ffmpegSource,
+            UserSettings.shared.customFFmpegPath,
+            UserSettings.shared.ffprobePath
+        )
     }
 
-    private func restoreSettings(_ snapshot: (source: FFmpegSource, customPath: String)) {
+    private func restoreSettings(_ snapshot: (source: FFmpegSource, customPath: String, ffprobePath: String)) {
         UserSettings.shared.ffmpegSource = snapshot.source
         UserSettings.shared.customFFmpegPath = snapshot.customPath
+        UserSettings.shared.ffprobePath = snapshot.ffprobePath
     }
 
     private func waitForCondition(

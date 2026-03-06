@@ -58,6 +58,9 @@ class FFmpegService: ObservableObject {
     /// 当前执行任务的唯一标识，防止并发取消时的误杀
     private var activeTaskId: UUID?
 
+    /// 当前执行会话（封装一次 Process 执行的资源与取消逻辑）
+    private var currentSession: ProcessExecutionSession?
+
     /// 系统 FFmpeg 路径的缓存（用于 UI 展示）
     @Published private(set) var cachedSystemPath: String?
 
@@ -66,9 +69,9 @@ class FFmpegService: ObservableObject {
         get { UserSettings.shared.ffmpegSource }
         set {
             UserSettings.shared.ffmpegSource = newValue
-            cachedVersion = nil // 来源变化时清除缓存
+            applyImmediateResolvedPaths()
             objectWillChange.send()
-            Task { await updateFFmpegPathAsync() }
+            Task { await updateResolvedPathsAsync() }
         }
     }
 
@@ -80,14 +83,17 @@ class FFmpegService: ObservableObject {
     /// 当前使用的 FFmpeg 路径
     @Published private(set) var ffmpegPath: String = ""
 
+    /// 当前使用的 FFprobe 路径
+    @Published private(set) var ffprobePath: String = ""
+
     /// 自定义 FFmpeg 路径：从 UserSettings 读取，统一数据源
     var customFFmpegPath: String {
         get { UserSettings.shared.customFFmpegPath }
         set {
             UserSettings.shared.customFFmpegPath = newValue
-            cachedVersion = nil // 路径变化时清除缓存
             if ffmpegSource == .custom {
-                Task { await updateFFmpegPathAsync() }
+                applyImmediateResolvedPaths()
+                Task { await updateResolvedPathsAsync() }
             }
         }
     }
@@ -100,17 +106,17 @@ class FFmpegService: ObservableObject {
         pathResolver.bundledPath
     }
 
+    /// 显式配置的 ffprobe 路径（可为空；为空时走 sibling / fallback 推导）
+    private var configuredFFprobePath: String {
+        UserSettings.shared.ffprobePath.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // MARK: - Initialization
 
     private init(pathResolver: FFmpegPathProviding = FFmpegPathResolver()) {
         self.pathResolver = pathResolver
 
-        // 同步设置 bundled 路径（无 I/O，安全）
-        if ffmpegSource == .bundled, let bundled = pathResolver.bundledPath {
-            ffmpegPath = bundled
-        } else if ffmpegSource == .custom {
-            ffmpegPath = customFFmpegPath
-        }
+        applyImmediateResolvedPaths()
 
         // 延迟异步初始化（避免阻塞主线程）
         Task { await initializePathAsync() }
@@ -127,27 +133,62 @@ class FFmpegService: ObservableObject {
             }
         }
 
-        await updateFFmpegPathAsync()
+        applyImmediateResolvedPaths()
+        await updateResolvedPathsAsync()
     }
 
     // MARK: - Path Management
 
-    /// 异步更新 FFmpeg 路径
-    private func updateFFmpegPathAsync() async {
+    /// 同步更新当前配置可直接推导出的路径，避免 UI 长时间停留在旧状态
+    private func applyImmediateResolvedPaths() {
+        let resolvedFFmpegPath: String
+        switch ffmpegSource {
+        case .bundled:
+            resolvedFFmpegPath = bundledFFmpegPath ?? ""
+        case .system:
+            resolvedFFmpegPath = cachedSystemPath ?? ""
+        case .custom:
+            resolvedFFmpegPath = customFFmpegPath
+        }
+
+        let resolvedFFprobePath = resolveFFprobePath(
+            ffmpegCandidatePath: resolvedFFmpegPath,
+            preferredFFprobePath: configuredFFprobePath
+        ) ?? ""
+
+        if ffmpegPath != resolvedFFmpegPath {
+            ffmpegPath = resolvedFFmpegPath
+        }
+        if ffprobePath != resolvedFFprobePath {
+            ffprobePath = resolvedFFprobePath
+        }
+    }
+
+    /// 异步更新 FFmpeg / FFprobe 路径
+    private func updateResolvedPathsAsync() async {
         let sourceSnapshot = ffmpegSource
         let customPathSnapshot = customFFmpegPath
+        let configuredFFprobePathSnapshot = configuredFFprobePath
         pathUpdateGeneration &+= 1
         let generation = pathUpdateGeneration
 
-        let path = await pathResolver.resolvePath(for: sourceSnapshot, customPath: customPathSnapshot)
+        let resolvedFFmpegPath = await pathResolver.resolvePath(
+            for: sourceSnapshot,
+            customPath: customPathSnapshot
+        ) ?? ""
+        let resolvedFFprobePath = resolveFFprobePath(
+            ffmpegCandidatePath: resolvedFFmpegPath,
+            preferredFFprobePath: configuredFFprobePathSnapshot
+        ) ?? ""
 
         // 丢弃过时任务结果，避免快速切换来源时旧结果覆盖新状态
         guard generation == pathUpdateGeneration else { return }
-        ffmpegPath = path ?? ""
+        ffmpegPath = resolvedFFmpegPath
+        ffprobePath = resolvedFFprobePath
 
         // 同时更新缓存的系统路径
         if sourceSnapshot == .system {
-            cachedSystemPath = path
+            cachedSystemPath = resolvedFFmpegPath.isEmpty ? nil : resolvedFFmpegPath
         }
     }
 
@@ -157,6 +198,13 @@ class FFmpegService: ObservableObject {
     func findSystemFFmpeg() async -> String? {
         let path = await pathResolver.systemPath
         cachedSystemPath = path
+        if ffmpegSource == .system {
+            ffmpegPath = path ?? ""
+            ffprobePath = resolveFFprobePath(
+                ffmpegCandidatePath: ffmpegPath,
+                preferredFFprobePath: configuredFFprobePath
+            ) ?? ""
+        }
         return path
     }
 
@@ -210,31 +258,15 @@ class FFmpegService: ObservableObject {
             return nil
 
         case .ffprobe:
-            if !ffmpegPath.isEmpty {
-                let currentExecutableName = (ffmpegPath as NSString).lastPathComponent.lowercased()
-
-                if currentExecutableName == "ffprobe",
-                   fm.isExecutableFile(atPath: ffmpegPath) {
-                    return ffmpegPath
-                }
-
-                // 自定义路径下，允许用户直接指向 ffprobe 可执行文件（文件名不强制为 ffprobe）
-                if ffmpegSource == .custom,
-                   fm.isExecutableFile(atPath: ffmpegPath) {
-                    return ffmpegPath
-                }
-
-                let siblingFFprobe = siblingExecutablePath(named: "ffprobe", from: ffmpegPath)
-                if fm.isExecutableFile(atPath: siblingFFprobe) {
-                    return siblingFFprobe
-                }
+            if !ffprobePath.isEmpty, fm.isExecutableFile(atPath: ffprobePath) {
+                return ffprobePath
             }
 
-            for path in ffprobeFallbackPaths where fm.isExecutableFile(atPath: path) {
-                return path
-            }
-
-            return nil
+            return resolveFFprobePath(
+                ffmpegCandidatePath: ffmpegPath,
+                preferredFFprobePath: configuredFFprobePath,
+                fileManager: fm
+            )
         }
     }
 
@@ -245,8 +277,46 @@ class FFmpegService: ObservableObject {
             .path
     }
 
-    /// 缓存的 FFmpeg 版本
-    private var cachedVersion: String?
+    private func resolveFFprobePath(
+        ffmpegCandidatePath: String,
+        preferredFFprobePath: String,
+        fileManager: FileManager = .default
+    ) -> String? {
+        if !preferredFFprobePath.isEmpty,
+           fileManager.isExecutableFile(atPath: preferredFFprobePath) {
+            return preferredFFprobePath
+        }
+
+        if !ffmpegCandidatePath.isEmpty {
+            let currentExecutableName = (ffmpegCandidatePath as NSString)
+                .lastPathComponent
+                .lowercased()
+
+            if currentExecutableName == "ffprobe",
+               fileManager.isExecutableFile(atPath: ffmpegCandidatePath) {
+                return ffmpegCandidatePath
+            }
+
+            let siblingFFprobe = siblingExecutablePath(named: "ffprobe", from: ffmpegCandidatePath)
+            if fileManager.isExecutableFile(atPath: siblingFFprobe) {
+                return siblingFFprobe
+            }
+        }
+
+        for path in ffprobeFallbackPaths where fileManager.isExecutableFile(atPath: path) {
+            return path
+        }
+
+        return nil
+    }
+
+    /// 缓存的 FFmpeg 版本（按可执行路径区分）
+    private struct VersionCacheEntry {
+        let path: String
+        let version: String
+    }
+
+    private var cachedVersion: VersionCacheEntry?
 
     /// 路径更新代号（用于丢弃过时异步结果，避免乱序覆盖）
     private var pathUpdateGeneration: UInt64 = 0
@@ -257,8 +327,6 @@ class FFmpegService: ObservableObject {
             self.customFFmpegPath = customPath
         }
         self.ffmpegSource = source
-        // 如果来源改变，清除版本缓存
-        self.cachedVersion = nil
     }
 
     /// 刷新系统 FFmpeg 路径缓存
@@ -267,18 +335,21 @@ class FFmpegService: ObservableObject {
         cachedSystemPath = await pathResolver.systemPath
         if ffmpegSource == .system {
             ffmpegPath = cachedSystemPath ?? ""
+            ffprobePath = resolveFFprobePath(
+                ffmpegCandidatePath: ffmpegPath,
+                preferredFFprobePath: configuredFFprobePath
+            ) ?? ""
         }
     }
 
     /// 获取 FFmpeg 版本
     func getFFmpegVersion() async throws -> String {
-        // 如果有缓存，直接返回
-        if let cached = cachedVersion {
-            return cached
+        guard let path = resolveExecutablePath(for: .ffmpeg) else {
+            throw FFmpegError.ffmpegNotFound
         }
-
-        let path = self.ffmpegPath
-        guard !path.isEmpty else { throw FFmpegError.ffmpegNotFound }
+        if let cached = cachedVersion, cached.path == path {
+            return cached.version
+        }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
@@ -291,11 +362,8 @@ class FFmpegService: ObservableObject {
         try await self.runProcessAndWait(process)
         let exitCode = process.terminationStatus
 
-        let output = await Task.detached {
-            let data = try? pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(decoding: data ?? Data(), as: UTF8.self)
-            return output
-        }.value
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(decoding: data, as: UTF8.self)
 
         let firstLine = output
             .split(whereSeparator: \.isNewline)
@@ -312,7 +380,7 @@ class FFmpegService: ObservableObject {
         }
 
         let version = firstLine
-        self.cachedVersion = version
+        self.cachedVersion = VersionCacheEntry(path: path, version: version)
         return version
     }
 
@@ -339,68 +407,29 @@ class FFmpegService: ObservableObject {
 
         let startTime = Date()
 
-        // 创建进程
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executablePath)
-
-        // ffmpeg 需要动态参数处理；ffprobe 保持原样透传
-        var finalArgs = arguments
-        if executable == .ffmpeg {
-            // 移除 -nostdin 允许 stdin 通信；添加 -y 防止阻塞等待用户输入
-            finalArgs.removeAll { $0 == "-nostdin" }
-            if !finalArgs.contains("-y") && !finalArgs.contains("-n") {
-                finalArgs.insert("-y", at: 0)
-            }
-        }
-        process.arguments = finalArgs
-
         // 🔍 调试日志：输出实际 arguments（仅在开启详细日志时）
-        AppLogger.debug(AppLogger.ffmpeg, "\(executable.binaryName) arguments count: \(finalArgs.count)")
-        for (i, arg) in finalArgs.enumerated() {
+        AppLogger.debug(AppLogger.ffmpeg, "\(executable.binaryName) arguments count: \(arguments.count)")
+        for (i, arg) in arguments.enumerated() {
             AppLogger.debug(AppLogger.ffmpeg, "  [\(i)] = \(arg)")
         }
 
-        // 设置管道
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        let stdinPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-        process.standardInput = stdinPipe
-
-        // 使用线程安全的数据收集器 (shared across threads, safe due to internal locking)
-        let dataCollector = OutputDataCollector()
+        let session = ProcessExecutionSession(
+            executablePath: executablePath,
+            arguments: arguments,
+            displayCommand: displayCommand,
+            onLog: { [weak self] entry in
+                Task { @MainActor in
+                    self?.onLogOutput?(entry)
+                }
+            }
+        )
 
         // 状态管理
         isRunning = true
-        currentProcess = process
+        currentSession = session
+        currentProcess = session.process
         let currentTaskId = UUID()
         activeTaskId = currentTaskId
-
-        // 设置输出处理
-        let processLogger = ProcessLogger()
-        processLogger.onLog = { [weak self] entry in
-            Task { @MainActor in
-                self?.onLogOutput?(entry)
-            }
-        }
-
-        // 开始流式读取
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            dataCollector.appendStdout(data)
-            let text = String(decoding: data, as: UTF8.self)
-            processLogger.processOutput(text, isError: false)
-        }
-
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            dataCollector.appendStderr(data)
-            let text = String(decoding: data, as: UTF8.self)
-            processLogger.processOutput(text, isError: true)
-        }
 
         // 记录开始
         onLogOutput?(LogEntry(
@@ -412,59 +441,21 @@ class FFmpegService: ObservableObject {
         return try await withTaskCancellationHandler {
             // 使用 defer 确保严格的资源释放，防止崩溃或异常导致句柄泄露
             defer {
-                stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                stderrPipe.fileHandleForReading.readabilityHandler = nil
-                try? stdoutPipe.fileHandleForReading.close()
-                try? stderrPipe.fileHandleForReading.close()
-                try? stdinPipe.fileHandleForWriting.close()
+                session.cleanup()
             }
 
             do {
                 // 先绑定 terminationHandler 再启动进程，避免快速退出竞态
-                try await runProcessAndWait(process)
-
-                // 1. 停止异步读取
-                stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                stderrPipe.fileHandleForReading.readabilityHandler = nil
-
-                // 2. 异步读取剩余数据，避免读满缓冲区时阻塞主线程
-                let (remainingStdout, remainingStderr) = await Task.detached {
-                    let out = try? stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                    let err = try? stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                    return (out, err)
-                }.value
-
-                if let stdoutData = remainingStdout, !stdoutData.isEmpty {
-                    dataCollector.appendStdout(stdoutData)
-                    let text = String(decoding: stdoutData, as: UTF8.self)
-                    processLogger.processOutput(text, isError: false)
-                }
-
-                if let stderrData = remainingStderr, !stderrData.isEmpty {
-                    dataCollector.appendStderr(stderrData)
-                    let text = String(decoding: stderrData, as: UTF8.self)
-                    processLogger.processOutput(text, isError: true)
-                }
-
-                // 3. 刷新尾行，避免最后一行没有换行符时丢日志
-                processLogger.flushPendingLineSync()
+                try await runProcessAndWait(session.process)
+                let result = await session.finish(startTime: startTime)
 
                 // 同步更新状态 (已在 MainActor)
                 if self.activeTaskId == currentTaskId {
                     self.isRunning = false
+                    self.currentSession = nil
                     self.currentProcess = nil
                     self.activeTaskId = nil
                 }
-
-                let endTime = Date()
-                let result = ExecutionResult(
-                    command: displayCommand,
-                    exitCode: process.terminationStatus,
-                    standardOutput: dataCollector.stdoutString,
-                    standardError: dataCollector.stderrString,
-                    startTime: startTime,
-                    endTime: endTime
-                )
 
                 // 记录结束
                 let statusMessage: String
@@ -493,6 +484,7 @@ class FFmpegService: ObservableObject {
                 // 同步更新状态
                 if self.activeTaskId == currentTaskId {
                     self.isRunning = false
+                    self.currentSession = nil
                     self.currentProcess = nil
                     self.activeTaskId = nil
                 }
@@ -508,12 +500,9 @@ class FFmpegService: ObservableObject {
                 throw FFmpegError.executionFailed(errorMsg)
             }
 
-        } onCancel: { [weak self, weak process] in
-            // 处理取消
-            if let proc = process {
-                Task {
-                    await self?.gracefullyTerminate(proc)
-                }
+        } onCancel: { [weak session] in
+            Task {
+                await session?.cancel()
             }
         }
     }
@@ -545,10 +534,9 @@ class FFmpegService: ObservableObject {
 
     /// 取消当前执行
     func cancel() {
-        guard let process = currentProcess, process.isRunning else { return }
-        // 触发异步终止逻辑
+        guard let session = currentSession else { return }
         Task {
-            await gracefullyTerminate(process)
+            await session.cancel()
         }
     }
 
@@ -570,66 +558,156 @@ class FFmpegService: ObservableObject {
         }
     }
 
-    /// 优雅终止进程
-    /// 先尝试写入 'q'，无响应则升级到 SIGTERM，最后 SIGKILL
-    /// - Note: 这是一个异步方法，以免阻塞调用者
-    private func gracefullyTerminate(_ process: Process) async {
+}
+
+// MARK: - Errors
+
+/// 单次命令执行会话
+/// 封装 Process、管道、流式日志和取消逻辑，避免 FFmpegService 承担过多细节
+private final class ProcessExecutionSession {
+    let process: Process
+
+    private let stdoutPipe = Pipe()
+    private let stderrPipe = Pipe()
+    private let stdinPipe = Pipe()
+    private let stdoutLogger = ProcessLogger()
+    private let stderrLogger = ProcessLogger()
+    private let dataCollector = OutputDataCollector()
+    private let displayCommand: String
+    private let onLog: (LogEntry) -> Void
+
+    init(
+        executablePath: String,
+        arguments: [String],
+        displayCommand: String,
+        onLog: @escaping (LogEntry) -> Void
+    ) {
+        self.displayCommand = displayCommand
+        self.onLog = onLog
+        self.process = Process()
+
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = arguments
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+        process.standardInput = stdinPipe
+
+        stdoutLogger.onLog = onLog
+        stderrLogger.onLog = onLog
+
+        startStreaming()
+    }
+
+    func finish(startTime: Date) async -> ExecutionResult {
+        stopStreaming()
+
+        let remainingStdout = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let remainingStderr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+
+        if !remainingStdout.isEmpty {
+            append(remainingStdout, isError: false)
+        }
+
+        if !remainingStderr.isEmpty {
+            append(remainingStderr, isError: true)
+        }
+
+        stdoutLogger.flushPendingLineSync(asError: false)
+        stderrLogger.flushPendingLineSync(asError: true)
+
+        return ExecutionResult(
+            command: displayCommand,
+            exitCode: process.terminationStatus,
+            standardOutput: dataCollector.stdoutString,
+            standardError: dataCollector.stderrString,
+            startTime: startTime,
+            endTime: Date()
+        )
+    }
+
+    func cleanup() {
+        stopStreaming()
+        try? stdoutPipe.fileHandleForReading.close()
+        try? stderrPipe.fileHandleForReading.close()
+        try? stdinPipe.fileHandleForWriting.close()
+    }
+
+    func cancel() async {
         let pid = process.processIdentifier
         guard pid > 0 else { return }
 
-        // 此方法可能被 Task wrapper 调用多次，需要确保状态已被重置
-        // 这里的 log 是为了提示用户正在尝试停止
-        await MainActor.run {
-             onLogOutput?(LogEntry(
-                timestamp: Date(),
-                level: .warning,
-                message: "正在停止执行..."
-            ))
+        onLog(LogEntry(
+            timestamp: Date(),
+            level: .warning,
+            message: "正在停止执行..."
+        ))
+
+        if let qData = "q\n".data(using: .utf8) {
+            try? stdinPipe.fileHandleForWriting.write(contentsOf: qData)
         }
 
-        // 1. 尝试优雅终止：向标准输入写入 'q' 字符
-        // 在 macOS 图形化应用中，信号（SIGTERM/SIGINT）经常遭到父进程屏蔽导致传递失败。
-        // 使用 pipe 直接将 'q' 写入 FFmpeg 的标准输入是最安全可靠的退出方式。
-        if let stdinPipe = process.standardInput as? Pipe {
-            if let qData = "q\n".data(using: .utf8) {
-                try? stdinPipe.fileHandleForWriting.write(contentsOf: qData)
-            }
+        if await waitForExit(maxPollCount: 20) {
+            return
         }
 
-        // 2. 等待最多 2 秒，给 FFmpeg 时间优雅退出并写完尾部信息
-        for _ in 0..<20 {
-            if !process.isRunning { return }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
-
-        // 3. 备用手段：发送 SIGTERM
         if process.isRunning {
             process.terminate()
         }
 
-        // 4. 再等待最多 2 秒
-        for _ in 0..<20 {
-            if !process.isRunning { return }
-            try? await Task.sleep(nanoseconds: 100_000_000)
+        if await waitForExit(maxPollCount: 20) {
+            return
         }
 
-        // 5. 超时后强制终止
         if process.isRunning {
-             // 强制终止（SIGKILL）
-             kill(pid, SIGKILL)
-
-             await MainActor.run {
-                onLogOutput?(LogEntry(
-                    timestamp: Date(),
-                    level: .warning,
-                    message: "进程未响应，已发送 SIGKILL 强制终止"
-                ))
-            }
+            kill(pid, SIGKILL)
+            onLog(LogEntry(
+                timestamp: Date(),
+                level: .warning,
+                message: "进程未响应，已发送 SIGKILL 强制终止"
+            ))
         }
     }
-}
 
-// MARK: - Errors
+    private func startStreaming() {
+        stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            self?.append(data, isError: false)
+        }
+
+        stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            self?.append(data, isError: true)
+        }
+    }
+
+    private func stopStreaming() {
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+    }
+
+    private func append(_ data: Data, isError: Bool) {
+        let text = String(decoding: data, as: UTF8.self)
+        if isError {
+            dataCollector.appendStderr(data)
+            stderrLogger.processOutput(text, isError: true)
+        } else {
+            dataCollector.appendStdout(data)
+            stdoutLogger.processOutput(text, isError: false)
+        }
+    }
+
+    private func waitForExit(maxPollCount: Int) async -> Bool {
+        for _ in 0..<maxPollCount {
+            if !process.isRunning {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return !process.isRunning
+    }
+}
 
 enum FFmpegError: LocalizedError {
     case ffmpegNotFound
