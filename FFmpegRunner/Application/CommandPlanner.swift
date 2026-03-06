@@ -124,8 +124,17 @@ struct CommandPlanner {
             throw CommandPlannerError.validationFailed(error)
         }
 
-        // 3. 创建执行计划
-        return ExecutionPlan(command: command)
+        // 3. 提取可执行文件类型
+        guard let executable = CommandValidator.extractExecutable(from: command) else {
+            throw CommandPlannerError.validationFailed("无法识别可执行文件")
+        }
+
+        // 4. 创建执行计划（严格分词，不允许不确定输入）
+        do {
+            return try ExecutionPlan(command: command, executable: executable)
+        } catch {
+            throw CommandPlannerError.validationFailed(error.localizedDescription)
+        }
     }
 
     // MARK: - Validation Only

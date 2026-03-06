@@ -190,13 +190,43 @@ class ExecutionViewModel: ObservableObject {
         }
     }
 
+    /// 执行模板（推荐路径：CommandPlanner -> ExecutionPlan -> Execute）
+    func execute(
+        template: Template,
+        values: [TemplateValue],
+        forceOverwrite: Bool = false
+    ) async {
+        guard !isRunning else { return }
+
+        clearLogs()
+
+        do {
+            let result = try await controller.execute(
+                template: template,
+                values: values,
+                forceOverwrite: forceOverwrite
+            )
+            lastResult = result
+        } catch {
+            appendLog(LogEntry(
+                timestamp: Date(),
+                level: .error,
+                message: "执行失败: \(error.localizedDescription)"
+            ))
+        }
+    }
+
     /// 执行命令（使用参数数组，推荐路径）
     /// - Parameters:
     ///   - arguments: 参数数组（不包含 ffmpeg 本身）
     ///   - displayCommand: 用于日志/历史记录显示的命令字符串
     /// - Note: 这是 Template → Execute 的推荐路径，直接使用参数数组，
     ///         避免 shell escaping + splitCommand 的不可逆问题
-    func execute(arguments: [String], displayCommand: String) async {
+    func execute(
+        arguments: [String],
+        displayCommand: String,
+        executable: CommandExecutable = .ffmpeg
+    ) async {
         guard !isRunning else { return }
 
         clearLogs()
@@ -204,7 +234,8 @@ class ExecutionViewModel: ObservableObject {
         do {
             let result = try await controller.execute(
                 arguments: arguments,
-                displayCommand: displayCommand
+                displayCommand: displayCommand,
+                executable: executable
             )
             lastResult = result
         } catch {

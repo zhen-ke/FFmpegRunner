@@ -172,7 +172,77 @@ class FFmpegService: ObservableObject {
 
     /// 检查当前配置的 FFmpeg 是否可用
     func isFFmpegAvailable() -> Bool {
-        !ffmpegPath.isEmpty && FileManager.default.isExecutableFile(atPath: ffmpegPath)
+        isExecutableAvailable(for: .ffmpeg)
+    }
+
+    /// 检查指定可执行文件是否可用
+    func isExecutableAvailable(for executable: CommandExecutable) -> Bool {
+        resolveExecutablePath(for: executable) != nil
+    }
+
+    // MARK: - Executable Resolution
+
+    /// ffprobe 常见系统路径（当无法从 ffmpegPath 推导时兜底）
+    private let ffprobeFallbackPaths = [
+        "/opt/homebrew/bin/ffprobe",
+        "/usr/local/bin/ffprobe",
+        "/usr/bin/ffprobe",
+        "/opt/local/bin/ffprobe"
+    ]
+
+    /// 根据当前配置解析可执行文件路径
+    private func resolveExecutablePath(for executable: CommandExecutable) -> String? {
+        let fm = FileManager.default
+
+        switch executable {
+        case .ffmpeg:
+            guard !ffmpegPath.isEmpty else { return nil }
+
+            if fm.isExecutableFile(atPath: ffmpegPath) {
+                return ffmpegPath
+            }
+
+            let siblingFFmpeg = siblingExecutablePath(named: "ffmpeg", from: ffmpegPath)
+            if fm.isExecutableFile(atPath: siblingFFmpeg) {
+                return siblingFFmpeg
+            }
+
+            return nil
+
+        case .ffprobe:
+            if !ffmpegPath.isEmpty {
+                let currentExecutableName = (ffmpegPath as NSString).lastPathComponent.lowercased()
+
+                if currentExecutableName == "ffprobe",
+                   fm.isExecutableFile(atPath: ffmpegPath) {
+                    return ffmpegPath
+                }
+
+                // 自定义路径下，允许用户直接指向 ffprobe 可执行文件（文件名不强制为 ffprobe）
+                if ffmpegSource == .custom,
+                   fm.isExecutableFile(atPath: ffmpegPath) {
+                    return ffmpegPath
+                }
+
+                let siblingFFprobe = siblingExecutablePath(named: "ffprobe", from: ffmpegPath)
+                if fm.isExecutableFile(atPath: siblingFFprobe) {
+                    return siblingFFprobe
+                }
+            }
+
+            for path in ffprobeFallbackPaths where fm.isExecutableFile(atPath: path) {
+                return path
+            }
+
+            return nil
+        }
+    }
+
+    private func siblingExecutablePath(named executableName: String, from path: String) -> String {
+        URL(fileURLWithPath: path)
+            .deletingLastPathComponent()
+            .appendingPathComponent(executableName)
+            .path
     }
 
     /// 缓存的 FFmpeg 版本
@@ -237,7 +307,7 @@ class FFmpegService: ObservableObject {
             throw FFmpegError.executionFailed("读取 FFmpeg 版本失败（退出码: \(exitCode)）：\(reason)")
         }
 
-        guard firstLine.lowercased().hasPrefix("ffmpeg version") else {
+        guard !firstLine.isEmpty else {
             throw FFmpegError.executionFailed("无法解析 FFmpeg 版本输出")
         }
 
@@ -246,38 +316,46 @@ class FFmpegService: ObservableObject {
         return version
     }
 
-    /// 执行 FFmpeg 命令（使用参数数组，推荐路径）
+    /// 执行命令（使用参数数组，推荐路径）
     /// - Parameters:
     ///   - arguments: 参数数组（不包含 ffmpeg 本身）
     ///   - displayCommand: 用于日志显示的命令字符串
+    ///   - executable: 目标可执行文件（ffmpeg / ffprobe）
     /// - Returns: 执行结果
     /// - Note: 这是 Template → Execute 的推荐路径，直接使用参数数组，
     ///         避免 shell escaping + splitCommand 的不可逆问题
-    func execute(arguments: [String], displayCommand: String) async throws -> ExecutionResult {
+    func execute(
+        arguments: [String],
+        displayCommand: String,
+        executable: CommandExecutable = .ffmpeg
+    ) async throws -> ExecutionResult {
         guard !isRunning else {
             throw FFmpegError.alreadyRunning
         }
 
-        guard isFFmpegAvailable() else {
-            throw FFmpegError.ffmpegNotFound
+        guard let executablePath = resolveExecutablePath(for: executable) else {
+            throw FFmpegError.executableNotFound(executable.binaryName)
         }
 
         let startTime = Date()
 
         // 创建进程
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: ffmpegPath)
+        process.executableURL = URL(fileURLWithPath: executablePath)
 
-        // 动态处理参数：移除 -nostdin 允许 stdin 通信；添加 -y 防止阻塞等待用户输入
+        // ffmpeg 需要动态参数处理；ffprobe 保持原样透传
         var finalArgs = arguments
-        finalArgs.removeAll { $0 == "-nostdin" }
-        if !finalArgs.contains("-y") && !finalArgs.contains("-n") {
-            finalArgs.insert("-y", at: 0)
+        if executable == .ffmpeg {
+            // 移除 -nostdin 允许 stdin 通信；添加 -y 防止阻塞等待用户输入
+            finalArgs.removeAll { $0 == "-nostdin" }
+            if !finalArgs.contains("-y") && !finalArgs.contains("-n") {
+                finalArgs.insert("-y", at: 0)
+            }
         }
         process.arguments = finalArgs
 
         // 🔍 调试日志：输出实际 arguments（仅在开启详细日志时）
-        AppLogger.debug(AppLogger.ffmpeg, "FFmpeg arguments count: \(finalArgs.count)")
+        AppLogger.debug(AppLogger.ffmpeg, "\(executable.binaryName) arguments count: \(finalArgs.count)")
         for (i, arg) in finalArgs.enumerated() {
             AppLogger.debug(AppLogger.ffmpeg, "  [\(i)] = \(arg)")
         }
@@ -447,17 +525,22 @@ class FFmpegService: ObservableObject {
     ///         对于 Template → Execute 的主路径，请使用 execute(arguments:displayCommand:)
     @available(*, deprecated, message: "Use execute(arguments:displayCommand:) instead. This method is only for legacy command string input.")
     func execute(command: String) async throws -> ExecutionResult {
-        // 解析命令参数
-        let args = CommandRenderer.splitCommand(command)
-        guard args.first == "ffmpeg" || args.first?.hasSuffix("ffmpeg") == true else {
-            throw FFmpegError.invalidCommand("命令必须以 ffmpeg 开头")
+        // 严格解析命令参数
+        let args = try CommandRenderer.splitCommandStrict(command)
+        guard let executableToken = args.first,
+              let executable = CommandExecutable.from(token: executableToken) else {
+            throw FFmpegError.invalidCommand("命令必须以 ffmpeg 或 ffprobe 开头")
         }
 
-        // 移除 ffmpeg 本身，保留参数
+        // 移除可执行文件本身，保留参数
         let finalArgs = Array(args.dropFirst())
 
         // 委托给主实现
-        return try await execute(arguments: finalArgs, displayCommand: command)
+        return try await execute(
+            arguments: finalArgs,
+            displayCommand: command,
+            executable: executable
+        )
     }
 
     /// 取消当前执行
@@ -550,6 +633,7 @@ class FFmpegService: ObservableObject {
 
 enum FFmpegError: LocalizedError {
     case ffmpegNotFound
+    case executableNotFound(String)
     case alreadyRunning
     case invalidCommand(String)
     case executionFailed(String)
@@ -558,6 +642,8 @@ enum FFmpegError: LocalizedError {
         switch self {
         case .ffmpegNotFound:
             return "未找到 FFmpeg，请确保已安装 FFmpeg"
+        case .executableNotFound(let executable):
+            return "未找到可执行文件 \(executable)，请检查 FFmpeg 安装或路径配置"
         case .alreadyRunning:
             return "FFmpeg 正在运行中"
         case .invalidCommand(let msg):

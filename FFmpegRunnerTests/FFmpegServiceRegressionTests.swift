@@ -148,6 +148,36 @@ final class FFmpegServiceRegressionTests: XCTestCase {
         XCTAssertFalse(service.isRunning)
     }
 
+    func testExecuteFFprobeUsesRequestedExecutable() async throws {
+        let settings = snapshotSettings()
+        defer { restoreSettings(settings) }
+
+        let ffprobeScript = try makeExecutableScript(body: """
+        #!/bin/sh
+        exit 0
+        """)
+        defer { try? FileManager.default.removeItem(atPath: ffprobeScript) }
+
+        let resolver = MockPathResolver(
+            bundledPath: nil,
+            systemPathValue: nil
+        )
+        let service = FFmpegService.makeForTesting(pathResolver: resolver)
+
+        service.setSource(.custom, customPath: ffprobeScript)
+        try await waitForCondition {
+            service.ffmpegPath == ffprobeScript
+        }
+
+        let result = try await service.execute(
+            arguments: [],
+            displayCommand: ffprobeScript,
+            executable: .ffprobe
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+    }
+
     // MARK: - Helpers
 
     private func snapshotSettings() -> (source: FFmpegSource, customPath: String) {

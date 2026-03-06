@@ -48,6 +48,7 @@ struct FFmpegRunnerApp: App {
             AppCommands(
                 navigationState: navigationState,
                 listViewModel: listViewModel,
+                detailViewModel: detailViewModel,
                 previewViewModel: previewViewModel,
                 executionViewModel: executionViewModel
             )
@@ -70,6 +71,7 @@ struct AppCommands: Commands {
 
     let navigationState: NavigationState
     let listViewModel: TemplateListViewModel
+    let detailViewModel: TemplateDetailViewModel
     let previewViewModel: CommandPreviewViewModel
     let executionViewModel: ExecutionViewModel
 
@@ -115,7 +117,14 @@ struct AppCommands: Commands {
             Button("运行") {
                 if !executionViewModel.isRunning {
                     Task {
-                        await executionViewModel.execute(command: previewViewModel.renderedCommand)
+                        if let template = detailViewModel.template {
+                            await executionViewModel.execute(
+                                template: template,
+                                values: detailViewModel.values
+                            )
+                        } else {
+                            await executionViewModel.execute(command: previewViewModel.renderedCommand)
+                        }
                     }
                 }
             }

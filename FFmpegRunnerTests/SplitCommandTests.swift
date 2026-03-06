@@ -359,4 +359,199 @@ final class SplitCommandTests: XCTestCase {
             "out.mp4"
         ])
     }
+
+    // MARK: - Planner / Renderer Main Path
+
+    func testRenderToCommandDetectsFFprobeFromRawTemplate() {
+        let template = Template(
+            id: "t-raw",
+            name: "Raw",
+            description: "Raw command template",
+            commandTemplate: "{{command}}",
+            parameters: [
+                TemplateParameter(
+                    key: "command",
+                    label: "Command",
+                    type: .string,
+                    isRequired: true,
+                    role: .raw,
+                    escapeStrategy: .raw
+                )
+            ],
+            category: nil,
+            icon: nil
+        )
+
+        let values = [TemplateValue(key: "command", rawValue: "ffprobe -v error -show_format input.mp4")]
+        let rendered = CommandRenderer.renderToCommand(template: template, values: values)
+
+        XCTAssertEqual(rendered.executable, .ffprobe)
+        XCTAssertEqual(rendered.arguments, ["-v", "error", "-show_format", "input.mp4"])
+        XCTAssertTrue(rendered.isComplete)
+    }
+
+    func testCommandPlannerPrepareTemplateCarriesExecutable() throws {
+        let template = Template(
+            id: "t-raw2",
+            name: "Raw",
+            description: "Raw command template",
+            commandTemplate: "{{command}}",
+            parameters: [
+                TemplateParameter(
+                    key: "command",
+                    label: "Command",
+                    type: .string,
+                    isRequired: true,
+                    role: .raw,
+                    escapeStrategy: .raw
+                )
+            ],
+            category: nil,
+            icon: nil
+        )
+        let values = [TemplateValue(key: "command", rawValue: "ffprobe -v error -show_streams input.mp4")]
+
+        let plan = try CommandPlanner.prepare(template: template, values: values)
+
+        XCTAssertEqual(plan.executable, .ffprobe)
+        XCTAssertEqual(plan.arguments, ["-v", "error", "-show_streams", "input.mp4"])
+    }
+
+    func testCommandPlannerRejectsMalformedRawCommand() {
+        XCTAssertThrowsError(try CommandPlanner.prepare(command: "ffmpeg -i \"input.mp4")) { error in
+            guard case CommandPlannerError.validationFailed = error else {
+                XCTFail("Expected validationFailed, got \(error)")
+                return
+            }
+        }
+    }
+
+    @MainActor
+    func testExecutionControllerExecuteCommandDoesNotSelfBlockOnPreparing() async throws {
+        let truePath = "/usr/bin/true"
+        guard FileManager.default.isExecutableFile(atPath: truePath) else {
+            throw XCTSkip("Missing executable: \(truePath)")
+        }
+
+        let originalSource = UserSettings.shared.ffmpegSource
+        let originalCustomPath = UserSettings.shared.customFFmpegPath
+        defer {
+            UserSettings.shared.ffmpegSource = originalSource
+            UserSettings.shared.customFFmpegPath = originalCustomPath
+        }
+
+        let resolver = MockControllerPathResolver(
+            bundledPath: nil,
+            systemPathValue: nil
+        )
+        let service = FFmpegService.makeForTesting(pathResolver: resolver)
+        service.setSource(.custom, customPath: truePath)
+
+        let deadline = Date().addingTimeInterval(1.0)
+        while Date() < deadline, service.ffmpegPath != truePath {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(service.ffmpegPath, truePath)
+
+        let controller = ExecutionController(ffmpegService: service)
+        let result = try await controller.execute(command: "ffmpeg -version")
+
+        XCTAssertEqual(result.exitCode, 0)
+    }
+
+    @MainActor
+    func testExecutionControllerRejectsConcurrentExecuteCommandCalls() async throws {
+        let slowScript = try makeExecutableScript(body: """
+        #!/bin/sh
+        sleep 1
+        exit 0
+        """)
+        defer { try? FileManager.default.removeItem(atPath: slowScript) }
+
+        let originalSource = UserSettings.shared.ffmpegSource
+        let originalCustomPath = UserSettings.shared.customFFmpegPath
+        defer {
+            UserSettings.shared.ffmpegSource = originalSource
+            UserSettings.shared.customFFmpegPath = originalCustomPath
+        }
+
+        let resolver = MockControllerPathResolver(
+            bundledPath: nil,
+            systemPathValue: nil
+        )
+        let service = FFmpegService.makeForTesting(pathResolver: resolver)
+        service.setSource(.custom, customPath: slowScript)
+
+        let readyDeadline = Date().addingTimeInterval(1.0)
+        while Date() < readyDeadline, service.ffmpegPath != slowScript {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(service.ffmpegPath, slowScript)
+
+        let controller = ExecutionController(ffmpegService: service)
+        let firstTask = Task<ExecutionResult, Error> { @MainActor in
+            try await controller.execute(command: "ffmpeg -version")
+        }
+        defer {
+            firstTask.cancel()
+            service.cancel()
+        }
+
+        let runningDeadline = Date().addingTimeInterval(1.0)
+        while Date() < runningDeadline, !service.isRunning {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertTrue(service.isRunning)
+
+        do {
+            _ = try await controller.execute(command: "ffmpeg -version")
+            XCTFail("Expected alreadyRunning error")
+        } catch let error as ExecutionError {
+            guard case .alreadyRunning = error else {
+                XCTFail("Expected alreadyRunning, got \(error)")
+                return
+            }
+        }
+
+        _ = try await firstTask.value
+    }
+
+    private func makeExecutableScript(body: String) throws -> String {
+        let name = "split-command-controller-\(UUID().uuidString).sh"
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent(name).path
+        try body.write(toFile: path, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+        return path
+    }
+}
+
+private actor MockControllerPathResolver: FFmpegPathProviding {
+    nonisolated let bundledPath: String?
+    private let systemPathValue: String?
+
+    init(bundledPath: String?, systemPathValue: String?) {
+        self.bundledPath = bundledPath
+        self.systemPathValue = systemPathValue
+    }
+
+    var systemPath: String? {
+        get async { systemPathValue }
+    }
+
+    func resolvePath(for source: FFmpegSource, customPath: String?) async -> String? {
+        switch source {
+        case .bundled:
+            return bundledPath
+        case .system:
+            return systemPathValue
+        case .custom:
+            return customPath
+        }
+    }
+
+    nonisolated func isExecutable(at path: String) -> Bool {
+        FileManager.default.isExecutableFile(atPath: path)
+    }
+
+    func invalidateCache() async {}
 }

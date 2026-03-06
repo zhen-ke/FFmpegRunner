@@ -12,6 +12,23 @@
 
 import Foundation
 
+// MARK: - Command Executable
+
+/// 允许执行的可执行文件类型
+enum CommandExecutable: String, Codable, CaseIterable, Sendable {
+    case ffmpeg
+    case ffprobe
+
+    /// 二进制文件名
+    var binaryName: String { rawValue }
+
+    /// 从命令首 token 解析可执行文件类型（支持绝对路径）
+    static func from(token: String) -> CommandExecutable? {
+        let executableName = (token as NSString).lastPathComponent.lowercased()
+        return CommandExecutable(rawValue: executableName)
+    }
+}
+
 // MARK: - Execution Plan
 
 /// 执行计划：将模板渲染结果封装为可执行的语义完整单元
@@ -21,6 +38,9 @@ import Foundation
 /// - validate vs render 分裂
 /// - history vs execution 分裂
 struct ExecutionPlan: Equatable {
+
+    /// 目标可执行文件（ffmpeg / ffprobe）
+    let executable: CommandExecutable
 
     /// 执行参数数组（用于 Process.arguments，不包含 ffmpeg 本身）
     let arguments: [String]
@@ -46,25 +66,32 @@ struct ExecutionPlan: Equatable {
     init(
         arguments: [String],
         displayCommand: String,
+        executable: CommandExecutable = .ffmpeg,
         templateId: String? = nil,
         templateName: String? = nil,
-        validatedBindings: [ParameterBinding]? = nil
+        validatedBindings: [ParameterBinding]? = nil,
+        createdAt: Date = Date()
     ) {
+        self.executable = executable
         self.arguments = arguments
         self.displayCommand = displayCommand
         self.templateId = templateId
         self.templateName = templateName
         self.validatedBindings = validatedBindings
-        self.createdAt = Date()
+        self.createdAt = createdAt
     }
 
     /// 从原始命令字符串创建（手动输入路径）
-    /// - Parameter command: 完整的命令字符串（包含 ffmpeg）
-    /// - Note: 这是为兼容手动输入/历史记录重放场景
-    init(command: String) {
-        let args = CommandRenderer.splitCommand(command)
-        // 移除第一个元素（ffmpeg/ffprobe 本身）
-        self.arguments = args.count > 1 ? Array(args.dropFirst()) : []
+    /// - Parameters:
+    ///   - command: 完整的命令字符串（包含 ffmpeg / ffprobe）
+    ///   - executable: 可选兜底可执行文件类型（当首 token 无法识别时使用）
+    /// - Throws: CommandSplitError 当命令存在未闭合引号或悬空转义
+    init(command: String, executable fallbackExecutable: CommandExecutable? = nil) throws {
+        let args = try CommandRenderer.splitCommandStrict(command)
+        let detectedExecutable = args.first.flatMap(CommandExecutable.from(token:))
+
+        self.executable = detectedExecutable ?? fallbackExecutable ?? .ffmpeg
+        self.arguments = detectedExecutable == nil ? args : Array(args.dropFirst())
         self.displayCommand = command
         self.templateId = nil
         self.templateName = nil
@@ -84,11 +111,11 @@ struct ExecutionPlan: Equatable {
         validatedBindings != nil && !(validatedBindings?.isEmpty ?? true)
     }
 
-    /// 完整的执行命令（包含 ffmpeg）
-    /// - Parameter ffmpegPath: FFmpeg 可执行文件路径
+    /// 完整的执行命令（包含可执行文件路径）
+    /// - Parameter executablePath: 可执行文件路径
     /// - Returns: 完整的参数数组
-    func fullArguments(ffmpegPath: String) -> [String] {
-        [ffmpegPath] + arguments
+    func fullArguments(executablePath: String) -> [String] {
+        [executablePath] + arguments
     }
 }
 
@@ -96,6 +123,7 @@ struct ExecutionPlan: Equatable {
 
 extension ExecutionPlan {
     static func == (lhs: ExecutionPlan, rhs: ExecutionPlan) -> Bool {
+        lhs.executable == rhs.executable &&
         lhs.arguments == rhs.arguments &&
         lhs.displayCommand == rhs.displayCommand &&
         lhs.templateId == rhs.templateId
@@ -118,6 +146,7 @@ extension ExecutionPlan {
         ExecutionPlan(
             arguments: renderedCommand.arguments,
             displayCommand: renderedCommand.displayString,
+            executable: renderedCommand.executable,
             templateId: binding.template.id,
             templateName: binding.template.name,
             validatedBindings: binding.bindings

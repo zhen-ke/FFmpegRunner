@@ -385,14 +385,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				8E6E06EB17C547239E6A7A40 /* TemplateLoadError.swift in Sources */,
-				67D2F8151C4940348AE00234 /* TemplateLoadReport.swift in Sources */,
-				EBB0AFB80C1B410B8EA52794 /* TemplateSource.swift in Sources */,
-				5606A2C5E30149B1AEA8E777 /* TemplateFileLoader.swift in Sources */,
-				87BFD673DA0A43C0AE0C4AA0 /* TemplateValidator.swift in Sources */,
-				530950BCB4F94F878F4555CD /* TemplateSorter.swift in Sources */,
-				08C7C357CCD34E78A24FD67F /* TemplateRepository.swift in Sources */,
-				001A0051 /* AppLogger.swift in Sources */,
 				002A0001 /* SplitCommandTests.swift in Sources */,
 				002A0002 /* CommandValidatorTests.swift in Sources */,
 				00A1B001 /* FFmpegServiceRegressionTests.swift in Sources */,

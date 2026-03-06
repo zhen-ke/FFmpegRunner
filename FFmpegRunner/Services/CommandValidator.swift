@@ -13,6 +13,8 @@ enum CommandValidationResult: Equatable {
     case valid
     /// 空命令
     case emptyCommand
+    /// 命令语法错误（如未闭合引号）
+    case malformedCommand(String)
     /// 非 FFmpeg 命令
     case notFFmpegCommand
 
@@ -30,6 +32,8 @@ enum CommandValidationResult: Equatable {
             return nil
         case .emptyCommand:
             return "命令不能为空"
+        case .malformedCommand(let message):
+            return message
         case .notFFmpegCommand:
             return "只允许执行 ffmpeg 或 ffprobe 命令"
         }
@@ -43,7 +47,7 @@ struct CommandValidator {
     // MARK: - Configuration
 
     /// 允许的命令可执行文件名
-    private static let allowedExecutables = ["ffmpeg", "ffprobe"]
+    private static let allowedExecutables = Set(CommandExecutable.allCases.map(\.binaryName))
 
     // MARK: - Public Methods
 
@@ -64,15 +68,20 @@ struct CommandValidator {
             return .emptyCommand
         }
 
-        // 使用 CommandRenderer 的分词逻辑，它能正确处理引号和转义
-        let args = CommandRenderer.splitCommand(trimmed)
+        // 规划路径使用严格分词，拒绝未闭合引号等不确定输入
+        let args: [String]
+        do {
+            args = try CommandRenderer.splitCommandStrict(trimmed)
+        } catch {
+            return .malformedCommand(error.localizedDescription)
+        }
 
         guard let executablePath = args.first else {
             return .emptyCommand
         }
 
         // 提取文件名 (处理绝对路径情况，如 /usr/local/bin/ffmpeg)
-        let executableName = (executablePath as NSString).lastPathComponent
+        let executableName = (executablePath as NSString).lastPathComponent.lowercased()
 
         // 检查是否在允许名单中
         guard allowedExecutables.contains(executableName) else {
@@ -80,6 +89,19 @@ struct CommandValidator {
         }
 
         return .valid
+    }
+
+    /// 提取命令可执行文件类型（ffmpeg / ffprobe）
+    /// - Returns: 解析成功返回可执行文件类型，否则返回 nil
+    static func extractExecutable(from command: String) -> CommandExecutable? {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        guard let first = try? CommandRenderer.splitCommandStrict(trimmed).first else {
+            return nil
+        }
+
+        return CommandExecutable.from(token: first)
     }
 
     /// 验证输入文件是否存在

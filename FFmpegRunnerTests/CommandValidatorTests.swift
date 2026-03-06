@@ -62,6 +62,22 @@ final class CommandValidatorTests: XCTestCase {
         XCTAssertEqual(result, .notFFmpegCommand)
     }
 
+    func testMalformedCommand_UnclosedQuote() {
+        let result = CommandValidator.validate("ffmpeg -i \"input.mp4")
+
+        switch result {
+        case .malformedCommand(let message):
+            XCTAssertFalse(message.isEmpty)
+        default:
+            XCTFail("Expected malformedCommand, got \(result)")
+        }
+    }
+
+    func testExtractExecutable() {
+        XCTAssertEqual(CommandValidator.extractExecutable(from: "ffprobe -version"), .ffprobe)
+        XCTAssertEqual(CommandValidator.extractExecutable(from: "/usr/local/bin/ffmpeg -version"), .ffmpeg)
+    }
+
     // MARK: - Edge Cases (命令注入尝试)
 
     /// 尝试注入 - 带分号

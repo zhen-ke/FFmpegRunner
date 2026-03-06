@@ -12,6 +12,26 @@
 
 import Foundation
 
+// MARK: - Split Errors
+
+/// 命令分词错误（严格模式）
+enum CommandSplitError: LocalizedError, Equatable {
+    case unclosedSingleQuote
+    case unclosedDoubleQuote
+    case danglingEscape
+
+    var errorDescription: String? {
+        switch self {
+        case .unclosedSingleQuote:
+            return "命令包含未闭合的单引号"
+        case .unclosedDoubleQuote:
+            return "命令包含未闭合的双引号"
+        case .danglingEscape:
+            return "命令以反斜杠结尾，转义不完整"
+        }
+    }
+}
+
 // MARK: - Render Context Protocol
 
 /// 渲染上下文协议
@@ -120,6 +140,9 @@ struct SimpleValueContext: RenderContext {
 /// 渲染后的命令
 /// 同时包含用于执行的参数数组和用于显示的字符串
 struct RenderedCommand: Sendable {
+    /// 目标可执行文件（ffmpeg / ffprobe）
+    let executable: CommandExecutable
+
     /// 用于 Process.arguments 的参数数组（不包含 ffmpeg 本身）
     let arguments: [String]
 
@@ -197,19 +220,8 @@ struct CommandRenderer {
     /// - Returns: 包含参数数组和显示字符串的 RenderedCommand
     /// - Note: 这是执行命令的推荐路径，直接生成参数数组，避免 shell escaping 的不可逆问题
     static func renderToCommand(template: Template, values: [TemplateValue]) -> RenderedCommand {
-        let valueDict = values.asDictionary
-        let skipEscapeKeys = collectKeys(from: template.parameters, where: { $0.skipEscape == true }, key: \.key)
-        let rawCommandKeys = collectKeys(from: template.parameters, where: { $0.role == .raw }, key: \.key)
-        let argumentModes = collectArgumentModes(from: template.parameters)
-        let context = TemplateValueContext(
-            values: valueDict,
-            skipEscapeKeys: skipEscapeKeys,
-            rawCommandKeys: rawCommandKeys,
-            argumentModes: argumentModes
-        )
-
-        // ✅ 单次正则匹配，同时生成 arguments、displayString、missingPlaceholders
-        return renderAll(commandTemplate: template.commandTemplate, context: context)
+        let binding = TemplateBinding.bind(template: template, values: values)
+        return renderToCommand(binding: binding)
     }
 
     /// 渲染命令（使用 TemplateBinding，语义闭环路径）
@@ -362,8 +374,11 @@ struct CommandRenderer {
         }
         flushBuffer()
 
+        let normalized = stripExecutableIfNeeded(from: args)
+
         return RenderedCommand(
-            arguments: removeFFmpegIfNeeded(from: args),
+            executable: normalized.executable,
+            arguments: normalized.arguments,
             displayString: display,
             missingPlaceholders: missing
         )
@@ -519,7 +534,7 @@ struct CommandRenderer {
         // 最后提交 Buffer
         flushBuffer()
 
-        return removeFFmpegIfNeeded(from: args)
+        return stripExecutableIfNeeded(from: args).arguments
     }
 
     // MARK: - Core Render Logic (Display String Only)
@@ -591,12 +606,17 @@ struct CommandRenderer {
         Dictionary(uniqueKeysWithValues: parameters.map { ($0.key, $0.argumentMode) })
     }
 
-    /// 从参数数组中移除 ffmpeg 本身
-    private static func removeFFmpegIfNeeded(from args: [String]) -> [String] {
-        if let first = args.first, (first as NSString).lastPathComponent == "ffmpeg" {
-            return Array(args.dropFirst())
+    /// 从参数数组中提取可执行文件并返回纯 arguments
+    private static func stripExecutableIfNeeded(
+        from args: [String],
+        defaultExecutable: CommandExecutable = .ffmpeg
+    ) -> (executable: CommandExecutable, arguments: [String]) {
+        guard let first = args.first,
+              let executable = CommandExecutable.from(token: first) else {
+            return (defaultExecutable, args)
         }
-        return args
+
+        return (executable, Array(args.dropFirst()))
     }
 
     // MARK: - Validation
@@ -687,10 +707,21 @@ struct CommandRenderer {
             .map(String.init)
     }
 
-    /// 将命令分割为参数数组
+    /// 将命令分割为参数数组（宽松模式）
     /// - Note: ⚠️ 仅用于导入/粘贴用户命令或 raw command 值。不要对模板静态文本使用。
-    /// - Warning: 已软废弃，建议使用 renderToCommand()
+    /// - Warning: 宽松模式会容错未闭合引号；规划/验证路径请使用 `splitCommandStrict()`
     static func splitCommand(_ command: String) -> [String] {
+        (try? splitCommandInternal(command, strict: false)) ?? []
+    }
+
+    /// 将命令分割为参数数组（严格模式）
+    /// - Throws: CommandSplitError 当命令存在未闭合引号或悬空转义
+    static func splitCommandStrict(_ command: String) throws -> [String] {
+        try splitCommandInternal(command, strict: true)
+    }
+
+    /// 统一分词实现（严格/宽松模式）
+    private static func splitCommandInternal(_ command: String, strict: Bool) throws -> [String] {
         var args: [String] = []
         var current = ""
         var inSingleQuote = false
@@ -750,11 +781,16 @@ struct CommandRenderer {
             args.append(current)
         }
 
-        if inSingleQuote || inDoubleQuote {
-             // ⚠️ 检测到未闭合引号
-             // 在实际项目中，这里应该抛出错误或记录日志。
-             // 为了保持行为兼容，暂且将剩余部分作为一个参数，但最好能通知调用者。
-             // print("Warning: Unclosed quote detected in command: \(command)")
+        if strict {
+            if inSingleQuote {
+                throw CommandSplitError.unclosedSingleQuote
+            }
+            if inDoubleQuote {
+                throw CommandSplitError.unclosedDoubleQuote
+            }
+            if escapeNext {
+                throw CommandSplitError.danglingEscape
+            }
         }
 
         return args

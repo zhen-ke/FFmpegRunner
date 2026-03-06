@@ -143,13 +143,15 @@ final class ExecutionController: ObservableObject {
     /// - Returns: 执行结果
     @discardableResult
     func execute(plan: ExecutionPlan) async throws -> ExecutionResult {
-        guard !state.isRunning else {
+        // 仅阻止真实运行中的并发；.preparing 可能来自当前调用链（command/template -> plan）
+        if ffmpegService.isRunning || state.isCancelling {
             throw ExecutionError.alreadyRunning
         }
 
-        guard isFFmpegAvailable else {
-            state = .error("FFmpeg 不可用")
-            throw ExecutionError.ffmpegNotAvailable
+        guard ffmpegService.isExecutableAvailable(for: plan.executable) else {
+            let message = "\(plan.executable.binaryName) 不可用"
+            state = .error(message)
+            throw ExecutionError.executionFailed(message)
         }
 
         state = .running
@@ -157,7 +159,8 @@ final class ExecutionController: ObservableObject {
         do {
             let result = try await ffmpegService.execute(
                 arguments: plan.arguments,
-                displayCommand: plan.displayCommand
+                displayCommand: plan.displayCommand,
+                executable: plan.executable
             )
 
             // ✅ 兼容外部取消（未显式调用 cancel）
@@ -220,11 +223,35 @@ final class ExecutionController: ObservableObject {
     ///   - values: 参数值列表
     /// - Returns: 执行结果
     @discardableResult
-    func execute(template: Template, values: [TemplateValue]) async throws -> ExecutionResult {
+    func execute(
+        template: Template,
+        values: [TemplateValue],
+        forceOverwrite: Bool = false
+    ) async throws -> ExecutionResult {
+        guard !state.isRunning else {
+            throw ExecutionError.alreadyRunning
+        }
+
         state = .preparing
 
         do {
-            let plan = try CommandPlanner.prepare(template: template, values: values)
+            var plan = try CommandPlanner.prepare(template: template, values: values)
+            if forceOverwrite,
+               plan.executable == .ffmpeg,
+               !plan.arguments.contains("-y"),
+               !plan.arguments.contains("-n") {
+                var overwrittenArguments = plan.arguments
+                overwrittenArguments.insert("-y", at: 0)
+                plan = ExecutionPlan(
+                    arguments: overwrittenArguments,
+                    displayCommand: plan.displayCommand,
+                    executable: plan.executable,
+                    templateId: plan.templateId,
+                    templateName: plan.templateName,
+                    validatedBindings: plan.validatedBindings,
+                    createdAt: plan.createdAt
+                )
+            }
             return try await execute(plan: plan)
         } catch let error as CommandPlannerError {
             state = .error(error.localizedDescription)
@@ -237,6 +264,10 @@ final class ExecutionController: ObservableObject {
     /// - Returns: 执行结果
     @discardableResult
     func execute(command: String) async throws -> ExecutionResult {
+        guard !state.isRunning else {
+            throw ExecutionError.alreadyRunning
+        }
+
         state = .preparing
 
         do {
@@ -254,10 +285,19 @@ final class ExecutionController: ObservableObject {
     ///   - displayCommand: 显示命令
     /// - Returns: 执行结果
     @discardableResult
-    func execute(arguments: [String], displayCommand: String) async throws -> ExecutionResult {
+    func execute(
+        arguments: [String],
+        displayCommand: String,
+        executable: CommandExecutable = .ffmpeg
+    ) async throws -> ExecutionResult {
+        guard !state.isRunning else {
+            throw ExecutionError.alreadyRunning
+        }
+
         let plan = ExecutionPlan(
             arguments: arguments,
-            displayCommand: displayCommand
+            displayCommand: displayCommand,
+            executable: executable
         )
         return try await execute(plan: plan)
     }
