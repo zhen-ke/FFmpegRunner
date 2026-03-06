@@ -59,26 +59,8 @@ struct CommandPlanner {
     /// - Returns: 执行计划
     /// - Throws: CommandPlannerError 如果验证或渲染失败
     static func prepare(template: Template, values: [TemplateValue]) throws -> ExecutionPlan {
-        // 1. 创建绑定并验证
         let binding = TemplateBinding.bind(template: template, values: values)
-
-        // 2. 检查验证结果
-        guard binding.isValid else {
-            let errorMessages = binding.errorMessages.joined(separator: "; ")
-            throw CommandPlannerError.validationFailed(errorMessages)
-        }
-
-        // 3. 渲染命令
-        let renderedCommand = CommandRenderer.renderToCommand(binding: binding)
-
-        // 4. 检查渲染结果
-        guard renderedCommand.isComplete else {
-            let missing = renderedCommand.missingPlaceholders.joined(separator: ", ")
-            throw CommandPlannerError.renderingFailed("缺少参数: \(missing)")
-        }
-
-        // 5. 创建执行计划
-        return ExecutionPlan.from(binding: binding, renderedCommand: renderedCommand)
+        return try prepare(binding: binding)
     }
 
     /// 从模板绑定创建执行计划（已验证的绑定）
@@ -166,5 +148,12 @@ struct CommandPlanner {
     static func preview(template: Template, values: [TemplateValue]) -> RenderedCommand {
         let binding = TemplateBinding.bind(template: template, values: values)
         return CommandRenderer.renderToCommand(binding: binding)
+    }
+
+    /// 预览命令（直接消费已验证绑定）
+    /// - Parameter binding: 模板绑定
+    /// - Returns: 渲染后的命令结构
+    static func preview(binding: TemplateBinding) -> RenderedCommand {
+        CommandRenderer.renderToCommand(binding: binding)
     }
 }

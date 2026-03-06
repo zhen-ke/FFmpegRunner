@@ -528,6 +528,21 @@ final class SplitCommandTests: XCTestCase {
 @MainActor
 final class CommandPreviewViewModelTests: XCTestCase {
 
+    func testDetailStateDerivesValidationFromBindingSnapshot() {
+        let detailViewModel = TemplateDetailViewModel(template: makeEncodeTemplate())
+
+        XCTAssertEqual(detailViewModel.validationErrors["input"], "Input 不能为空")
+        XCTAssertFalse(detailViewModel.canExecute)
+        XCTAssertEqual(detailViewModel.templateBinding?.binding(for: "input")?.errorMessage, "Input 不能为空")
+
+        detailViewModel.updateValue(key: "input", value: "clip.mov")
+
+        XCTAssertNil(detailViewModel.validationErrors["input"])
+        XCTAssertEqual(detailViewModel.templateBinding?.binding(for: "input")?.rawValue, "clip.mov")
+        XCTAssertTrue(detailViewModel.templateBinding?.isValid == true)
+        XCTAssertTrue(detailViewModel.canExecute)
+    }
+
     func testPreviewTracksDetailValueChanges() async {
         let detailViewModel = TemplateDetailViewModel(template: makeEncodeTemplate())
         let previewViewModel = CommandPreviewViewModel(detailViewModel: detailViewModel)
@@ -550,7 +565,7 @@ final class CommandPreviewViewModelTests: XCTestCase {
         let detailViewModel = TemplateDetailViewModel(template: makeEncodeTemplate())
         let previewViewModel = CommandPreviewViewModel(detailViewModel: detailViewModel)
 
-        detailViewModel.template = makeProbeTemplate()
+        detailViewModel.selectTemplate(makeProbeTemplate())
         await settlePreviewPipeline()
 
         XCTAssertEqual(
@@ -565,7 +580,7 @@ final class CommandPreviewViewModelTests: XCTestCase {
         let detailViewModel = TemplateDetailViewModel(template: makeEncodeTemplate())
         let previewViewModel = CommandPreviewViewModel(detailViewModel: detailViewModel)
 
-        detailViewModel.template = nil
+        detailViewModel.selectTemplate(nil)
         await settlePreviewPipeline()
 
         XCTAssertNil(previewViewModel.currentCommand)

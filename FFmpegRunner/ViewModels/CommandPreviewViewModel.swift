@@ -129,14 +129,14 @@ final class CommandPreviewViewModel: ObservableObject {
     func bind(to detailViewModel: TemplateDetailViewModel) {
         sourceCancellable?.cancel()
 
-        sourceCancellable = detailViewModel.$previewRevision
+        sourceCancellable = detailViewModel.$state
             .sink { [weak self, weak detailViewModel] _ in
                 Task { @MainActor [weak self, weak detailViewModel] in
-                    self?.refresh(from: detailViewModel)
+                    self?.refresh(state: detailViewModel?.state ?? .empty)
                 }
             }
 
-        refresh(from: detailViewModel)
+        refresh(state: detailViewModel.state)
     }
 
     /// 切换显示模式
@@ -152,19 +152,13 @@ final class CommandPreviewViewModel: ObservableObject {
         #endif
     }
 
-    private func refresh(from detailViewModel: TemplateDetailViewModel?) {
-        let template = detailViewModel?.template
-        let values = detailViewModel?.values ?? []
-        refresh(template: template, values: values)
-    }
-
-    private func refresh(template: Template?, values: [TemplateValue]) {
-        guard let template else {
+    private func refresh(state: TemplateDetailState) {
+        guard let binding = state.templateBinding else {
             clearPreview()
             return
         }
 
-        currentCommand = CommandPlanner.preview(template: template, values: values)
+        currentCommand = CommandPlanner.preview(binding: binding)
         rebuildPresentation()
     }
 

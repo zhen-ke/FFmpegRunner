@@ -225,6 +225,20 @@ final class ExecutionController: ObservableObject {
         values: [TemplateValue],
         forceOverwrite: Bool = false
     ) async throws -> ExecutionResult {
+        let binding = TemplateBinding.bind(template: template, values: values)
+        return try await execute(binding: binding, forceOverwrite: forceOverwrite)
+    }
+
+    /// 执行模板绑定（便捷方法：已验证绑定 + 执行）
+    /// - Parameters:
+    ///   - binding: 模板绑定快照
+    ///   - forceOverwrite: 是否强制覆盖输出
+    /// - Returns: 执行结果
+    @discardableResult
+    func execute(
+        binding: TemplateBinding,
+        forceOverwrite: Bool = false
+    ) async throws -> ExecutionResult {
         guard !state.isRunning else {
             throw ExecutionError.alreadyRunning
         }
@@ -232,7 +246,7 @@ final class ExecutionController: ObservableObject {
         state = .preparing
 
         do {
-            var plan = try CommandPlanner.prepare(template: template, values: values)
+            var plan = try CommandPlanner.prepare(binding: binding)
             if forceOverwrite,
                plan.executable == .ffmpeg,
                !plan.arguments.contains("-y"),

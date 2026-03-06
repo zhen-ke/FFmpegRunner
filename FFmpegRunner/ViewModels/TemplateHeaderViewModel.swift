@@ -62,12 +62,11 @@ class TemplateHeaderViewModel: ObservableObject {
 
     /// 检查输出文件并决定是否执行
     func checkAndExecuteCommand(
-        template: Template?,
-        values: [TemplateValue],
+        binding: TemplateBinding?,
         currentCommand: RenderedCommand?,
         executionViewModel: ExecutionViewModel
     ) async {
-        guard let template, let currentCommand = currentCommand else { return }
+        guard let binding, let currentCommand = currentCommand else { return }
 
         // 使用 arguments 检测输出文件路径
         if let outputPath = detectOutputPath(from: currentCommand.arguments) {
@@ -81,8 +80,7 @@ class TemplateHeaderViewModel: ObservableObject {
         // 没有冲突，直接执行
         await executeCommand(
             forceOverwrite: false,
-            template: template,
-            values: values,
+            binding: binding,
             executionViewModel: executionViewModel
         )
     }
@@ -90,15 +88,13 @@ class TemplateHeaderViewModel: ObservableObject {
     /// 执行命令
     func executeCommand(
         forceOverwrite: Bool,
-        template: Template?,
-        values: [TemplateValue],
+        binding: TemplateBinding?,
         executionViewModel: ExecutionViewModel
     ) async {
-        guard let template else { return }
+        guard let binding else { return }
 
         await executionViewModel.execute(
-            template: template,
-            values: values,
+            binding: binding,
             forceOverwrite: forceOverwrite
         )
     }

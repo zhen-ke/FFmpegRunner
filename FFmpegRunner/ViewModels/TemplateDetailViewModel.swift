@@ -8,33 +8,61 @@
 import Foundation
 import SwiftUI
 
+struct TemplateDetailState {
+    let template: Template?
+    let values: [TemplateValue]
+    let templateBinding: TemplateBinding?
+
+    static let empty = TemplateDetailState(template: nil, values: [], templateBinding: nil)
+
+    var validationErrors: [String: String] {
+        Dictionary(
+            uniqueKeysWithValues: values.compactMap { value in
+                guard let message = value.errorMessage else { return nil }
+                return (value.key, message)
+            }
+        )
+    }
+
+    var isValid: Bool {
+        templateBinding?.isValid ?? false
+    }
+
+    var canExecute: Bool {
+        template != nil && isValid
+    }
+}
+
 /// 模板详情 ViewModel
 @MainActor
-class TemplateDetailViewModel: ObservableObject {
+final class TemplateDetailViewModel: ObservableObject {
 
     // MARK: - Published Properties
 
+    /// 当前详情页状态
+    @Published private(set) var state: TemplateDetailState = .empty
+
+    // MARK: - Computed Properties
+
     /// 当前模板
-    @Published var template: Template? {
-        didSet {
-            if let template = template {
-                initializeValues(for: template)
-            } else {
-                clearState()
-            }
-        }
+    var template: Template? {
+        state.template
     }
 
     /// 参数值列表
-    @Published var values: [TemplateValue] = []
+    var values: [TemplateValue] {
+        state.values
+    }
+
+    /// 当前模板绑定快照
+    var templateBinding: TemplateBinding? {
+        state.templateBinding
+    }
 
     /// 验证状态
-    @Published private(set) var validationErrors: [String: String] = [:]
-
-    /// 详情状态变更版本号，供预览等派生层订阅
-    @Published private(set) var previewRevision = 0
-
-    // MARK: - Computed Properties
+    var validationErrors: [String: String] {
+        state.validationErrors
+    }
 
     /// 参数值字典
     var valuesDictionary: TemplateValueDict {
@@ -43,12 +71,12 @@ class TemplateDetailViewModel: ObservableObject {
 
     /// 是否所有参数都有效
     var isValid: Bool {
-        validationErrors.isEmpty && values.allValid
+        state.isValid
     }
 
     /// 是否可以执行
     var canExecute: Bool {
-        isValid && template != nil
+        state.canExecute
     }
 
     // MARK: - Private Properties
@@ -59,31 +87,34 @@ class TemplateDetailViewModel: ObservableObject {
     // MARK: - Initialization
 
     init(template: Template? = nil) {
-        self.template = template
-        if let template = template {
-            initializeValues(for: template)
-        }
+        selectTemplate(template)
     }
 
     // MARK: - Public Methods
 
-    /// 初始化参数值
-    func initializeValues(for template: Template) {
-        values = TemplateValue.from(template: template)
-        validationErrors = [:]
-        cache.rebuild(template: template, values: values)
+    /// 选择模板并初始化详情状态
+    func selectTemplate(_ template: Template?) {
+        guard let template else {
+            clearState()
+            return
+        }
+
+        let initialValues = TemplateValue.from(template: template)
+        cache.rebuild(template: template, values: initialValues)
         outputPathEngine.reset()
-        validateAll()
-        markPreviewDirty()
+        state = buildState(template: template, values: initialValues)
     }
 
     /// 更新参数值
     func updateValue(key: String, value: String) {
-        guard let index = cache.index(for: key), index < values.count else { return }
-        if values[index].rawValue == value { return }
+        guard let template = state.template,
+              let index = cache.index(for: key),
+              index < state.values.count else { return }
 
-        values[index].rawValue = value
-        validate(key: key)
+        var nextValues = state.values
+        if nextValues[index].rawValue == value { return }
+
+        nextValues[index].rawValue = value
 
         outputPathEngine.trackManualOutputEditIfNeeded(
             changedKey: key,
@@ -91,23 +122,19 @@ class TemplateDetailViewModel: ObservableObject {
             cache: cache
         )
 
-        let autoUpdatedKeys = outputPathEngine.applyAutoFillIfNeeded(
+        outputPathEngine.applyAutoFillIfNeeded(
             changedKey: key,
-            values: &values,
+            values: &nextValues,
             cache: cache
         )
 
-        for updatedKey in autoUpdatedKeys {
-            validate(key: updatedKey)
-        }
-
-        markPreviewDirty()
+        state = buildState(template: template, values: nextValues)
     }
 
     /// 获取参数值
     func getValue(for key: String) -> String {
-        guard let index = cache.index(for: key), index < values.count else { return "" }
-        return values[index].rawValue
+        guard let index = cache.index(for: key), index < state.values.count else { return "" }
+        return state.values[index].rawValue
     }
 
     /// 获取参数定义
@@ -115,43 +142,9 @@ class TemplateDetailViewModel: ObservableObject {
         cache.parameter(for: key)
     }
 
-    /// 验证单个参数
-    func validate(key: String) {
-        guard let parameter = cache.parameter(for: key),
-              let index = cache.index(for: key),
-              index < values.count else { return }
-
-        let result = parameter.validate(values[index].rawValue)
-        values[index].validationResult = result
-
-        if let error = result.errorMessage {
-            validationErrors[key] = error
-        } else {
-            validationErrors.removeValue(forKey: key)
-        }
-    }
-
-    /// 验证所有参数
-    func validateAll() {
-        guard cache.hasParameters else { return }
-
-        validationErrors = [:]
-
-        for (key, index) in cache.valueIndexByKey where index < values.count {
-            guard let parameter = cache.parameter(for: key) else { continue }
-            let result = parameter.validate(values[index].rawValue)
-            values[index].validationResult = result
-
-            if let error = result.errorMessage {
-                validationErrors[key] = error
-            }
-        }
-    }
-
     /// 重置为默认值
     func resetToDefaults() {
-        guard let template = template else { return }
-        initializeValues(for: template)
+        selectTemplate(state.template)
     }
 
     /// 获取绑定
@@ -179,16 +172,20 @@ extension TemplateDetailViewModel {
 // MARK: - Private Helpers
 
 private extension TemplateDetailViewModel {
-    func clearState() {
-        values = []
-        validationErrors = [:]
-        cache = TemplateDetailCache()
-        outputPathEngine.reset()
-        markPreviewDirty()
+    func buildState(template: Template, values: [TemplateValue]) -> TemplateDetailState {
+        let binding = TemplateBinding.bind(template: template, values: values)
+        let validatedValues = binding.bindings.map(\.value)
+        return TemplateDetailState(
+            template: template,
+            values: validatedValues,
+            templateBinding: binding
+        )
     }
 
-    func markPreviewDirty() {
-        previewRevision += 1
+    func clearState() {
+        state = .empty
+        cache = TemplateDetailCache()
+        outputPathEngine.reset()
     }
 }
 

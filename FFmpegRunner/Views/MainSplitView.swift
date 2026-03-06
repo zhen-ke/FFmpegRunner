@@ -91,10 +91,10 @@ struct DetailContentView: View {
         .onAppear {
             // DetailContentView 仅在 selectedTemplate != nil 时创建，
             // 需要把当前选择同步到详情模型。
-            detailViewModel.template = listViewModel.selectedTemplate
+            detailViewModel.selectTemplate(listViewModel.selectedTemplate)
         }
         .onChange(of: listViewModel.selectedTemplate) { newTemplate in
-            detailViewModel.template = newTemplate
+            detailViewModel.selectTemplate(newTemplate)
             // 切换模板或历史记录时，重置控制台
             executionViewModel.clearLogs()
             executionViewModel.reset()

@@ -196,14 +196,22 @@ class ExecutionViewModel: ObservableObject {
         values: [TemplateValue],
         forceOverwrite: Bool = false
     ) async {
+        let binding = TemplateBinding.bind(template: template, values: values)
+        await execute(binding: binding, forceOverwrite: forceOverwrite)
+    }
+
+    /// 执行模板绑定（推荐路径：复用详情页的权威绑定快照）
+    func execute(
+        binding: TemplateBinding,
+        forceOverwrite: Bool = false
+    ) async {
         guard !isRunning else { return }
 
         clearLogs()
 
         do {
             let result = try await controller.execute(
-                template: template,
-                values: values,
+                binding: binding,
                 forceOverwrite: forceOverwrite
             )
             lastResult = result

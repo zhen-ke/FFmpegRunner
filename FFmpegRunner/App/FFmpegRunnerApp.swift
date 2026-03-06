@@ -136,10 +136,9 @@ struct AppCommands: Commands {
             Button("运行") {
                 if !executionViewModel.isRunning {
                     Task {
-                        if let template = detailViewModel.template {
+                        if let binding = detailViewModel.templateBinding {
                             await executionViewModel.execute(
-                                template: template,
-                                values: detailViewModel.values
+                                binding: binding
                             )
                         } else {
                             await executionViewModel.execute(command: previewViewModel.renderedCommand)

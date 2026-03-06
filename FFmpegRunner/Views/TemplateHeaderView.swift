@@ -67,8 +67,7 @@ struct TemplateHeaderView: View {
                     Button(action: {
                         Task {
                             await headerViewModel.checkAndExecuteCommand(
-                                template: detailViewModel.template,
-                                values: detailViewModel.values,
+                                binding: detailViewModel.templateBinding,
                                 currentCommand: previewViewModel.currentCommand,
                                 executionViewModel: executionViewModel
                             )
@@ -104,8 +103,7 @@ struct TemplateHeaderView: View {
                 Task {
                     await headerViewModel.executeCommand(
                         forceOverwrite: true,
-                        template: detailViewModel.template,
-                        values: detailViewModel.values,
+                        binding: detailViewModel.templateBinding,
                         executionViewModel: executionViewModel
                     )
                 }
