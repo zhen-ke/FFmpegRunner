@@ -370,12 +370,8 @@ struct MissingParametersView: View {
 #Preview {
     CommandPreviewView()
         .environmentObject({
-            let vm = CommandPreviewViewModel()
-            vm.update(
-                template: .example,
-                values: TemplateValue.from(template: .example)
-            )
-            return vm
+            let detailViewModel = TemplateDetailViewModel(template: .example)
+            return CommandPreviewViewModel(detailViewModel: detailViewModel)
         }())
         .frame(width: 600, height: 200)
 }

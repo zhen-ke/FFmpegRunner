@@ -13,13 +13,32 @@ struct FFmpegRunnerApp: App {
 
     // MARK: - State Objects
 
-    @StateObject private var listViewModel = TemplateListViewModel()
-    @StateObject private var detailViewModel = TemplateDetailViewModel()
-    @StateObject private var previewViewModel = CommandPreviewViewModel()
-    @StateObject private var executionViewModel = ExecutionViewModel()
-    @StateObject private var historyViewModel = HistoryViewModel()
-    @StateObject private var headerViewModel = TemplateHeaderViewModel()
-    @StateObject private var navigationState = NavigationState()
+    @StateObject private var listViewModel: TemplateListViewModel
+    @StateObject private var detailViewModel: TemplateDetailViewModel
+    @StateObject private var previewViewModel: CommandPreviewViewModel
+    @StateObject private var executionViewModel: ExecutionViewModel
+    @StateObject private var historyViewModel: HistoryViewModel
+    @StateObject private var headerViewModel: TemplateHeaderViewModel
+    @StateObject private var navigationState: NavigationState
+
+    @MainActor
+    init() {
+        let listViewModel = TemplateListViewModel()
+        let detailViewModel = TemplateDetailViewModel()
+        let previewViewModel = CommandPreviewViewModel(detailViewModel: detailViewModel)
+        let executionViewModel = ExecutionViewModel()
+        let historyViewModel = HistoryViewModel()
+        let headerViewModel = TemplateHeaderViewModel()
+        let navigationState = NavigationState()
+
+        _listViewModel = StateObject(wrappedValue: listViewModel)
+        _detailViewModel = StateObject(wrappedValue: detailViewModel)
+        _previewViewModel = StateObject(wrappedValue: previewViewModel)
+        _executionViewModel = StateObject(wrappedValue: executionViewModel)
+        _historyViewModel = StateObject(wrappedValue: historyViewModel)
+        _headerViewModel = StateObject(wrappedValue: headerViewModel)
+        _navigationState = StateObject(wrappedValue: navigationState)
+    }
 
     // MARK: - Body
 

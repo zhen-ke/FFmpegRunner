@@ -525,6 +525,108 @@ final class SplitCommandTests: XCTestCase {
     }
 }
 
+@MainActor
+final class CommandPreviewViewModelTests: XCTestCase {
+
+    func testPreviewTracksDetailValueChanges() async {
+        let detailViewModel = TemplateDetailViewModel(template: makeEncodeTemplate())
+        let previewViewModel = CommandPreviewViewModel(detailViewModel: detailViewModel)
+
+        XCTAssertEqual(previewViewModel.missingPlaceholders, ["input"])
+
+        detailViewModel.updateValue(key: "input", value: "clip.mov")
+        await settlePreviewPipeline()
+
+        XCTAssertEqual(
+            previewViewModel.renderedCommand,
+            "ffmpeg -i clip.mov -c:v libx264 out.mp4"
+        )
+        XCTAssertEqual(previewViewModel.previewText, previewViewModel.renderedCommand)
+        XCTAssertTrue(previewViewModel.missingPlaceholders.isEmpty)
+        XCTAssertEqual(previewViewModel.currentCommand?.executable, .ffmpeg)
+    }
+
+    func testPreviewUsesLatestStateAfterTemplateSwitch() async {
+        let detailViewModel = TemplateDetailViewModel(template: makeEncodeTemplate())
+        let previewViewModel = CommandPreviewViewModel(detailViewModel: detailViewModel)
+
+        detailViewModel.template = makeProbeTemplate()
+        await settlePreviewPipeline()
+
+        XCTAssertEqual(
+            previewViewModel.renderedCommand,
+            "ffprobe -show_streams source.mov"
+        )
+        XCTAssertEqual(previewViewModel.currentCommand?.executable, .ffprobe)
+        XCTAssertEqual(previewViewModel.missingPlaceholders, [])
+    }
+
+    func testPreviewClearsWhenDetailTemplateBecomesNil() async {
+        let detailViewModel = TemplateDetailViewModel(template: makeEncodeTemplate())
+        let previewViewModel = CommandPreviewViewModel(detailViewModel: detailViewModel)
+
+        detailViewModel.template = nil
+        await settlePreviewPipeline()
+
+        XCTAssertNil(previewViewModel.currentCommand)
+        XCTAssertEqual(previewViewModel.renderedCommand, "")
+        XCTAssertEqual(previewViewModel.previewText, "")
+        XCTAssertEqual(previewViewModel.highlightedCommand, AttributedString(""))
+    }
+
+    private func makeEncodeTemplate() -> Template {
+        Template(
+            id: "encode",
+            name: "Encode",
+            description: "Encode video",
+            commandTemplate: "ffmpeg -i {{input}} -c:v libx264 {{output}}",
+            parameters: [
+                TemplateParameter(
+                    key: "input",
+                    label: "Input",
+                    type: .string,
+                    isRequired: true
+                ),
+                TemplateParameter(
+                    key: "output",
+                    label: "Output",
+                    type: .string,
+                    defaultValue: "out.mp4",
+                    isRequired: true
+                )
+            ],
+            category: nil,
+            icon: nil
+        )
+    }
+
+    private func makeProbeTemplate() -> Template {
+        Template(
+            id: "probe",
+            name: "Probe",
+            description: "Probe input",
+            commandTemplate: "ffprobe -show_streams {{source}}",
+            parameters: [
+                TemplateParameter(
+                    key: "source",
+                    label: "Source",
+                    type: .string,
+                    defaultValue: "source.mov",
+                    isRequired: true
+                )
+            ],
+            category: nil,
+            icon: nil
+        )
+    }
+
+    private func settlePreviewPipeline() async {
+        await Task.yield()
+        await Task.yield()
+        await Task.yield()
+    }
+}
+
 private actor MockControllerPathResolver: FFmpegPathProviding {
     nonisolated let bundledPath: String?
     private let systemPathValue: String?

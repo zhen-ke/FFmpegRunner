@@ -19,6 +19,8 @@ class TemplateDetailViewModel: ObservableObject {
         didSet {
             if let template = template {
                 initializeValues(for: template)
+            } else {
+                clearState()
             }
         }
     }
@@ -28,6 +30,9 @@ class TemplateDetailViewModel: ObservableObject {
 
     /// 验证状态
     @Published private(set) var validationErrors: [String: String] = [:]
+
+    /// 详情状态变更版本号，供预览等派生层订阅
+    @Published private(set) var previewRevision = 0
 
     // MARK: - Computed Properties
 
@@ -69,6 +74,7 @@ class TemplateDetailViewModel: ObservableObject {
         cache.rebuild(template: template, values: values)
         outputPathEngine.reset()
         validateAll()
+        markPreviewDirty()
     }
 
     /// 更新参数值
@@ -94,6 +100,8 @@ class TemplateDetailViewModel: ObservableObject {
         for updatedKey in autoUpdatedKeys {
             validate(key: updatedKey)
         }
+
+        markPreviewDirty()
     }
 
     /// 获取参数值
@@ -165,6 +173,22 @@ extension TemplateDetailViewModel {
     /// 创建带验证的 Binding
     func validatedBinding(for key: String) -> Binding<String> {
         binding(for: key)
+    }
+}
+
+// MARK: - Private Helpers
+
+private extension TemplateDetailViewModel {
+    func clearState() {
+        values = []
+        validationErrors = [:]
+        cache = TemplateDetailCache()
+        outputPathEngine.reset()
+        markPreviewDirty()
+    }
+
+    func markPreviewDirty() {
+        previewRevision += 1
     }
 }
 

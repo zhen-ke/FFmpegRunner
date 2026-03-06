@@ -5,8 +5,8 @@
 //  命令预览 ViewModel
 //
 
-import Foundation
 import Combine
+import Foundation
 import SwiftUI
 
 /// 显示模式枚举
@@ -42,7 +42,7 @@ enum DisplayMode: CaseIterable {
 
 /// 命令预览 ViewModel
 @MainActor
-class CommandPreviewViewModel: ObservableObject {
+final class CommandPreviewViewModel: ObservableObject {
 
     // MARK: - Constants
 
@@ -54,8 +54,11 @@ class CommandPreviewViewModel: ObservableObject {
     /// 当前渲染的命令（包含参数数组和显示字符串）
     @Published private(set) var currentCommand: RenderedCommand?
 
+    /// 当前展示给 UI 的命令文本（根据显示模式格式化）
+    @Published private(set) var previewText = ""
+
     /// 高亮后的命令（缓存，避免频繁重算）
-    @Published private(set) var highlightedCommand: AttributedString = AttributedString("")
+    @Published private(set) var highlightedCommand = AttributedString("")
 
     /// 渲染后的命令（用于 UI 显示）
     var renderedCommand: String {
@@ -75,7 +78,7 @@ class CommandPreviewViewModel: ObservableObject {
     /// 显示模式
     @Published var displayMode: DisplayMode = .auto {
         didSet {
-            recomputeHighlight()
+            rebuildPresentation()
         }
     }
 
@@ -104,30 +107,36 @@ class CommandPreviewViewModel: ObservableObject {
 
     // MARK: - Properties
 
-    // (Removed unused cancellables)
+    private var sourceCancellable: AnyCancellable?
+    private let formatter = CommandPreviewFormatter()
+    private let highlighter = CommandPreviewHighlighter()
 
     // MARK: - Initialization
 
-    init() {}
+    init(detailViewModel: TemplateDetailViewModel? = nil) {
+        if let detailViewModel {
+            bind(to: detailViewModel)
+        }
+    }
+
+    deinit {
+        sourceCancellable?.cancel()
+    }
 
     // MARK: - Public Methods
 
-    /// 更新命令预览
-    func update(template: Template?, values: [TemplateValue]) {
-        guard let template = template else {
-            currentCommand = nil
-            highlightedCommand = AttributedString("")
-            return
-        }
+    /// 绑定详情 ViewModel，后续预览由详情状态自动派生
+    func bind(to detailViewModel: TemplateDetailViewModel) {
+        sourceCancellable?.cancel()
 
-        // 使用 arguments-first 路径渲染命令
-        currentCommand = CommandRenderer.renderToCommand(template: template, values: values)
-        recomputeHighlight()
-    }
+        sourceCancellable = detailViewModel.$previewRevision
+            .sink { [weak self, weak detailViewModel] _ in
+                Task { @MainActor [weak self, weak detailViewModel] in
+                    self?.refresh(from: detailViewModel)
+                }
+            }
 
-    /// 从模板和详情 ViewModel 更新
-    func update(from detailViewModel: TemplateDetailViewModel) {
-        update(template: detailViewModel.template, values: detailViewModel.values)
+        refresh(from: detailViewModel)
     }
 
     /// 切换显示模式
@@ -139,84 +148,70 @@ class CommandPreviewViewModel: ObservableObject {
     func copyToClipboard() {
         #if os(macOS)
         NSPasteboard.general.clearContents()
-        // 复制时根据当前显示状态决定是否多行
-        let textToCopy = shouldWrap ? formatCommand(renderedCommand) : renderedCommand
-        NSPasteboard.general.setString(textToCopy, forType: .string)
+        NSPasteboard.general.setString(previewText, forType: .string)
         #endif
     }
 
-    /// 重新计算高亮命令（仅在命令或显示模式变化时触发）
-    private func recomputeHighlight() {
+    private func refresh(from detailViewModel: TemplateDetailViewModel?) {
+        let template = detailViewModel?.template
+        let values = detailViewModel?.values ?? []
+        refresh(template: template, values: values)
+    }
+
+    private func refresh(template: Template?, values: [TemplateValue]) {
+        guard let template else {
+            clearPreview()
+            return
+        }
+
+        currentCommand = CommandPlanner.preview(template: template, values: values)
+        rebuildPresentation()
+    }
+
+    /// 重新计算展示文本和高亮（仅在命令或显示模式变化时触发）
+    private func rebuildPresentation() {
         guard !renderedCommand.isEmpty else {
+            previewText = ""
             highlightedCommand = AttributedString("")
             return
         }
 
-        let textToDisplay = shouldWrap ? formatCommand(renderedCommand) : renderedCommand
-        highlightedCommand = buildHighlightedCommand(from: textToDisplay)
+        previewText = shouldWrap ? formatter.format(renderedCommand) : renderedCommand
+        highlightedCommand = highlighter.highlight(previewText)
     }
 
-    /// 构建高亮命令的 AttributedString
-    private func buildHighlightedCommand(from text: String) -> AttributedString {
-        var attributed = AttributedString(text)
-
-        // 基础样式
-        attributed.font = .system(size: 13, weight: .regular, design: .monospaced)
-        attributed.foregroundColor = .white
-
-        // 1. 高亮程序名 (ffmpeg, ffprobe) - 紫色加粗
-        applyColor(to: &attributed, regex: RegexPatterns.program, color: Color(red: 0.8, green: 0.4, blue: 0.9), weight: .bold)
-
-        // 2. 高亮输入参数 (-i) - 青色
-        applyColor(to: &attributed, regex: RegexPatterns.input, color: Color(red: 0.4, green: 0.85, blue: 0.85))
-
-        // 3. 高亮滤镜参数 (-vf, -af, -filter_complex) - 绿色
-        applyColor(to: &attributed, regex: RegexPatterns.filter, color: Color(red: 0.4, green: 0.85, blue: 0.5))
-
-        // 4. 高亮编码参数 (-c:v, -c:a, -b:v, -b:a, -crf, -preset, -profile:v 等) - 蓝色
-        applyColor(to: &attributed, regex: RegexPatterns.codec, color: Color(red: 0.4, green: 0.6, blue: 1.0))
-
-        // 5. 高亮格式参数 (-f, -movflags, -map 等) - 黄色
-        applyColor(to: &attributed, regex: RegexPatterns.format, color: Color(red: 0.95, green: 0.8, blue: 0.3))
-
-        // 6. 高亮数值 (纯数字、分辨率如 1920x1080、比特率如 192k) - 浅蓝色
-        applyColor(to: &attributed, regex: RegexPatterns.number, color: Color(red: 0.6, green: 0.8, blue: 1.0))
-
-        // 7. 高亮引号内容 (文件路径等) - 橙色
-        applyColor(to: &attributed, regex: RegexPatterns.quote, color: Color(red: 1.0, green: 0.7, blue: 0.3))
-
-        // 8. 高亮未替换的占位符 - 红底白字
-        applyHighlight(to: &attributed, regex: RegexPatterns.placeholder, fgColor: .white, bgColor: Color(red: 0.9, green: 0.3, blue: 0.3))
-
-        return attributed
+    private func clearPreview() {
+        currentCommand = nil
+        previewText = ""
+        highlightedCommand = AttributedString("")
     }
+}
 
-    // MARK: - Private Helpers
+// MARK: - Formatting
 
-    /// 格式化命令为多行显示（FFmpeg 语义换行）
-    private func formatCommand(_ command: String) -> String {
+private struct CommandPreviewFormatter {
+    private let indentation = "       " // 7 空格，对齐 "ffmpeg "
+
+    /// 格式化命令为多行显示（在选项前换行）
+    func format(_ command: String) -> String {
         var formatted = ""
         var inSingleQuote = false
         var inDoubleQuote = false
         var isEscaped = false
-        var currentLineLength = 0
-        let indentation = "       " // 8 空格缩进，对齐 "ffmpeg "
 
         let chars = Array(command)
 
-        for i in 0..<chars.count {
-            let char = chars[i]
+        for index in chars.indices {
+            let char = chars[index]
 
             if isEscaped {
                 formatted.append(char)
-                currentLineLength += 1
                 isEscaped = false
                 continue
             }
 
             if char == "\\" {
                 formatted.append(char)
-                currentLineLength += 1
                 isEscaped = true
                 continue
             }
@@ -224,37 +219,33 @@ class CommandPreviewViewModel: ObservableObject {
             if char == "'" && !inDoubleQuote {
                 inSingleQuote.toggle()
                 formatted.append(char)
-                currentLineLength += 1
                 continue
             }
 
             if char == "\"" && !inSingleQuote {
                 inDoubleQuote.toggle()
                 formatted.append(char)
-                currentLineLength += 1
                 continue
             }
 
-            // 检查是否是选项前的空格 (" -")，且不在引号内
             if char == " " && !inSingleQuote && !inDoubleQuote {
-                // 检查下一个字符是否是 -
-                if i + 1 < chars.count && chars[i+1] == "-" {
-                    // 插入换行和缩进 (使用 Shell 续行符 \)
+                let nextIndex = chars.index(after: index)
+                if nextIndex < chars.endIndex && chars[nextIndex] == "-" {
                     formatted.append(" \\\n\(indentation)")
-                    currentLineLength = indentation.count
                     continue
                 }
             }
 
             formatted.append(char)
-            currentLineLength += 1
         }
 
         return formatted
     }
+}
 
-    // MARK: - Highlighting Helpers
+// MARK: - Highlighting
 
+private struct CommandPreviewHighlighter {
     private struct RegexPatterns {
         static let program = try? NSRegularExpression(pattern: "(?:^|\\n)\\s*(ffmpeg|ffprobe)", options: [])
         static let input = try? NSRegularExpression(pattern: "\\s(-i)(?:\\s|$)", options: [])
@@ -263,40 +254,66 @@ class CommandPreviewViewModel: ObservableObject {
         static let format = try? NSRegularExpression(pattern: "\\s(-(?:f|movflags|map|metadata|t|ss|to|shortest|y|n|nostdin))(?:\\s|$)", options: [])
         static let number = try? NSRegularExpression(pattern: "(?<=\\s|:)([0-9]+(?:x[0-9]+)?[kKmMgG]?)(?=\\s|$|\\\\)", options: [])
         static let quote = try? NSRegularExpression(pattern: "[\"'][^\"']*[\"']", options: [])
-        static let placeholder = try? NSRegularExpression(pattern: "\\{\\{[^}]+\\}\\}" , options: [])
+        static let placeholder = try? NSRegularExpression(pattern: "\\{\\{[^}]+\\}\\}", options: [])
     }
 
-    private func applyColor(to attributed: inout AttributedString, regex: NSRegularExpression?, color: Color, weight: Font.Weight? = nil) {
-        guard let regex = regex else { return }
-        let string = String(attributed.characters)
-        let nsRange = NSRange(string.startIndex..., in: string)
-        let matches = regex.matches(in: string, options: [], range: nsRange)
+    func highlight(_ text: String) -> AttributedString {
+        var attributed = AttributedString(text)
+        attributed.font = .system(size: 13, weight: .regular, design: .monospaced)
+        attributed.foregroundColor = .white
+
+        applyColor(to: &attributed, text: text, regex: RegexPatterns.program, color: Color(red: 0.8, green: 0.4, blue: 0.9), weight: .bold)
+        applyColor(to: &attributed, text: text, regex: RegexPatterns.input, color: Color(red: 0.4, green: 0.85, blue: 0.85))
+        applyColor(to: &attributed, text: text, regex: RegexPatterns.filter, color: Color(red: 0.4, green: 0.85, blue: 0.5))
+        applyColor(to: &attributed, text: text, regex: RegexPatterns.codec, color: Color(red: 0.4, green: 0.6, blue: 1.0))
+        applyColor(to: &attributed, text: text, regex: RegexPatterns.format, color: Color(red: 0.95, green: 0.8, blue: 0.3))
+        applyColor(to: &attributed, text: text, regex: RegexPatterns.number, color: Color(red: 0.6, green: 0.8, blue: 1.0))
+        applyColor(to: &attributed, text: text, regex: RegexPatterns.quote, color: Color(red: 1.0, green: 0.7, blue: 0.3))
+        applyHighlight(to: &attributed, text: text, regex: RegexPatterns.placeholder, fgColor: .white, bgColor: Color(red: 0.9, green: 0.3, blue: 0.3))
+
+        return attributed
+    }
+
+    private func applyColor(
+        to attributed: inout AttributedString,
+        text: String,
+        regex: NSRegularExpression?,
+        color: Color,
+        weight: Font.Weight? = nil
+    ) {
+        guard let regex else { return }
+        let nsRange = NSRange(text.startIndex..., in: text)
+        let matches = regex.matches(in: text, options: [], range: nsRange)
 
         for match in matches.reversed() {
-            // 如果有捕获组，取 range(at: 1)，否则取 range(at: 0)
-            let targetRangeIdx = match.numberOfRanges > 1 ? 1 : 0
+            let targetRangeIndex = match.numberOfRanges > 1 ? 1 : 0
 
-            if let stringRange = Range(match.range(at: targetRangeIdx), in: string),
-               let attrRange = Range(stringRange, in: attributed) {
-                attributed[attrRange].foregroundColor = color
-                if let weight = weight {
-                    attributed[attrRange].font = .system(size: 13, weight: weight, design: .monospaced)
+            if let stringRange = Range(match.range(at: targetRangeIndex), in: text),
+               let attributedRange = Range(stringRange, in: attributed) {
+                attributed[attributedRange].foregroundColor = color
+                if let weight {
+                    attributed[attributedRange].font = .system(size: 13, weight: weight, design: .monospaced)
                 }
             }
         }
     }
 
-    private func applyHighlight(to attributed: inout AttributedString, regex: NSRegularExpression?, fgColor: Color, bgColor: Color) {
-        guard let regex = regex else { return }
-        let string = String(attributed.characters)
-        let nsRange = NSRange(string.startIndex..., in: string)
-        let matches = regex.matches(in: string, range: nsRange)
+    private func applyHighlight(
+        to attributed: inout AttributedString,
+        text: String,
+        regex: NSRegularExpression?,
+        fgColor: Color,
+        bgColor: Color
+    ) {
+        guard let regex else { return }
+        let nsRange = NSRange(text.startIndex..., in: text)
+        let matches = regex.matches(in: text, range: nsRange)
 
         for match in matches.reversed() {
-            if let stringRange = Range(match.range, in: string),
-               let attrRange = Range(stringRange, in: attributed) {
-                attributed[attrRange].foregroundColor = fgColor
-                attributed[attrRange].backgroundColor = bgColor
+            if let stringRange = Range(match.range, in: text),
+               let attributedRange = Range(stringRange, in: attributed) {
+                attributed[attributedRange].foregroundColor = fgColor
+                attributed[attributedRange].backgroundColor = bgColor
             }
         }
     }

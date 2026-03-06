@@ -44,7 +44,6 @@ struct DetailContentView: View {
 
     @EnvironmentObject var listViewModel: TemplateListViewModel
     @EnvironmentObject var detailViewModel: TemplateDetailViewModel
-    @EnvironmentObject var previewViewModel: CommandPreviewViewModel
     @EnvironmentObject var executionViewModel: ExecutionViewModel
 
     var body: some View {
@@ -90,22 +89,15 @@ struct DetailContentView: View {
             }
         }
         .onAppear {
-            // 初始同步：DetailContentView 仅在 selectedTemplate != nil 时创建，
-            // 但 onChange 不会为初始值触发，需手动同步一次
-            if let template = listViewModel.selectedTemplate {
-                detailViewModel.template = template
-                previewViewModel.update(from: detailViewModel)
-            }
+            // DetailContentView 仅在 selectedTemplate != nil 时创建，
+            // 需要把当前选择同步到详情模型。
+            detailViewModel.template = listViewModel.selectedTemplate
         }
         .onChange(of: listViewModel.selectedTemplate) { newTemplate in
             detailViewModel.template = newTemplate
-            previewViewModel.update(from: detailViewModel)
             // 切换模板或历史记录时，重置控制台
             executionViewModel.clearLogs()
             executionViewModel.reset()
-        }
-        .onChange(of: detailViewModel.values) { _ in
-            previewViewModel.update(from: detailViewModel)
         }
     }
 }
