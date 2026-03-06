@@ -642,6 +642,59 @@ final class CommandPreviewViewModelTests: XCTestCase {
     }
 }
 
+final class FastCutTimecodeSupportTests: XCTestCase {
+
+    func testParseSupportsMinuteSecondShortcut() {
+        XCTAssertEqual(FastCutTimecodeSupport.parseUserTimecode("00.60"), 60)
+        XCTAssertEqual(FastCutTimecodeSupport.parseUserTimecode("01.30"), 90)
+    }
+
+    func testResolveRangeNormalizesStartAndComputesDuration() throws {
+        let resolved = try XCTUnwrap(
+            try? FastCutTimecodeSupport.resolveRange(
+                startInput: "00.00",
+                endInput: "00.60"
+            ).get()
+        )
+
+        XCTAssertEqual(resolved.normalizedStartTime, "00:00:00")
+        XCTAssertEqual(resolved.normalizedEndTime, "00:01:00")
+        XCTAssertEqual(resolved.durationText, "60")
+    }
+
+    func testResolveRangeSupportsClockFormatAndFractionalSeconds() throws {
+        let resolved = try XCTUnwrap(
+            try? FastCutTimecodeSupport.resolveRange(
+                startInput: "00:01:10.250",
+                endInput: "00:01:12.750"
+            ).get()
+        )
+
+        XCTAssertEqual(resolved.normalizedStartTime, "00:01:10.250")
+        XCTAssertEqual(resolved.normalizedEndTime, "00:01:12.750")
+        XCTAssertEqual(resolved.durationText, "2.5")
+    }
+
+    func testResolveRangeRejectsEndTimeBeforeStart() {
+        let result = FastCutTimecodeSupport.resolveRange(
+            startInput: "90",
+            endInput: "01.20"
+        )
+
+        XCTAssertEqual(result, .failure(.endBeforeStart))
+    }
+
+    func testDerivedEndTimeUsesStoredStartAndDuration() {
+        XCTAssertEqual(
+            FastCutTimecodeSupport.derivedEndTime(
+                normalizedStartTime: "00:10:00",
+                durationText: "90.5"
+            ),
+            "00:11:30.500"
+        )
+    }
+}
+
 private actor MockControllerPathResolver: FFmpegPathProviding {
     nonisolated let bundledPath: String?
     private let systemPathValue: String?

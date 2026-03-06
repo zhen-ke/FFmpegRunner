@@ -25,6 +25,14 @@ struct ParameterFormView: View {
                             filterValue: viewModel.binding(for: parameter.key),
                             validationError: viewModel.validationErrors[parameter.key]
                         )
+                    } else if template.id == "fast_cut", parameter.key == "startTime" {
+                        FastCutTimeRangeField(
+                            startTime: viewModel.binding(for: "startTime"),
+                            duration: viewModel.binding(for: "duration"),
+                            startValidationError: viewModel.validationErrors["startTime"]
+                        )
+                    } else if template.id == "fast_cut", parameter.key == "duration" {
+                        EmptyView()
                     } else {
                         ParameterFieldView(
                             parameter: parameter,
@@ -116,6 +124,329 @@ struct ParameterFieldView: View {
                 options: parameter.constraints?.options ?? []
             )
         }
+    }
+}
+
+// MARK: - Fast Cut Time Range Field
+
+struct FastCutTimeRangeField: View {
+    @Binding var startTime: String
+    @Binding var duration: String
+    let startValidationError: String?
+
+    @State private var startText: String = ""
+    @State private var endText: String = ""
+    @State private var localError: String?
+    @State private var lastSyncedStartTime: String = ""
+    @State private var lastSyncedDuration: String = ""
+
+    private var helperText: String {
+        if let startSeconds = FastCutTimecodeSupport.parseUserTimecode(startTime),
+           let durationSeconds = Double(duration),
+           durationSeconds > 0 {
+            let endSeconds = startSeconds + durationSeconds
+            let secondsText = FastCutTimecodeSupport.formatDurationSeconds(durationSeconds)
+            let durationClock = FastCutTimecodeSupport.formatTimecode(endSeconds - startSeconds)
+            return "自动换算时长：\(secondsText) 秒（\(durationClock)），结束点：\(FastCutTimecodeSupport.formatTimecode(endSeconds))"
+        }
+
+        return "支持秒数、HH:MM:SS，以及 01.30 这类分.秒速记；结束时间会自动换算为命令里的 -t。"
+    }
+
+    private var visibleError: String? {
+        localError ?? startValidationError
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                timeInput(
+                    title: "开始时间",
+                    text: $startText,
+                    prompt: "例如 00:00:00 / 90 / 01.30"
+                )
+
+                timeInput(
+                    title: "结束时间",
+                    text: $endText,
+                    prompt: "例如 00:01:00 / 150 / 02.30"
+                )
+            }
+
+            if let error = visibleError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            } else {
+                Text(helperText)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .onAppear {
+            syncFromBindingsIfNeeded()
+        }
+        .onChange(of: startTime) { _ in
+            syncFromBindingsIfNeeded()
+        }
+        .onChange(of: duration) { _ in
+            syncFromBindingsIfNeeded()
+        }
+    }
+
+    @ViewBuilder
+    private func timeInput(title: String, text: Binding<String>, prompt: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.headline)
+
+                Text("*")
+                    .foregroundColor(.red)
+            }
+
+            TextField(prompt, text: text)
+                .textFieldStyle(.roundedBorder)
+                .font(.body.monospaced())
+                .onChange(of: text.wrappedValue) { _ in
+                    updateDerivedDuration()
+                }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func syncFromBindingsIfNeeded() {
+        guard startTime != lastSyncedStartTime || duration != lastSyncedDuration else { return }
+
+        lastSyncedStartTime = startTime
+        lastSyncedDuration = duration
+
+        if startText != startTime {
+            startText = startTime
+        }
+
+        if let endTime = FastCutTimecodeSupport.derivedEndTime(
+            normalizedStartTime: startTime,
+            durationText: duration
+        ) {
+            if endText != endTime {
+                endText = endTime
+            }
+        } else if duration.isEmpty, !endText.isEmpty {
+            endText = ""
+        }
+
+        localError = nil
+    }
+
+    private func updateDerivedDuration() {
+        switch FastCutTimecodeSupport.resolveRange(startInput: startText, endInput: endText) {
+        case .success(let resolved):
+            localError = nil
+            applyBindings(
+                startTime: resolved.normalizedStartTime,
+                duration: resolved.durationText
+            )
+
+        case .failure(let error):
+            localError = error.errorDescription
+
+            let normalizedStart: String
+            if let startSeconds = FastCutTimecodeSupport.parseUserTimecode(startText) {
+                normalizedStart = FastCutTimecodeSupport.formatTimecode(startSeconds)
+            } else {
+                normalizedStart = ""
+            }
+
+            applyBindings(startTime: normalizedStart, duration: "")
+        }
+    }
+
+    private func applyBindings(startTime: String, duration: String) {
+        lastSyncedStartTime = startTime
+        lastSyncedDuration = duration
+
+        if self.startTime != startTime {
+            self.startTime = startTime
+        }
+
+        if self.duration != duration {
+            self.duration = duration
+        }
+    }
+}
+
+// MARK: - Fast Cut Timecode Support
+
+enum FastCutTimecodeSupport {
+    struct ResolvedRange: Equatable {
+        let normalizedStartTime: String
+        let normalizedEndTime: String
+        let durationText: String
+    }
+
+    enum RangeError: LocalizedError, Equatable {
+        case missingStart
+        case invalidStart
+        case missingEnd
+        case invalidEnd
+        case endBeforeStart
+
+        var errorDescription: String? {
+            switch self {
+            case .missingStart:
+                return "请输入开始时间"
+            case .invalidStart:
+                return "开始时间格式无效"
+            case .missingEnd:
+                return "请输入结束时间"
+            case .invalidEnd:
+                return "结束时间格式无效"
+            case .endBeforeStart:
+                return "结束时间必须晚于开始时间"
+            }
+        }
+    }
+
+    static func resolveRange(startInput: String, endInput: String) -> Result<ResolvedRange, RangeError> {
+        let trimmedStart = startInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedStart.isEmpty else {
+            return .failure(.missingStart)
+        }
+
+        guard let startSeconds = parseUserTimecode(trimmedStart) else {
+            return .failure(.invalidStart)
+        }
+
+        let trimmedEnd = endInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEnd.isEmpty else {
+            return .failure(.missingEnd)
+        }
+
+        guard let endSeconds = parseUserTimecode(trimmedEnd) else {
+            return .failure(.invalidEnd)
+        }
+
+        guard endSeconds > startSeconds else {
+            return .failure(.endBeforeStart)
+        }
+
+        return .success(
+            ResolvedRange(
+                normalizedStartTime: formatTimecode(startSeconds),
+                normalizedEndTime: formatTimecode(endSeconds),
+                durationText: formatDurationSeconds(endSeconds - startSeconds)
+            )
+        )
+    }
+
+    static func derivedEndTime(normalizedStartTime: String, durationText: String) -> String? {
+        guard let startSeconds = parseUserTimecode(normalizedStartTime),
+              let durationSeconds = Double(durationText),
+              durationSeconds > 0 else {
+            return nil
+        }
+
+        return formatTimecode(startSeconds + durationSeconds)
+    }
+
+    static func parseUserTimecode(_ rawValue: String) -> TimeInterval? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if let shortcutSeconds = parseMinuteSecondShortcut(trimmed) {
+            return shortcutSeconds
+        }
+
+        if trimmed.contains(":") {
+            return parseColonSeparatedTimecode(trimmed)
+        }
+
+        guard let seconds = Double(trimmed), seconds >= 0 else {
+            return nil
+        }
+
+        return seconds
+    }
+
+    static func formatTimecode(_ seconds: TimeInterval) -> String {
+        let clampedSeconds = max(0, seconds)
+        let roundedMilliseconds = Int((clampedSeconds * 1000).rounded())
+        let totalSeconds = roundedMilliseconds / 1000
+        let milliseconds = roundedMilliseconds % 1000
+
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let wholeSeconds = totalSeconds % 60
+
+        if milliseconds == 0 {
+            return String(format: "%02d:%02d:%02d", hours, minutes, wholeSeconds)
+        }
+
+        return String(
+            format: "%02d:%02d:%02d.%03d",
+            hours,
+            minutes,
+            wholeSeconds,
+            milliseconds
+        )
+    }
+
+    static func formatDurationSeconds(_ seconds: TimeInterval) -> String {
+        let roundedMilliseconds = (seconds * 1000).rounded() / 1000
+        let integralPart = roundedMilliseconds.rounded(.towardZero)
+
+        if abs(roundedMilliseconds - integralPart) < 0.0005 {
+            return String(Int(integralPart))
+        }
+
+        var text = String(format: "%.3f", roundedMilliseconds)
+        while text.last == "0" {
+            text.removeLast()
+        }
+        if text.last == "." {
+            text.removeLast()
+        }
+        return text
+    }
+
+    private static func parseMinuteSecondShortcut(_ value: String) -> TimeInterval? {
+        let parts = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              parts[0].count == 2,
+              parts[1].count == 2,
+              let minutes = Double(parts[0]),
+              let seconds = Double(parts[1]) else {
+            return nil
+        }
+
+        return (minutes * 60) + seconds
+    }
+
+    private static func parseColonSeparatedTimecode(_ value: String) -> TimeInterval? {
+        let parts = value.split(separator: ":", omittingEmptySubsequences: false)
+        guard (2...3).contains(parts.count) else { return nil }
+
+        if parts.count == 2 {
+            guard let minutes = Double(parts[0]),
+                  let seconds = Double(parts[1]),
+                  minutes >= 0,
+                  seconds >= 0 else {
+                return nil
+            }
+            return (minutes * 60) + seconds
+        }
+
+        guard let hours = Double(parts[0]),
+              let minutes = Double(parts[1]),
+              let seconds = Double(parts[2]),
+              hours >= 0,
+              minutes >= 0,
+              seconds >= 0 else {
+            return nil
+        }
+
+        return (hours * 3600) + (minutes * 60) + seconds
     }
 }
 
