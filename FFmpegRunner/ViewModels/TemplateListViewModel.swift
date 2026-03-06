@@ -18,7 +18,11 @@ class TemplateListViewModel: ObservableObject {
     @Published private(set) var templates: [Template] = []
 
     /// 当前选中的模板
-    @Published var selectedTemplate: Template?
+    @Published var selectedTemplate: Template? {
+        didSet {
+            UserSettings.shared.lastTemplateId = selectedTemplate?.id ?? ""
+        }
+    }
 
     /// 搜索关键词
     @Published var searchText = ""
@@ -77,10 +81,8 @@ class TemplateListViewModel: ObservableObject {
         let report = await templateRepository.loadTemplates()
         templates = report.templates
 
-        // 默认选中第一个模板
-        if selectedTemplate == nil, let first = templates.first {
-            selectedTemplate = first
-        }
+        let preferredTemplateId = selectedTemplate?.id ?? UserSettings.shared.lastTemplateId
+        selectedTemplate = templates.first(where: { $0.id == preferredTemplateId }) ?? templates.first
 
         if !report.errors.isEmpty {
             let messages = report.errors.compactMap { $0.errorDescription }

@@ -24,6 +24,23 @@ struct RecentCommandUsage: Sendable {
     let displayCommand: String
     let usedAt: Date
     let wasSuccessful: Bool
+    let templateSnapshot: RecentCommandTemplateSnapshot?
+
+    init(
+        executable: CommandExecutable,
+        arguments: [String],
+        displayCommand: String,
+        usedAt: Date,
+        wasSuccessful: Bool,
+        templateSnapshot: RecentCommandTemplateSnapshot? = nil
+    ) {
+        self.executable = executable
+        self.arguments = arguments
+        self.displayCommand = displayCommand
+        self.usedAt = usedAt
+        self.wasSuccessful = wasSuccessful
+        self.templateSnapshot = templateSnapshot
+    }
 }
 
 // MARK: - Recent Commands Service
@@ -141,7 +158,8 @@ actor RecentCommandsService {
                 lastUsedAt: usage.usedAt,
                 wasSuccessful: usage.wasSuccessful,
                 useCount: existing.useCount + 1,
-                displayName: existing.displayName
+                displayName: existing.displayName,
+                templateSnapshot: usage.templateSnapshot ?? existing.templateSnapshot
             )
             recentCommands.insert(updated, at: 0)
         } else {
@@ -151,7 +169,8 @@ actor RecentCommandsService {
                     arguments: usage.arguments,
                     displayCommand: usage.displayCommand,
                     lastUsedAt: usage.usedAt,
-                    wasSuccessful: usage.wasSuccessful
+                    wasSuccessful: usage.wasSuccessful,
+                    templateSnapshot: usage.templateSnapshot
                 ),
                 at: 0
             )
@@ -234,7 +253,8 @@ actor RecentCommandsService {
                 arguments: entry.arguments,
                 displayCommand: entry.displayCommand,
                 usedAt: entry.lastUsedAt,
-                wasSuccessful: entry.wasSuccessful
+                wasSuccessful: entry.wasSuccessful,
+                templateSnapshot: entry.templateSnapshot
             )
         )
     }

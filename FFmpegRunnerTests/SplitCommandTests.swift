@@ -602,6 +602,90 @@ final class SplitCommandTests: XCTestCase {
         XCTAssertEqual(recentCommands.first?.arguments, ["-version"])
         XCTAssertEqual(recentCommands.first?.useCount, 1)
         XCTAssertEqual(recentCommands.first?.wasSuccessful, true)
+        XCTAssertNil(recentCommands.first?.templateSnapshot)
+    }
+
+    @MainActor
+    func testExecutionControllerPersistsTemplateSnapshotForTemplateBindings() async throws {
+        let truePath = "/usr/bin/true"
+        guard FileManager.default.isExecutableFile(atPath: truePath) else {
+            throw XCTSkip("Missing executable: \(truePath)")
+        }
+
+        let originalSource = UserSettings.shared.ffmpegSource
+        let originalCustomPath = UserSettings.shared.customFFmpegPath
+        defer {
+            UserSettings.shared.ffmpegSource = originalSource
+            UserSettings.shared.customFFmpegPath = originalCustomPath
+        }
+
+        let sandbox = FileManager.default.temporaryDirectory.appendingPathComponent("recent-commands-\(UUID().uuidString)", isDirectory: true)
+        let recentCommandsService = RecentCommandsService(
+            recentCommandsDirectory: sandbox,
+            legacyHistoryDirectory: sandbox.appendingPathComponent("legacy", isDirectory: true)
+        )
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let resolver = MockControllerPathResolver(
+            bundledPath: nil,
+            systemPathValue: nil
+        )
+        let service = FFmpegService.makeForTesting(pathResolver: resolver)
+        service.setSource(.custom, customPath: truePath)
+
+        let deadline = Date().addingTimeInterval(1.0)
+        while Date() < deadline, service.ffmpegPath != truePath {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(service.ffmpegPath, truePath)
+
+        let controller = ExecutionController(
+            ffmpegService: service,
+            recentCommandsService: recentCommandsService
+        )
+        let template = Template(
+            id: "encode",
+            name: "Encode",
+            description: "Encode video",
+            commandTemplate: "ffmpeg -i {{input}} {{output}}",
+            parameters: [
+                TemplateParameter(
+                    key: "input",
+                    label: "Input",
+                    type: .string,
+                    defaultValue: "",
+                    isRequired: true
+                ),
+                TemplateParameter(
+                    key: "output",
+                    label: "Output",
+                    type: .string,
+                    defaultValue: "",
+                    isRequired: true
+                )
+            ],
+            category: nil,
+            icon: nil
+        )
+        let binding = TemplateBinding.bind(
+            template: template,
+            values: [
+                TemplateValue(key: "input", rawValue: "input.mp4"),
+                TemplateValue(key: "output", rawValue: "output.mp4")
+            ]
+        )
+
+        let result = try await controller.execute(binding: binding)
+        XCTAssertEqual(result.exitCode, 0)
+
+        let recentCommands = await recentCommandsService.loadRecentCommands()
+        XCTAssertEqual(recentCommands.count, 1)
+        XCTAssertEqual(recentCommands.first?.templateSnapshot?.templateId, "encode")
+        XCTAssertEqual(recentCommands.first?.templateSnapshot?.templateName, "Encode")
+        XCTAssertEqual(
+            recentCommands.first?.templateSnapshot?.parameterValues,
+            ["input": "input.mp4", "output": "output.mp4"]
+        )
     }
 
     private func makeExecutableScript(body: String) throws -> String {

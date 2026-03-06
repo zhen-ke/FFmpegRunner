@@ -771,6 +771,27 @@ struct FileField: View {
             openPanel.canChooseFiles = true
         }
 
+        let normalizedValue = (value as NSString)
+            .expandingTildeInPath
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalizedValue.isEmpty {
+            let currentURL = URL(fileURLWithPath: normalizedValue)
+            panel.directoryURL = currentURL.deletingLastPathComponent()
+            if let savePanel = panel as? NSSavePanel {
+                savePanel.nameFieldStringValue = currentURL.lastPathComponent
+            }
+        } else {
+            let recentDirectory = isOutput
+                ? UserSettings.shared.lastOutputDirectory
+                : UserSettings.shared.lastInputDirectory
+            let normalizedDirectory = (recentDirectory as NSString)
+                .expandingTildeInPath
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalizedDirectory.isEmpty {
+                panel.directoryURL = URL(fileURLWithPath: normalizedDirectory)
+            }
+        }
+
         if let fileTypes = fileTypes, !fileTypes.isEmpty {
             panel.allowedContentTypes = fileTypes.compactMap { ext in
                 UTType(filenameExtension: ext)

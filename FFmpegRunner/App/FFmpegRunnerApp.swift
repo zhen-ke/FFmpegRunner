@@ -69,7 +69,8 @@ struct FFmpegRunnerApp: App {
                 listViewModel: listViewModel,
                 detailViewModel: detailViewModel,
                 previewViewModel: previewViewModel,
-                executionViewModel: executionViewModel
+                executionViewModel: executionViewModel,
+                headerViewModel: headerViewModel
             )
         }
 
@@ -93,6 +94,7 @@ struct AppCommands: Commands {
     let detailViewModel: TemplateDetailViewModel
     let previewViewModel: CommandPreviewViewModel
     let executionViewModel: ExecutionViewModel
+    let headerViewModel: TemplateHeaderViewModel
 
     // MARK: - Body
 
@@ -134,16 +136,12 @@ struct AppCommands: Commands {
         // 执行菜单
         CommandMenu("执行") {
             Button("运行") {
-                if !executionViewModel.isRunning {
-                    Task {
-                        if let binding = detailViewModel.templateBinding {
-                            await executionViewModel.execute(
-                                binding: binding
-                            )
-                        } else {
-                            await executionViewModel.execute(command: previewViewModel.renderedCommand)
-                        }
-                    }
+                Task {
+                    await headerViewModel.requestExecution(
+                        binding: detailViewModel.templateBinding,
+                        currentCommand: previewViewModel.currentCommand,
+                        executionViewModel: executionViewModel
+                    )
                 }
             }
             .keyboardShortcut(.return, modifiers: .command)

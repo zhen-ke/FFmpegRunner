@@ -34,6 +34,7 @@ struct LogConsoleView: View {
     // MARK: - Environment
 
     @EnvironmentObject var viewModel: ExecutionViewModel
+    @AppStorage("autoScrollLog") private var preferredAutoScroll = true
 
     // MARK: - State
 
@@ -73,6 +74,19 @@ struct LogConsoleView: View {
                 ffmpegVersion: viewModel.ffmpegVersionShort,
                 state: viewModel.state
             )
+        }
+        .onAppear {
+            autoScroll = preferredAutoScroll
+        }
+        .onChange(of: preferredAutoScroll) { newValue in
+            if autoScroll != newValue {
+                autoScroll = newValue
+            }
+        }
+        .onChange(of: autoScroll) { newValue in
+            if preferredAutoScroll != newValue {
+                preferredAutoScroll = newValue
+            }
         }
         .fileExporter(
             isPresented: $showExportSheet,

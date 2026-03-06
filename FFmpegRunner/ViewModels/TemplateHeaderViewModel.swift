@@ -12,10 +12,25 @@ import SwiftUI
 @MainActor
 class TemplateHeaderViewModel: ObservableObject {
 
+    private struct PendingExecutionRequest {
+        let binding: TemplateBinding
+        let currentCommand: RenderedCommand
+        let templateName: String
+    }
+
     // MARK: - Published Properties
 
     /// 显示保存为模板弹窗
     @Published var showSaveAsTemplateSheet = false
+
+    /// 显示执行前确认
+    @Published var showRunConfirmation = false
+
+    /// 执行前确认标题
+    @Published private(set) var runConfirmationTitle = "确认执行"
+
+    /// 执行前确认内容
+    @Published private(set) var runConfirmationMessage = ""
 
     /// 显示覆盖确认对话框
     @Published var showOverwriteConfirm = false
@@ -46,6 +61,7 @@ class TemplateHeaderViewModel: ObservableObject {
     // MARK: - Dependencies
 
     private let templateRepository: TemplateRepository
+    private var pendingExecutionRequest: PendingExecutionRequest?
 
     // MARK: - Initialization
 
@@ -60,29 +76,57 @@ class TemplateHeaderViewModel: ObservableObject {
         CommandPathDetector.detectOutputPath(from: arguments)
     }
 
-    /// 检查输出文件并决定是否执行
-    func checkAndExecuteCommand(
+    /// 统一处理执行请求（按钮 / 菜单 / 快捷键共用）
+    func requestExecution(
         binding: TemplateBinding?,
         currentCommand: RenderedCommand?,
         executionViewModel: ExecutionViewModel
     ) async {
-        guard let binding, let currentCommand = currentCommand else { return }
-
-        // 使用 arguments 检测输出文件路径
-        if let outputPath = detectOutputPath(from: currentCommand.arguments) {
-            if FileManager.default.fileExists(atPath: outputPath) {
-                existingOutputFile = (outputPath as NSString).lastPathComponent
-                showOverwriteConfirm = true
-                return
-            }
+        guard let binding,
+              let currentCommand = currentCommand,
+              !executionViewModel.isRunning else {
+            return
         }
 
-        // 没有冲突，直接执行
-        await executeCommand(
-            forceOverwrite: false,
+        let request = PendingExecutionRequest(
             binding: binding,
+            currentCommand: currentCommand,
+            templateName: binding.template.name
+        )
+        pendingExecutionRequest = request
+
+        if UserSettings.shared.confirmBeforeRun {
+            prepareRunConfirmation(for: request)
+            showRunConfirmation = true
+            return
+        }
+
+        await continuePendingExecution(executionViewModel: executionViewModel)
+    }
+
+    func confirmPendingExecution(executionViewModel: ExecutionViewModel) async {
+        showRunConfirmation = false
+        await continuePendingExecution(executionViewModel: executionViewModel)
+    }
+
+    func confirmPendingOverwrite(executionViewModel: ExecutionViewModel) async {
+        guard let request = pendingExecutionRequest else { return }
+
+        showOverwriteConfirm = false
+        pendingExecutionRequest = nil
+        await executeCommand(
+            forceOverwrite: true,
+            binding: request.binding,
             executionViewModel: executionViewModel
         )
+    }
+
+    func cancelPendingExecution() {
+        pendingExecutionRequest = nil
+        showRunConfirmation = false
+        showOverwriteConfirm = false
+        existingOutputFile = ""
+        runConfirmationMessage = ""
     }
 
     /// 执行命令
@@ -130,7 +174,7 @@ class TemplateHeaderViewModel: ObservableObject {
 
         // 保存模板到用户目录 - 带错误处理
         do {
-            try await saveTemplateToFile(template)
+            try templateRepository.saveUserTemplate(template)
 
             // 成功提示
             successMessage = "模板「\(templateName)」保存成功"
@@ -153,28 +197,56 @@ class TemplateHeaderViewModel: ObservableObject {
         }
     }
 
-    /// 保存模板到文件 - 带错误处理
-    private func saveTemplateToFile(_ template: Template) async throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .prettyPrinted
-
-        let data = try encoder.encode(template)
-
-        let userTemplatesDir = templateRepository.userTemplatesDirectory
-
-        try FileManager.default.createDirectory(
-            at: userTemplatesDir,
-            withIntermediateDirectories: true
-        )
-
-        let fileURL = userTemplatesDir.appendingPathComponent("\(template.id).json")
-        try data.write(to: fileURL)
-    }
-
     /// 重置表单状态
     func resetForm() {
         templateName = ""
         templateCategory = ""
         showSaveAsTemplateSheet = false
+    }
+
+    private func continuePendingExecution(executionViewModel: ExecutionViewModel) async {
+        guard let request = pendingExecutionRequest else { return }
+
+        let outputExists = request.currentCommand.executable == .ffmpeg && outputConflictExists(for: request)
+        if outputExists && UserSettings.shared.confirmOverwrite {
+            showOverwriteConfirm = true
+            return
+        }
+
+        pendingExecutionRequest = nil
+        await executeCommand(
+            forceOverwrite: outputExists,
+            binding: request.binding,
+            executionViewModel: executionViewModel
+        )
+    }
+
+    private func outputConflictExists(for request: PendingExecutionRequest) -> Bool {
+        guard let outputPath = detectOutputPath(from: request.currentCommand.arguments),
+              FileManager.default.fileExists(atPath: outputPath) else {
+            existingOutputFile = ""
+            return false
+        }
+
+        existingOutputFile = (outputPath as NSString).lastPathComponent
+        return true
+    }
+
+    private func prepareRunConfirmation(for request: PendingExecutionRequest) {
+        runConfirmationTitle = "执行「\(request.templateName)」"
+
+        let commandPreview = request.currentCommand.displayString.count > 160
+            ? String(request.currentCommand.displayString.prefix(160)) + "..."
+            : request.currentCommand.displayString
+
+        if let outputPath = detectOutputPath(from: request.currentCommand.arguments), !outputPath.isEmpty {
+            runConfirmationMessage = """
+            输出: \(outputPath)
+
+            \(commandPreview)
+            """
+        } else {
+            runConfirmationMessage = commandPreview
+        }
     }
 }

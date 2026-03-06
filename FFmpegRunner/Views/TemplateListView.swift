@@ -57,14 +57,18 @@ struct TemplateListView: View {
         }
         .navigationTitle("FFmpeg 模板")
         .alert("错误", isPresented: Binding(
-            get: { viewModel.errorMessage != nil },
-            set: { if !$0 { viewModel.errorMessage = nil } }
+            get: { viewModel.errorMessage != nil || recentCommandsViewModel.errorMessage != nil },
+            set: { if !$0 {
+                viewModel.errorMessage = nil
+                recentCommandsViewModel.errorMessage = nil
+            } }
         )) {
             Button("确定", role: .cancel) {
                 viewModel.errorMessage = nil
+                recentCommandsViewModel.errorMessage = nil
             }
         } message: {
-            Text(viewModel.errorMessage ?? "")
+            Text(viewModel.errorMessage ?? recentCommandsViewModel.errorMessage ?? "")
         }
         .sheet(isPresented: $showHistorySheet) {
             HistorySheetView()
@@ -218,18 +222,47 @@ struct RecentHistorySection: View {
     }
 
     private func fill(_ entry: CommandHistory) {
-        executionViewModel.clearLogs()
-        executionViewModel.reset()
+        restoreRecentCommand(
+            entry,
+            listViewModel: viewModel,
+            detailViewModel: detailViewModel,
+            executionViewModel: executionViewModel
+        )
+    }
+}
 
-        if let raw = viewModel.templates.first(where: { $0.id == Template.rawCommandId }) {
-            viewModel.selectedTemplate = raw
-            // 使用 Task 让 SwiftUI 完成视图更新后再设置命令值
-            Task { @MainActor in
-                // 让出一个 run loop 周期，确保模板切换完成
-                try? await Task.sleep(for: .milliseconds(50))
-                detailViewModel.updateValue(key: "command", value: entry.command)
-            }
-        }
+@MainActor
+private func restoreRecentCommand(
+    _ entry: CommandHistory,
+    listViewModel: TemplateListViewModel,
+    detailViewModel: TemplateDetailViewModel,
+    executionViewModel: ExecutionViewModel,
+    afterRestore: (() -> Void)? = nil
+) {
+    executionViewModel.clearLogs()
+    executionViewModel.reset()
+
+    let template: Template
+    let rawValuesByKey: [String: String]
+
+    if let templateId = entry.restorableTemplateId,
+       let restorableValues = entry.restorableParameterValues,
+       let matchedTemplate = listViewModel.templates.first(where: { $0.id == templateId }) {
+        template = matchedTemplate
+        rawValuesByKey = restorableValues
+    } else if let rawTemplate = listViewModel.templates.first(where: { $0.id == Template.rawCommandId }) {
+        template = rawTemplate
+        rawValuesByKey = ["command": entry.command]
+    } else {
+        return
+    }
+
+    listViewModel.selectedTemplate = template
+
+    Task { @MainActor in
+        await Task.yield()
+        detailViewModel.restore(template: template, rawValuesByKey: rawValuesByKey)
+        afterRestore?()
     }
 }
 
@@ -239,6 +272,8 @@ struct HistorySheetView: View {
 
     @EnvironmentObject var recentCommandsViewModel: RecentCommandsViewModel
     @EnvironmentObject var viewModel: TemplateListViewModel
+    @EnvironmentObject var detailViewModel: TemplateDetailViewModel
+    @EnvironmentObject var executionViewModel: ExecutionViewModel
     @Environment(\.dismiss) private var dismiss
 
     @State private var searchText = ""
@@ -360,6 +395,12 @@ struct HistorySheetView: View {
                             }
 
                             Button {
+                                restore(entry)
+                            } label: {
+                                Label("继续编辑", systemImage: "arrow.counterclockwise")
+                            }
+
+                            Button {
                                 selectedEntry = entry
                                 renameText = entry.displayName ?? ""
                                 showRenameSheet = true
@@ -393,6 +434,7 @@ struct HistorySheetView: View {
         if let entry = selectedEntry {
             HistoryDetailView(
                 entry: entry,
+                onRestore: { restore(entry) },
                 onCopy: { copyCommand(entry.command) },
                 onRename: {
                     renameText = entry.displayName ?? ""
@@ -417,9 +459,26 @@ struct HistorySheetView: View {
     }
 
     private func saveAsTemplate(_ entry: CommandHistory) {
-        _ = recentCommandsViewModel.saveAsTemplate(entry, name: entry.title, category: nil)
         Task {
-            await viewModel.loadTemplates()
+            let didSave = await recentCommandsViewModel.saveAsTemplate(
+                entry,
+                name: entry.title,
+                category: nil
+            )
+            if didSave {
+                await viewModel.loadTemplates()
+            }
+        }
+    }
+
+    private func restore(_ entry: CommandHistory) {
+        restoreRecentCommand(
+            entry,
+            listViewModel: viewModel,
+            detailViewModel: detailViewModel,
+            executionViewModel: executionViewModel
+        ) {
+            dismiss()
         }
     }
 
@@ -605,6 +664,7 @@ struct HistoryListRow: View {
 
 struct HistoryDetailView: View {
     let entry: CommandHistory
+    let onRestore: () -> Void
     let onCopy: () -> Void
     let onRename: () -> Void
     let onSaveTemplate: () -> Void
@@ -647,6 +707,9 @@ struct HistoryDetailView: View {
                 }
 
                 HStack(spacing: 8) {
+                    Button("继续编辑", action: onRestore)
+                        .buttonStyle(.borderedProminent)
+
                     Button("复制命令", action: onCopy)
                         .buttonStyle(.bordered)
 

@@ -347,7 +347,8 @@ final class ExecutionController: ObservableObject {
                     arguments: plan.arguments,
                     displayCommand: plan.displayCommand,
                     usedAt: Date(),
-                    wasSuccessful: wasSuccessful
+                    wasSuccessful: wasSuccessful,
+                    templateSnapshot: makeTemplateSnapshot(from: plan)
                 )
             )
             onRecentCommandsChanged?()
@@ -367,6 +368,23 @@ final class ExecutionController: ObservableObject {
                 outputDirectory: outputPath
             )
         }
+    }
+
+    private func makeTemplateSnapshot(from plan: ExecutionPlan) -> RecentCommandTemplateSnapshot? {
+        guard let templateId = plan.templateId,
+              let bindings = plan.validatedBindings else {
+            return nil
+        }
+
+        let parameterValues = Dictionary(
+            uniqueKeysWithValues: bindings.map { ($0.key, $0.rawValue) }
+        )
+
+        return RecentCommandTemplateSnapshot(
+            templateId: templateId,
+            templateName: plan.templateName,
+            parameterValues: parameterValues
+        )
     }
 
     private func refreshFFmpegState() {

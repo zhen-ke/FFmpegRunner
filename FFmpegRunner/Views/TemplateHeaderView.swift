@@ -66,7 +66,7 @@ struct TemplateHeaderView: View {
                 } else {
                     Button(action: {
                         Task {
-                            await headerViewModel.checkAndExecuteCommand(
+                            await headerViewModel.requestExecution(
                                 binding: detailViewModel.templateBinding,
                                 currentCommand: previewViewModel.currentCommand,
                                 executionViewModel: executionViewModel
@@ -97,13 +97,31 @@ struct TemplateHeaderView: View {
                 }
             )
         }
+        .confirmationDialog(
+            headerViewModel.runConfirmationTitle,
+            isPresented: $headerViewModel.showRunConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("执行") {
+                Task {
+                    await headerViewModel.confirmPendingExecution(
+                        executionViewModel: executionViewModel
+                    )
+                }
+            }
+            Button("取消", role: .cancel) {
+                headerViewModel.cancelPendingExecution()
+            }
+        } message: {
+            Text(headerViewModel.runConfirmationMessage)
+        }
         .alert("文件已存在", isPresented: $headerViewModel.showOverwriteConfirm) {
-            Button("取消", role: .cancel) {}
+            Button("取消", role: .cancel) {
+                headerViewModel.cancelPendingExecution()
+            }
             Button("覆盖", role: .destructive) {
                 Task {
-                    await headerViewModel.executeCommand(
-                        forceOverwrite: true,
-                        binding: detailViewModel.templateBinding,
+                    await headerViewModel.confirmPendingOverwrite(
                         executionViewModel: executionViewModel
                     )
                 }

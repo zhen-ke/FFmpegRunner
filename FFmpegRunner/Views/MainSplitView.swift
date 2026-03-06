@@ -45,6 +45,7 @@ struct DetailContentView: View {
     @EnvironmentObject var listViewModel: TemplateListViewModel
     @EnvironmentObject var detailViewModel: TemplateDetailViewModel
     @EnvironmentObject var executionViewModel: ExecutionViewModel
+    @EnvironmentObject var headerViewModel: TemplateHeaderViewModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -94,6 +95,7 @@ struct DetailContentView: View {
             detailViewModel.selectTemplate(listViewModel.selectedTemplate)
         }
         .onChange(of: listViewModel.selectedTemplate) { newTemplate in
+            headerViewModel.cancelPendingExecution()
             detailViewModel.selectTemplate(newTemplate)
             // 切换模板或历史记录时，重置控制台
             executionViewModel.clearLogs()

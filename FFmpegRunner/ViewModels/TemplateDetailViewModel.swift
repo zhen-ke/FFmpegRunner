@@ -122,13 +122,17 @@ final class TemplateDetailViewModel: ObservableObject {
             cache: cache
         )
 
-        outputPathEngine.applyAutoFillIfNeeded(
+        let autoUpdatedKeys = outputPathEngine.applyAutoFillIfNeeded(
             changedKey: key,
             values: &nextValues,
             cache: cache
         )
 
         state = buildState(template: template, values: nextValues)
+        persistRecentDirectoryIfNeeded(for: key, values: nextValues)
+        for autoUpdatedKey in autoUpdatedKeys {
+            persistRecentDirectoryIfNeeded(for: autoUpdatedKey, values: nextValues)
+        }
     }
 
     /// 获取参数值
@@ -145,6 +149,30 @@ final class TemplateDetailViewModel: ObservableObject {
     /// 重置为默认值
     func resetToDefaults() {
         selectTemplate(state.template)
+    }
+
+    /// 使用快照恢复当前模板值
+    func applySnapshot(_ rawValuesByKey: [String: String]) {
+        guard let template = state.template else { return }
+        restore(template: template, rawValuesByKey: rawValuesByKey)
+    }
+
+    /// 使用指定模板和快照恢复详情状态
+    func restore(template: Template, rawValuesByKey: [String: String]) {
+        let restoredValues = template.parameters.map { parameter in
+            TemplateValue(
+                key: parameter.key,
+                rawValue: rawValuesByKey[parameter.key] ?? parameter.defaultValue
+            )
+        }
+
+        cache.rebuild(template: template, values: restoredValues)
+        outputPathEngine.reset()
+        state = buildState(template: template, values: restoredValues)
+
+        for parameter in template.parameters where parameter.type == .file {
+            persistRecentDirectoryIfNeeded(for: parameter.key, values: state.values)
+        }
     }
 
     /// 获取绑定
@@ -186,6 +214,31 @@ private extension TemplateDetailViewModel {
         state = .empty
         cache = TemplateDetailCache()
         outputPathEngine.reset()
+    }
+
+    func persistRecentDirectoryIfNeeded(for key: String, values: [TemplateValue]) {
+        guard let parameter = cache.parameter(for: key),
+              parameter.type == .file,
+              let index = cache.index(for: key),
+              index < values.count else {
+            return
+        }
+
+        let normalizedPath = (values[index].rawValue as NSString)
+            .expandingTildeInPath
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedPath.isEmpty else { return }
+
+        let directoryPath = URL(fileURLWithPath: normalizedPath)
+            .deletingLastPathComponent()
+            .path
+        guard !directoryPath.isEmpty else { return }
+
+        if parameter.constraints?.isOutputFile == true {
+            UserSettings.shared.lastOutputDirectory = directoryPath
+        } else {
+            UserSettings.shared.lastInputDirectory = directoryPath
+        }
     }
 }
 

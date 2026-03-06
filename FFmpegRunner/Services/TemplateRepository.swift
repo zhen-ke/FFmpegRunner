@@ -148,6 +148,21 @@ final class TemplateRepository {
         return FileManager.default.fileExists(atPath: fileURL.path)
     }
 
+    /// 保存用户模板到应用支持目录
+    func saveUserTemplate(_ template: Template) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+
+        let data = try encoder.encode(template)
+        try FileManager.default.createDirectory(
+            at: userTemplatesDirectory,
+            withIntermediateDirectories: true
+        )
+
+        let fileURL = userTemplatesDirectory.appendingPathComponent("\(template.id).json")
+        try data.write(to: fileURL)
+    }
+
     // MARK: - Private
 
     /// 创建内置的 RawCommandTemplate

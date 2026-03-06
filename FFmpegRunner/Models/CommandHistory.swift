@@ -7,6 +7,12 @@
 
 import Foundation
 
+struct RecentCommandTemplateSnapshot: Codable, Hashable, Sendable {
+    let templateId: String
+    let templateName: String?
+    let parameterValues: [String: String]
+}
+
 /// 最近使用的命令。
 ///
 /// 语义上这是一个“最近使用”条目，而不是不可变的执行历史：
@@ -38,6 +44,9 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
     /// 用户自定义名称（可选）
     var displayName: String?
 
+    /// 模板恢复快照（可选）
+    let templateSnapshot: RecentCommandTemplateSnapshot?
+
     /// 兼容旧调用点：返回用于显示的完整命令字符串。
     var command: String {
         displayCommand
@@ -52,6 +61,9 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
     var title: String {
         if let name = displayName, !name.isEmpty {
             return name
+        }
+        if let templateName = templateSnapshot?.templateName, !templateName.isEmpty {
+            return templateName
         }
         let trimmed = displayCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.count > 50 {
@@ -78,6 +90,18 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
         Signature(executable: executable, arguments: arguments)
     }
 
+    var restorableTemplateId: String? {
+        templateSnapshot?.templateId
+    }
+
+    var restorableParameterValues: [String: String]? {
+        templateSnapshot?.parameterValues
+    }
+
+    var detectedOutputPath: String? {
+        CommandPathDetector.detectOutputPath(from: arguments)
+    }
+
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
@@ -95,7 +119,8 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
         lastUsedAt: Date = Date(),
         wasSuccessful: Bool,
         useCount: Int = 1,
-        displayName: String? = nil
+        displayName: String? = nil,
+        templateSnapshot: RecentCommandTemplateSnapshot? = nil
     ) {
         self.id = id
         self.executable = executable
@@ -105,6 +130,7 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
         self.wasSuccessful = wasSuccessful
         self.useCount = useCount
         self.displayName = displayName
+        self.templateSnapshot = templateSnapshot
     }
 
     init(
@@ -113,7 +139,8 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
         executedAt: Date = Date(),
         wasSuccessful: Bool,
         displayName: String? = nil,
-        useCount: Int = 1
+        useCount: Int = 1,
+        templateSnapshot: RecentCommandTemplateSnapshot? = nil
     ) {
         let parsed = Self.parse(command: command)
         self.init(
@@ -124,7 +151,8 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
             lastUsedAt: executedAt,
             wasSuccessful: wasSuccessful,
             useCount: useCount,
-            displayName: displayName
+            displayName: displayName,
+            templateSnapshot: templateSnapshot
         )
     }
 

@@ -29,11 +29,16 @@ class RecentCommandsViewModel: ObservableObject {
     // MARK: - Dependencies
 
     private let recentCommandsService: RecentCommandsService
+    private let templateRepository: TemplateRepository
 
     // MARK: - Initialization
 
-    init(recentCommandsService: RecentCommandsService = .shared) {
+    init(
+        recentCommandsService: RecentCommandsService = .shared,
+        templateRepository: TemplateRepository = .shared
+    ) {
         self.recentCommandsService = recentCommandsService
+        self.templateRepository = templateRepository
         loadRecentCommands()
     }
 
@@ -63,7 +68,8 @@ class RecentCommandsViewModel: ObservableObject {
                         arguments: entry.arguments,
                         displayCommand: entry.displayCommand,
                         usedAt: entry.lastUsedAt,
-                        wasSuccessful: entry.wasSuccessful
+                        wasSuccessful: entry.wasSuccessful,
+                        templateSnapshot: entry.templateSnapshot
                     )
                 )
                 loadRecentCommands()
@@ -115,8 +121,17 @@ class RecentCommandsViewModel: ObservableObject {
     }
 
     /// 将最近使用保存为模板
-    func saveAsTemplate(_ entry: RecentCommand, name: String, category: String?) -> Template {
-        recentCommandsService.convertToTemplate(entry, name: name, category: category)
+    func saveAsTemplate(_ entry: RecentCommand, name: String, category: String?) async -> Bool {
+        let template = recentCommandsService.convertToTemplate(entry, name: name, category: category)
+
+        do {
+            try templateRepository.saveUserTemplate(template)
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = "保存模板失败: \(error.localizedDescription)"
+            return false
+        }
     }
 
     /// 最近使用是否为空
