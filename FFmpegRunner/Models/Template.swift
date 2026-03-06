@@ -63,3 +63,83 @@ struct Template: Codable, Identifiable, Hashable {
         lhs.id == rhs.id
     }
 }
+
+extension Template {
+    static let rawCommandParameterKey = "command"
+    static let rawCommandTemplateValue = "{{command}}"
+
+    var isBuiltInRawCommand: Bool {
+        id == Self.rawCommandId
+    }
+
+    var isRawCommandTemplate: Bool {
+        guard commandTemplate == Self.rawCommandTemplateValue,
+              parameters.count == 1 else {
+            return false
+        }
+
+        let parameter = parameters[0]
+        return parameter.key == Self.rawCommandParameterKey &&
+            parameter.role == .raw &&
+            parameter.escapeStrategy == .raw
+    }
+
+    static func makeRawCommandTemplate(
+        id: String = rawCommandId,
+        name: String,
+        description: String,
+        defaultCommand: String,
+        placeholder: String,
+        category: String?,
+        icon: String?
+    ) -> Template {
+        Template(
+            id: id,
+            name: name,
+            description: description,
+            commandTemplate: rawCommandTemplateValue,
+            parameters: [
+                TemplateParameter(
+                    key: rawCommandParameterKey,
+                    label: "FFmpeg 命令",
+                    type: .string,
+                    defaultValue: defaultCommand,
+                    placeholder: placeholder,
+                    isRequired: true,
+                    constraints: nil,
+                    role: .raw,
+                    escapeStrategy: .raw,
+                    uiHint: ParameterUIHint(multiline: true, monospace: true)
+                )
+            ],
+            category: category,
+            icon: icon
+        )
+    }
+
+    func makeUserCopy(
+        name: String,
+        description: String,
+        category: String?,
+        defaultValuesByKey: [String: String] = [:],
+        icon: String? = nil
+    ) -> Template {
+        let copiedParameters = parameters.map { parameter in
+            var parameter = parameter
+            if let defaultValue = defaultValuesByKey[parameter.key] {
+                parameter.defaultValue = defaultValue
+            }
+            return parameter
+        }
+
+        return Template(
+            id: "user-\(UUID().uuidString)",
+            name: name,
+            description: description,
+            commandTemplate: commandTemplate,
+            parameters: copiedParameters,
+            category: category ?? self.category,
+            icon: icon ?? self.icon
+        )
+    }
+}

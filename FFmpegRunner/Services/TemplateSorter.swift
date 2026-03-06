@@ -20,8 +20,8 @@ enum TemplateSorter {
     static func sort<C: Collection>(_ templates: C) -> [Template] where C.Element == Template {
         Array(templates).sorted { t1, t2 in
             // RawCommand 始终在第一位
-            if t1.id == Template.rawCommandId { return true }
-            if t2.id == Template.rawCommandId { return false }
+            if t1.isBuiltInRawCommand { return true }
+            if t2.isBuiltInRawCommand { return false }
 
             // 按分类排序
             let cat1 = t1.category ?? "其他"

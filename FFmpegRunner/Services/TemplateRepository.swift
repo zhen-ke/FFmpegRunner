@@ -140,7 +140,7 @@ final class TemplateRepository {
 
     /// 判断模板是否可删除
     func canDeleteTemplate(_ template: Template) -> Bool {
-        if template.id == Template.rawCommandId {
+        if template.isBuiltInRawCommand {
             return false
         }
 
@@ -167,25 +167,12 @@ final class TemplateRepository {
 
     /// 创建内置的 RawCommandTemplate
     private func createRawCommandTemplate() -> Template {
-        Template(
+        Template.makeRawCommandTemplate(
             id: Template.rawCommandId,
             name: "自定义命令",
             description: "直接输入并执行完整 FFmpeg 命令",
-            commandTemplate: "{{command}}",
-            parameters: [
-                TemplateParameter(
-                    key: "command",
-                    label: "FFmpeg 命令",
-                    type: .string,
-                    defaultValue: "ffmpeg -i input.mp4 -c:v libx264 output.mp4",
-                    placeholder: "在此输入完整命令...",
-                    isRequired: true,
-                    constraints: nil,
-                    role: .raw,
-                    escapeStrategy: .raw,
-                    uiHint: ParameterUIHint(multiline: true, monospace: true)
-                )
-            ],
+            defaultCommand: "ffmpeg -i input.mp4 -c:v libx264 output.mp4",
+            placeholder: "在此输入完整命令...",
             category: "高级",
             icon: "terminal.fill"
         )

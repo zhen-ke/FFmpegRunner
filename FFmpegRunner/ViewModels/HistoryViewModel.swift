@@ -122,7 +122,7 @@ class RecentCommandsViewModel: ObservableObject {
 
     /// 将最近使用保存为模板
     func saveAsTemplate(_ entry: RecentCommand, name: String, category: String?) async -> Bool {
-        let template = recentCommandsService.convertToTemplate(entry, name: name, category: category)
+        let template = await makeTemplateForSaving(entry, name: name, category: category)
 
         do {
             try templateRepository.saveUserTemplate(template)
@@ -147,6 +147,24 @@ class RecentCommandsViewModel: ObservableObject {
     /// 最近一次失败的命令数
     var failureCount: Int {
         recentCommands.filter { !$0.wasSuccessful }.count
+    }
+
+    private func makeTemplateForSaving(_ entry: RecentCommand, name: String, category: String?) async -> Template {
+        let description = "从最近使用创建于 \(entry.formattedDate)"
+
+        if let templateId = entry.restorableTemplateId {
+            let templates = await templateRepository.loadAllTemplates()
+            if let sourceTemplate = templates.first(where: { $0.id == templateId && !$0.isBuiltInRawCommand }) {
+                return sourceTemplate.makeUserCopy(
+                    name: name,
+                    description: description,
+                    category: category,
+                    defaultValuesByKey: entry.restorableParameterValues ?? [:]
+                )
+            }
+        }
+
+        return recentCommandsService.convertToTemplate(entry, name: name, category: category)
     }
 
     // MARK: - Backward Compatibility

@@ -814,6 +814,138 @@ final class CommandPreviewViewModelTests: XCTestCase {
     }
 }
 
+@MainActor
+final class RecentCommandsViewModelTests: XCTestCase {
+
+    func testSaveAsTemplatePreservesStructuredTemplateWhenOriginalTemplateExists() async throws {
+        let sandbox = FileManager.default.temporaryDirectory.appendingPathComponent("recent-save-template-\(UUID().uuidString)", isDirectory: true)
+        let userTemplateDirectory = sandbox.appendingPathComponent("templates", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let sourceTemplate = Template(
+            id: "encode",
+            name: "Encode",
+            description: "Encode video",
+            commandTemplate: "ffmpeg -i {{input}} -c:v {{codec}} {{output}}",
+            parameters: [
+                TemplateParameter(
+                    key: "input",
+                    label: "Input",
+                    type: .string,
+                    defaultValue: "",
+                    isRequired: true
+                ),
+                TemplateParameter(
+                    key: "codec",
+                    label: "Codec",
+                    type: .select,
+                    defaultValue: "libx264",
+                    isRequired: true,
+                    constraints: TemplateParameter.Constraints(options: ["libx264", "libx265"])
+                ),
+                TemplateParameter(
+                    key: "output",
+                    label: "Output",
+                    type: .string,
+                    defaultValue: "",
+                    isRequired: true
+                )
+            ],
+            category: "视频处理",
+            icon: "film"
+        )
+
+        let repository = TemplateRepository(
+            sources: [
+                StaticTemplateSource(identifier: "test", templates: [sourceTemplate]),
+                UserTemplateSource(directory: userTemplateDirectory)
+            ],
+            userDirectory: userTemplateDirectory
+        )
+        let service = RecentCommandsService(
+            recentCommandsDirectory: sandbox.appendingPathComponent("recent", isDirectory: true),
+            legacyHistoryDirectory: sandbox.appendingPathComponent("legacy", isDirectory: true)
+        )
+        let viewModel = RecentCommandsViewModel(
+            recentCommandsService: service,
+            templateRepository: repository
+        )
+
+        let entry = RecentCommand(
+            executable: .ffmpeg,
+            arguments: ["-i", "clip.mov", "-c:v", "libx265", "clip-hevc.mp4"],
+            displayCommand: "ffmpeg -i clip.mov -c:v libx265 clip-hevc.mp4",
+            wasSuccessful: true,
+            templateSnapshot: RecentCommandTemplateSnapshot(
+                templateId: sourceTemplate.id,
+                templateName: sourceTemplate.name,
+                parameterValues: [
+                    "input": "clip.mov",
+                    "codec": "libx265",
+                    "output": "clip-hevc.mp4"
+                ]
+            )
+        )
+
+        let didSave = await viewModel.saveAsTemplate(entry, name: "保存的 HEVC", category: "我的模板")
+        XCTAssertTrue(didSave)
+
+        let savedTemplates = await repository.loadAllTemplates()
+        let savedTemplate = try XCTUnwrap(savedTemplates.first(where: { $0.name == "保存的 HEVC" }))
+        let rendered = CommandRenderer.renderToCommand(
+            template: savedTemplate,
+            values: TemplateValue.from(template: savedTemplate)
+        )
+        XCTAssertFalse(savedTemplate.isRawCommandTemplate)
+        XCTAssertEqual(savedTemplate.category, "我的模板")
+        XCTAssertEqual(savedTemplate.icon, "film")
+        XCTAssertEqual(savedTemplate.parameters.first(where: { $0.key == "input" })?.defaultValue, "clip.mov")
+        XCTAssertEqual(savedTemplate.parameters.first(where: { $0.key == "codec" })?.defaultValue, "libx265")
+        XCTAssertEqual(savedTemplate.parameters.first(where: { $0.key == "output" })?.defaultValue, "clip-hevc.mp4")
+        XCTAssertEqual(rendered.displayString, entry.displayCommand)
+    }
+
+    func testSaveAsTemplateFallsBackToRawCommandWhenOriginalTemplateCannotBeResolved() async throws {
+        let sandbox = FileManager.default.temporaryDirectory.appendingPathComponent("recent-save-template-raw-\(UUID().uuidString)", isDirectory: true)
+        let userTemplateDirectory = sandbox.appendingPathComponent("templates", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let repository = TemplateRepository(
+            sources: [UserTemplateSource(directory: userTemplateDirectory)],
+            userDirectory: userTemplateDirectory
+        )
+        let service = RecentCommandsService(
+            recentCommandsDirectory: sandbox.appendingPathComponent("recent", isDirectory: true),
+            legacyHistoryDirectory: sandbox.appendingPathComponent("legacy", isDirectory: true)
+        )
+        let viewModel = RecentCommandsViewModel(
+            recentCommandsService: service,
+            templateRepository: repository
+        )
+
+        let entry = RecentCommand(
+            displayCommand: "ffmpeg -i input.mp4 -c:v copy output.mp4",
+            wasSuccessful: true,
+            templateSnapshot: RecentCommandTemplateSnapshot(
+                templateId: "missing-template",
+                templateName: "Missing",
+                parameterValues: ["input": "input.mp4"]
+            )
+        )
+
+        let didSave = await viewModel.saveAsTemplate(entry, name: "原始命令备份", category: nil)
+        XCTAssertTrue(didSave)
+
+        let savedTemplates = await repository.loadAllTemplates()
+        let savedTemplate = try XCTUnwrap(savedTemplates.first(where: { $0.name == "原始命令备份" }))
+        XCTAssertTrue(savedTemplate.isRawCommandTemplate)
+        XCTAssertEqual(
+            savedTemplate.parameters.first(where: { $0.key == Template.rawCommandParameterKey })?.defaultValue,
+            entry.command
+        )
+    }
+}
+
 final class FastCutTimecodeSupportTests: XCTestCase {
 
     func testParseSupportsMinuteSecondShortcut() {
@@ -896,4 +1028,18 @@ private actor MockControllerPathResolver: FFmpegPathProviding {
     }
 
     func invalidateCache() async {}
+}
+
+private actor StaticTemplateSource: TemplateSource {
+    nonisolated let identifier: String
+    private let templates: [Template]
+
+    init(identifier: String, templates: [Template]) {
+        self.identifier = identifier
+        self.templates = templates
+    }
+
+    func loadTemplates() async -> Result<[Template], TemplateLoadError> {
+        .success(templates)
+    }
 }

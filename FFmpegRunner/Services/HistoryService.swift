@@ -208,25 +208,12 @@ actor RecentCommandsService {
 
     /// 将最近使用转换为模板 (非异步，纯逻辑转换)
     nonisolated func convertToTemplate(_ entry: RecentCommand, name: String, category: String?) -> Template {
-        Template(
+        Template.makeRawCommandTemplate(
             id: "user-\(UUID().uuidString)",
             name: name,
             description: "从最近使用创建于 \(entry.formattedDate)",
-            commandTemplate: "{{command}}",
-            parameters: [
-                TemplateParameter(
-                    key: "command",
-                    label: "FFmpeg 命令",
-                    type: .string,
-                    defaultValue: entry.command,
-                    placeholder: "FFmpeg 命令",
-                    isRequired: true,
-                    constraints: nil,
-                    role: .raw,
-                    escapeStrategy: .raw,
-                    uiHint: ParameterUIHint(multiline: true, monospace: true)
-                )
-            ],
+            defaultCommand: entry.command,
+            placeholder: "FFmpeg 命令",
             category: category ?? "用户模板",
             icon: "clock.arrow.circlepath"
         )

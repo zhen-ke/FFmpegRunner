@@ -149,25 +149,12 @@ class TemplateHeaderViewModel: ObservableObject {
         listViewModel: TemplateListViewModel,
         executionViewModel: ExecutionViewModel
     ) async {
-        let template = Template(
+        let template = Template.makeRawCommandTemplate(
             id: "user-\(UUID().uuidString)",
             name: templateName,
             description: "用户创建于 \(Date().formatted(date: .abbreviated, time: .shortened))",
-            commandTemplate: "{{command}}",
-            parameters: [
-                TemplateParameter(
-                    key: "command",
-                    label: "FFmpeg 命令",
-                    type: .string,
-                    defaultValue: command,
-                    placeholder: "FFmpeg 命令",
-                    isRequired: true,
-                    constraints: nil,
-                    role: .raw,
-                    escapeStrategy: .raw,
-                    uiHint: ParameterUIHint(multiline: true, monospace: true)
-                )
-            ],
+            defaultCommand: command,
+            placeholder: "FFmpeg 命令",
             category: templateCategory.isEmpty ? "用户模板" : templateCategory,
             icon: "star.fill"
         )

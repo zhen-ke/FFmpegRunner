@@ -250,9 +250,9 @@ private func restoreRecentCommand(
        let matchedTemplate = listViewModel.templates.first(where: { $0.id == templateId }) {
         template = matchedTemplate
         rawValuesByKey = restorableValues
-    } else if let rawTemplate = listViewModel.templates.first(where: { $0.id == Template.rawCommandId }) {
+    } else if let rawTemplate = listViewModel.templates.first(where: { $0.isBuiltInRawCommand }) {
         template = rawTemplate
-        rawValuesByKey = ["command": entry.command]
+        rawValuesByKey = [Template.rawCommandParameterKey: entry.command]
     } else {
         return
     }

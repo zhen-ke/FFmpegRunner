@@ -148,7 +148,7 @@ final class CommandPreviewViewModel: ObservableObject {
     func copyToClipboard() {
         #if os(macOS)
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(previewText, forType: .string)
+        NSPasteboard.general.setString(renderedCommand, forType: .string)
         #endif
     }
 

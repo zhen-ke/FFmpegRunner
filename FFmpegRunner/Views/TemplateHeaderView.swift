@@ -144,7 +144,7 @@ struct TemplateHeaderView: View {
     /// 是否显示保存为模板按钮（纯 UI 逻辑，保留在 View 中）
     private var canShowSaveAsTemplate: Bool {
         guard let template = detailViewModel.template else { return false }
-        let isRawCommand = template.id == Template.rawCommandId
+        let isRawCommand = template.isBuiltInRawCommand
         let hasSuccessfulResult = executionViewModel.lastResult?.isSuccess == true
         return isRawCommand && hasSuccessfulResult && !executionViewModel.isRunning
     }
