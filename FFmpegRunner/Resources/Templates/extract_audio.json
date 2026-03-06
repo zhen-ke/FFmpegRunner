@@ -67,7 +67,15 @@
           "flac",
           "wav"
         ],
-        "isOutputFile": true
+        "isOutputFile": true,
+        "outputSourceKey": "input",
+        "outputExtensionFromKey": "codec",
+        "outputExtensionByValue": {
+          "libmp3lame": "mp3",
+          "aac": "m4a",
+          "flac": "flac",
+          "pcm_s16le": "wav"
+        }
       }
     }
   ]

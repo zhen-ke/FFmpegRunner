@@ -289,18 +289,33 @@ struct TemplateParameter: Codable, Identifiable, Hashable {
         /// 是否为输出文件（用于 file 类型）
         let isOutputFile: Bool?
 
+        /// 输出文件基于哪个输入参数生成文件名（用于 file 类型）
+        let outputSourceKey: String?
+
+        /// 输出扩展名由哪个参数值决定（用于 file 类型）
+        let outputExtensionFromKey: String?
+
+        /// 参数值到输出扩展名的映射（用于 file 类型）
+        let outputExtensionByValue: [String: String]?
+
         init(
             min: Double? = nil,
             max: Double? = nil,
             options: [String]? = nil,
             fileTypes: [String]? = nil,
-            isOutputFile: Bool? = nil
+            isOutputFile: Bool? = nil,
+            outputSourceKey: String? = nil,
+            outputExtensionFromKey: String? = nil,
+            outputExtensionByValue: [String: String]? = nil
         ) {
             self.min = min
             self.max = max
             self.options = options
             self.fileTypes = fileTypes
             self.isOutputFile = isOutputFile
+            self.outputSourceKey = outputSourceKey
+            self.outputExtensionFromKey = outputExtensionFromKey
+            self.outputExtensionByValue = outputExtensionByValue
         }
     }
 }
