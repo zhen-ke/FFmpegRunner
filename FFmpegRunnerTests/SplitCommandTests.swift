@@ -516,6 +516,94 @@ final class SplitCommandTests: XCTestCase {
         _ = try await firstTask.value
     }
 
+    func testRecentCommandsServiceDeduplicatesStructuredCommandUsage() async throws {
+        let sandbox = FileManager.default.temporaryDirectory.appendingPathComponent("recent-commands-\(UUID().uuidString)", isDirectory: true)
+        let service = RecentCommandsService(
+            recentCommandsDirectory: sandbox,
+            legacyHistoryDirectory: sandbox.appendingPathComponent("legacy", isDirectory: true)
+        )
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let arguments = ["-i", "input file.mp4", "-c:v", "copy", "output.mp4"]
+        try await service.recordUsage(
+            RecentCommandUsage(
+                executable: .ffmpeg,
+                arguments: arguments,
+                displayCommand: "ffmpeg -i 'input file.mp4' -c:v copy output.mp4",
+                usedAt: Date().addingTimeInterval(-10),
+                wasSuccessful: true
+            )
+        )
+
+        try await service.recordUsage(
+            RecentCommandUsage(
+                executable: .ffmpeg,
+                arguments: arguments,
+                displayCommand: "ffmpeg -i \"input file.mp4\" -c:v copy output.mp4",
+                usedAt: Date(),
+                wasSuccessful: false
+            )
+        )
+
+        let recentCommands = await service.loadRecentCommands()
+        XCTAssertEqual(recentCommands.count, 1)
+        XCTAssertEqual(recentCommands.first?.arguments, arguments)
+        XCTAssertEqual(recentCommands.first?.displayCommand, "ffmpeg -i \"input file.mp4\" -c:v copy output.mp4")
+        XCTAssertEqual(recentCommands.first?.useCount, 2)
+        XCTAssertEqual(recentCommands.first?.wasSuccessful, false)
+    }
+
+    @MainActor
+    func testExecutionControllerPersistsRecentCommandBeforeReturning() async throws {
+        let truePath = "/usr/bin/true"
+        guard FileManager.default.isExecutableFile(atPath: truePath) else {
+            throw XCTSkip("Missing executable: \(truePath)")
+        }
+
+        let originalSource = UserSettings.shared.ffmpegSource
+        let originalCustomPath = UserSettings.shared.customFFmpegPath
+        defer {
+            UserSettings.shared.ffmpegSource = originalSource
+            UserSettings.shared.customFFmpegPath = originalCustomPath
+        }
+
+        let sandbox = FileManager.default.temporaryDirectory.appendingPathComponent("recent-commands-\(UUID().uuidString)", isDirectory: true)
+        let recentCommandsService = RecentCommandsService(
+            recentCommandsDirectory: sandbox,
+            legacyHistoryDirectory: sandbox.appendingPathComponent("legacy", isDirectory: true)
+        )
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let resolver = MockControllerPathResolver(
+            bundledPath: nil,
+            systemPathValue: nil
+        )
+        let service = FFmpegService.makeForTesting(pathResolver: resolver)
+        service.setSource(.custom, customPath: truePath)
+
+        let deadline = Date().addingTimeInterval(1.0)
+        while Date() < deadline, service.ffmpegPath != truePath {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(service.ffmpegPath, truePath)
+
+        let controller = ExecutionController(
+            ffmpegService: service,
+            recentCommandsService: recentCommandsService
+        )
+        let result = try await controller.execute(command: "ffmpeg -version")
+
+        XCTAssertEqual(result.exitCode, 0)
+
+        let recentCommands = await recentCommandsService.loadRecentCommands()
+        XCTAssertEqual(recentCommands.count, 1)
+        XCTAssertEqual(recentCommands.first?.displayCommand, "ffmpeg -version")
+        XCTAssertEqual(recentCommands.first?.executable, .ffmpeg)
+        XCTAssertEqual(recentCommands.first?.arguments, ["-version"])
+        XCTAssertEqual(recentCommands.first?.useCount, 1)
+        XCTAssertEqual(recentCommands.first?.wasSuccessful, true)
+    }
+
     private func makeExecutableScript(body: String) throws -> String {
         let name = "split-command-controller-\(UUID().uuidString).sh"
         let path = FileManager.default.temporaryDirectory.appendingPathComponent(name).path

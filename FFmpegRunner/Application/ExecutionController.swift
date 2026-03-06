@@ -15,7 +15,7 @@
 //  - ✅ 执行调度（execute）
 //  - ✅ 取消控制（cancel）
 //  - ✅ 状态管理（state）
-//  - ✅ 历史记录写入
+//  - ✅ 最近使用写入
 //  - ✅ FFmpeg 可用性检测
 //  - ❌ 命令拼装 → CommandPlanner
 //  - ❌ 命令验证 → CommandPlanner
@@ -60,7 +60,7 @@ enum ExecutionError: LocalizedError {
 /// - 执行调度
 /// - 取消控制
 /// - 状态管理
-/// - 历史记录写入
+/// - 最近使用写入
 /// - FFmpeg 可用性检测
 ///
 /// 注意：此控制器不持有 UI 状态，通过 Combine Publisher 通知变更
@@ -81,7 +81,7 @@ final class ExecutionController: ObservableObject {
     // MARK: - Dependencies
 
     private let ffmpegService: FFmpegService
-    private let historyService: HistoryService
+    private let recentCommandsService: RecentCommandsService
     private var cancellables = Set<AnyCancellable>()
 
     // MARK: - Callbacks
@@ -89,17 +89,17 @@ final class ExecutionController: ObservableObject {
     /// 日志输出回调
     var onLogOutput: ((LogEntry) -> Void)?
 
-    /// 历史记录变更回调
-    var onHistoryChanged: (() -> Void)?
+    /// 最近使用变更回调
+    var onRecentCommandsChanged: (() -> Void)?
 
     // MARK: - Initialization
 
     init(
         ffmpegService: FFmpegService? = nil,
-        historyService: HistoryService? = nil
+        recentCommandsService: RecentCommandsService? = nil
     ) {
         self.ffmpegService = ffmpegService ?? FFmpegService.shared
-        self.historyService = historyService ?? HistoryService.shared
+        self.recentCommandsService = recentCommandsService ?? RecentCommandsService.shared
 
         // 设置日志回调转发
         self.ffmpegService.onLogOutput = { [weak self] entry in
@@ -168,8 +168,7 @@ final class ExecutionController: ObservableObject {
 
             state = .completed(result)
 
-            // 保存到历史记录
-            saveToHistory(command: plan.displayCommand, wasSuccessful: result.isSuccess)
+            await recordRecentCommand(for: plan, wasSuccessful: result.isSuccess)
 
             // 通知（按实际退出码区分成功/失败）
             let notificationMessage: String
@@ -198,8 +197,7 @@ final class ExecutionController: ObservableObject {
 
             state = .error(error.localizedDescription)
 
-            // 失败也保存到历史
-            saveToHistory(command: plan.displayCommand, wasSuccessful: false)
+            await recordRecentCommand(for: plan, wasSuccessful: false)
 
             // 通知（失败）
             notifyCompletion(
@@ -341,17 +339,20 @@ final class ExecutionController: ObservableObject {
 
     // MARK: - Private Helpers
 
-    private func saveToHistory(command: String, wasSuccessful: Bool) {
-        Task {
-            let entry = CommandHistory(
-                command: command,
-                wasSuccessful: wasSuccessful
+    private func recordRecentCommand(for plan: ExecutionPlan, wasSuccessful: Bool) async {
+        do {
+            try await recentCommandsService.recordUsage(
+                RecentCommandUsage(
+                    executable: plan.executable,
+                    arguments: plan.arguments,
+                    displayCommand: plan.displayCommand,
+                    usedAt: Date(),
+                    wasSuccessful: wasSuccessful
+                )
             )
-            try? await historyService.addEntry(entry)
-            // 通知变更 (回到主线程)
-            await MainActor.run {
-                self.onHistoryChanged?()
-            }
+            onRecentCommandsChanged?()
+        } catch {
+            AppLogger.notice(AppLogger.history, "Failed to persist recent command: \(error)")
         }
     }
 
@@ -390,5 +391,13 @@ final class ExecutionController: ObservableObject {
                 }
             }
         }
+    }
+
+    // MARK: - Backward Compatibility
+
+    /// 兼容旧调用点
+    var onHistoryChanged: (() -> Void)? {
+        get { onRecentCommandsChanged }
+        set { onRecentCommandsChanged = newValue }
     }
 }

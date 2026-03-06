@@ -1,195 +1,198 @@
 import Foundation
 
-// MARK: - History Error
+// MARK: - Recent Commands Error
 
-/// 历史记录服务错误
-enum HistoryError: LocalizedError {
-    case directoryCreationFailed(String)
-    case encodingFailed(String)
-    case decodingFailed(String)
+/// 最近使用服务错误
+enum RecentCommandsError: LocalizedError {
     case fileWriteFailed(String)
-    case fileReadFailed(String)
 
     var errorDescription: String? {
         switch self {
-        case .directoryCreationFailed(let msg): return "无法创建目录: \(msg)"
-        case .encodingFailed(let msg): return "编码失败: \(msg)"
-        case .decodingFailed(let msg): return "解码失败: \(msg)"
-        case .fileWriteFailed(let msg): return "写入文件失败: \(msg)"
-        case .fileReadFailed(let msg): return "读取文件失败: \(msg)"
+        case .fileWriteFailed(let msg):
+            return "写入最近使用失败: \(msg)"
         }
     }
 }
 
-// MARK: - History Service
+typealias HistoryError = RecentCommandsError
 
-/// 历史记录服务 - 负责持久化命令执行历史
-/// 使用 actor 模型保证并发安全
-actor HistoryService {
+// MARK: - Recent Command Usage
+
+struct RecentCommandUsage: Sendable {
+    let executable: CommandExecutable
+    let arguments: [String]
+    let displayCommand: String
+    let usedAt: Date
+    let wasSuccessful: Bool
+}
+
+// MARK: - Recent Commands Service
+
+/// 最近使用服务。
+///
+/// 设计目标：
+/// - 只保留“最近使用”的唯一命令集合，而不是完整历史
+/// - 用结构化执行单元（executable + arguments）做去重
+/// - 保持 JSON + actor 的轻量实现，适合当前项目规模
+actor RecentCommandsService {
 
     // MARK: - Singleton
 
-    static let shared = HistoryService()
+    static let shared = RecentCommandsService()
 
     // MARK: - Properties
 
-    private let fileManager = FileManager.default
+    nonisolated let recentCommandsDirectory: URL
+    nonisolated let recentCommandsFile: URL
+    nonisolated let legacyHistoryFile: URL
+
+    private let fileManager: FileManager
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private let maxRecentCommandCount: Int
 
-    /// 最大历史记录数量
-    private let maxHistoryCount = 100
-
-    /// 缓存的历史记录
-    private var historyCache: [CommandHistory]?
+    /// 缓存的最近使用列表
+    private var recentCommandsCache: [RecentCommand]?
 
     /// 上次文件修改时间（用于检测外部变更）
     private var lastFileModificationDate: Date?
 
-    /// 历史记录存储目录
-    nonisolated var historyDirectory: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("FFmpegRunner/History", isDirectory: true)
-    }
-
-    /// 历史记录文件路径
-    nonisolated private var historyFile: URL {
-        historyDirectory.appendingPathComponent("command_history.json")
-    }
-
     // MARK: - Initialization
 
-    private init() {
+    init(
+        fileManager: FileManager = .default,
+        recentCommandsDirectory: URL? = nil,
+        legacyHistoryDirectory: URL? = nil,
+        maxRecentCommandCount: Int = 100
+    ) {
+        self.fileManager = fileManager
+        self.maxRecentCommandCount = maxRecentCommandCount
+
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let resolvedRecentDirectory = recentCommandsDirectory
+            ?? appSupport.appendingPathComponent("FFmpegRunner/RecentCommands", isDirectory: true)
+        let resolvedLegacyDirectory = legacyHistoryDirectory
+            ?? appSupport.appendingPathComponent("FFmpegRunner/History", isDirectory: true)
+
+        self.recentCommandsDirectory = resolvedRecentDirectory
+        self.recentCommandsFile = resolvedRecentDirectory.appendingPathComponent("recent_commands.json")
+        self.legacyHistoryFile = resolvedLegacyDirectory.appendingPathComponent("command_history.json")
+
         encoder.outputFormatting = .prettyPrinted
         encoder.dateEncodingStrategy = .iso8601
         decoder.dateDecodingStrategy = .iso8601
 
-        // 确保目录存在 (非异步，构造时执行一次)
-        try? fileManager.createDirectory(at: historyDirectory, withIntermediateDirectories: true)
+        try? fileManager.createDirectory(at: resolvedRecentDirectory, withIntermediateDirectories: true)
     }
 
     // MARK: - Public Methods
 
-    /// 加载所有历史记录
-    func loadHistory() async -> [CommandHistory] {
-        // 检查文件是否有外部修改
-        if let attributes = try? fileManager.attributesOfItem(atPath: historyFile.path),
-           let modDate = attributes[.modificationDate] as? Date {
+    /// 加载所有最近使用记录
+    func loadRecentCommands() async -> [RecentCommand] {
+        invalidateCacheIfFileChanged()
 
-            if lastFileModificationDate != modDate {
-                historyCache = nil // 缓存失效
-                lastFileModificationDate = modDate
-            }
-        }
-
-        // 如果有缓存，直接返回
-        if let cache = historyCache {
+        if let cache = recentCommandsCache {
             return cache
         }
 
-        guard fileManager.fileExists(atPath: historyFile.path) else {
-            return []
-        }
-
         do {
-            let data = try Data(contentsOf: historyFile)
-            let history = try decoder.decode([CommandHistory].self, from: data)
-            // 按时间倒序排列
-            let sortedHistory = history.sorted { $0.executedAt > $1.executedAt }
-            historyCache = sortedHistory
-            return sortedHistory
-        } catch {
-            AppLogger.notice(AppLogger.history, "Failed to load history: \(error)")
-            // 发生错误时返回空数组，不中断流程
-            return []
-        }
-    }
-
-    /// 保存历史记录
-    func saveHistory(_ history: [CommandHistory]) async throws {
-        // 更新缓存
-        historyCache = history
-
-        do {
-            let data = try encoder.encode(history)
-
-            // 使用原子写入：先写临时文件，再重命名
-            // 这能防止应用崩溃导致的文件损坏
-            try data.write(to: historyFile, options: .atomic)
-
-            // 更新最后修改时间
-             if let attributes = try? fileManager.attributesOfItem(atPath: historyFile.path),
-               let modDate = attributes[.modificationDate] as? Date {
-                lastFileModificationDate = modDate
+            if fileManager.fileExists(atPath: recentCommandsFile.path) {
+                return try loadCurrentFile()
             }
 
+            if fileManager.fileExists(atPath: legacyHistoryFile.path) {
+                let migrated = try migrateLegacyHistory()
+                try await saveRecentCommands(migrated)
+                return migrated
+            }
         } catch {
-            throw HistoryError.fileWriteFailed(error.localizedDescription)
+            AppLogger.notice(AppLogger.history, "Failed to load recent commands: \(error)")
+        }
+
+        recentCommandsCache = []
+        lastFileModificationDate = nil
+        return []
+    }
+
+    /// 保存最近使用记录
+    func saveRecentCommands(_ recentCommands: [RecentCommand]) async throws {
+        recentCommandsCache = recentCommands
+
+        do {
+            let data = try encoder.encode(recentCommands)
+            try data.write(to: recentCommandsFile, options: .atomic)
+            lastFileModificationDate = fileModificationDate(for: recentCommandsFile)
+        } catch {
+            throw RecentCommandsError.fileWriteFailed(error.localizedDescription)
         }
     }
 
-    /// 添加新的历史记录
-    func addEntry(_ entry: CommandHistory) async throws {
-        var history = await loadHistory()
+    /// 记录一次命令使用。
+    func recordUsage(_ usage: RecentCommandUsage) async throws {
+        var recentCommands = await loadRecentCommands()
 
-        // 检查是否有相同命令，避免连续重复
-        // 同时支持智能去重：如果是曾经执行过的命令，移到最前并更新时间
-        if let index = history.firstIndex(where: { $0.command == entry.command }) {
-            var existing = history.remove(at: index)
-            // 更新时间、状态和显示名称
-            let updated = CommandHistory(
-                id: existing.id, // 保持原有 ID
-                command: entry.command,
-                executedAt: entry.executedAt,
-                wasSuccessful: entry.wasSuccessful,
-                displayName: existing.displayName // 保持原有名称
+        if let index = recentCommands.firstIndex(where: { $0.signature == RecentCommand.Signature(executable: usage.executable, arguments: usage.arguments) }) {
+            let existing = recentCommands.remove(at: index)
+            let updated = RecentCommand(
+                id: existing.id,
+                executable: usage.executable,
+                arguments: usage.arguments,
+                displayCommand: usage.displayCommand,
+                lastUsedAt: usage.usedAt,
+                wasSuccessful: usage.wasSuccessful,
+                useCount: existing.useCount + 1,
+                displayName: existing.displayName
             )
-            history.insert(updated, at: 0)
+            recentCommands.insert(updated, at: 0)
         } else {
-            // 添加新记录到开头
-            history.insert(entry, at: 0)
+            recentCommands.insert(
+                RecentCommand(
+                    executable: usage.executable,
+                    arguments: usage.arguments,
+                    displayCommand: usage.displayCommand,
+                    lastUsedAt: usage.usedAt,
+                    wasSuccessful: usage.wasSuccessful
+                ),
+                at: 0
+            )
         }
 
-        // 限制记录数量
-        if history.count > maxHistoryCount {
-            history = Array(history.prefix(maxHistoryCount))
+        if recentCommands.count > maxRecentCommandCount {
+            recentCommands = Array(recentCommands.prefix(maxRecentCommandCount))
         }
 
-        try await saveHistory(history)
+        try await saveRecentCommands(recentCommands)
     }
 
-    /// 删除历史记录
-    func deleteEntry(_ entryId: UUID) async throws {
-        var history = await loadHistory()
-        history.removeAll { $0.id == entryId }
-        try await saveHistory(history)
+    /// 删除最近使用
+    func deleteRecentCommand(_ entryId: UUID) async throws {
+        var recentCommands = await loadRecentCommands()
+        recentCommands.removeAll { $0.id == entryId }
+        try await saveRecentCommands(recentCommands)
     }
 
-    /// 更新历史记录（重命名）
-    func updateEntry(_ entryId: UUID, displayName: String?) async throws {
-        var history = await loadHistory()
-        if let index = history.firstIndex(where: { $0.id == entryId }) {
-            var entry = history[index]
+    /// 更新最近使用名称
+    func updateRecentCommand(_ entryId: UUID, displayName: String?) async throws {
+        var recentCommands = await loadRecentCommands()
+        if let index = recentCommands.firstIndex(where: { $0.id == entryId }) {
+            var entry = recentCommands[index]
             entry.displayName = displayName
-
-            // 结构体是值类型，必须替换数组中的元素
-            history[index] = entry
-
-            try await saveHistory(history)
+            recentCommands[index] = entry
+            try await saveRecentCommands(recentCommands)
         }
     }
 
-    /// 清空所有历史记录
-    func clearHistory() async throws {
-        try await saveHistory([])
+    /// 清空最近使用
+    func clearRecentCommands() async throws {
+        try await saveRecentCommands([])
     }
 
-    /// 将历史记录转换为模板 (非异步，纯逻辑转换)
-    nonisolated func convertToTemplate(_ entry: CommandHistory, name: String, category: String?) -> Template {
+    /// 将最近使用转换为模板 (非异步，纯逻辑转换)
+    nonisolated func convertToTemplate(_ entry: RecentCommand, name: String, category: String?) -> Template {
         Template(
             id: "user-\(UUID().uuidString)",
             name: name,
-            description: "从历史记录创建于 \(entry.formattedDate)",
+            description: "从最近使用创建于 \(entry.formattedDate)",
             commandTemplate: "{{command}}",
             parameters: [
                 TemplateParameter(
@@ -201,7 +204,7 @@ actor HistoryService {
                     isRequired: true,
                     constraints: nil,
                     role: .raw,
-                    escapeStrategy: .raw, // 命令整体不转义
+                    escapeStrategy: .raw,
                     uiHint: ParameterUIHint(multiline: true, monospace: true)
                 )
             ],
@@ -209,4 +212,107 @@ actor HistoryService {
             icon: "clock.arrow.circlepath"
         )
     }
+
+    // MARK: - Backward Compatibility
+
+    nonisolated var historyDirectory: URL {
+        recentCommandsDirectory
+    }
+
+    func loadHistory() async -> [CommandHistory] {
+        await loadRecentCommands()
+    }
+
+    func saveHistory(_ history: [CommandHistory]) async throws {
+        try await saveRecentCommands(history)
+    }
+
+    func addEntry(_ entry: CommandHistory) async throws {
+        try await recordUsage(
+            RecentCommandUsage(
+                executable: entry.executable,
+                arguments: entry.arguments,
+                displayCommand: entry.displayCommand,
+                usedAt: entry.lastUsedAt,
+                wasSuccessful: entry.wasSuccessful
+            )
+        )
+    }
+
+    func deleteEntry(_ entryId: UUID) async throws {
+        try await deleteRecentCommand(entryId)
+    }
+
+    func updateEntry(_ entryId: UUID, displayName: String?) async throws {
+        try await updateRecentCommand(entryId, displayName: displayName)
+    }
+
+    func clearHistory() async throws {
+        try await clearRecentCommands()
+    }
+
+    // MARK: - Private Helpers
+
+    private struct LegacyCommandHistory: Codable {
+        let id: UUID
+        let command: String
+        let executedAt: Date
+        let wasSuccessful: Bool
+        let displayName: String?
+    }
+
+    private func invalidateCacheIfFileChanged() {
+        guard let modDate = fileModificationDate(for: recentCommandsFile) else {
+            if !fileManager.fileExists(atPath: recentCommandsFile.path) {
+                recentCommandsCache = nil
+                lastFileModificationDate = nil
+            }
+            return
+        }
+
+        if lastFileModificationDate != modDate {
+            recentCommandsCache = nil
+            lastFileModificationDate = modDate
+        }
+    }
+
+    private func loadCurrentFile() throws -> [RecentCommand] {
+        let data = try Data(contentsOf: recentCommandsFile)
+        let recentCommands = try decoder.decode([RecentCommand].self, from: data)
+        let sorted = recentCommands.sorted { lhs, rhs in
+            if lhs.lastUsedAt != rhs.lastUsedAt {
+                return lhs.lastUsedAt > rhs.lastUsedAt
+            }
+            return lhs.useCount > rhs.useCount
+        }
+        recentCommandsCache = sorted
+        lastFileModificationDate = fileModificationDate(for: recentCommandsFile)
+        return sorted
+    }
+
+    private func migrateLegacyHistory() throws -> [RecentCommand] {
+        let data = try Data(contentsOf: legacyHistoryFile)
+        let legacyEntries = try decoder.decode([LegacyCommandHistory].self, from: data)
+
+        return legacyEntries
+            .map {
+                RecentCommand(
+                    id: $0.id,
+                    command: $0.command,
+                    executedAt: $0.executedAt,
+                    wasSuccessful: $0.wasSuccessful,
+                    displayName: $0.displayName
+                )
+            }
+            .sorted { $0.lastUsedAt > $1.lastUsedAt }
+    }
+
+    private func fileModificationDate(for url: URL) -> Date? {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path) else {
+            return nil
+        }
+        return attributes[.modificationDate] as? Date
+    }
 }
+
+typealias HistoryService = RecentCommandsService

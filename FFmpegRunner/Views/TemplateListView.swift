@@ -2,7 +2,7 @@
 //  TemplateListView.swift
 //  FFmpegRunner
 //
-//  模板列表视图（含历史记录）
+//  模板列表视图（含最近使用）
 //
 
 import SwiftUI
@@ -30,7 +30,7 @@ struct TemplateListView: View {
     // MARK: - Environment
 
     @EnvironmentObject var viewModel: TemplateListViewModel
-    @EnvironmentObject var historyViewModel: HistoryViewModel
+    @EnvironmentObject var recentCommandsViewModel: RecentCommandsViewModel
 
     // MARK: - State
 
@@ -49,7 +49,7 @@ struct TemplateListView: View {
             // 模板列表
             if viewModel.isLoading {
                 LoadingView()
-            } else if viewModel.filteredTemplates.isEmpty && historyViewModel.isEmpty {
+            } else if viewModel.filteredTemplates.isEmpty && recentCommandsViewModel.isEmpty {
                 NoResultsView()
             } else {
                 SidebarContentView(showHistorySheet: $showHistorySheet)
@@ -77,7 +77,7 @@ struct TemplateListView: View {
 struct SidebarContentView: View {
 
     @EnvironmentObject var viewModel: TemplateListViewModel
-    @EnvironmentObject var historyViewModel: HistoryViewModel
+    @EnvironmentObject var recentCommandsViewModel: RecentCommandsViewModel
     @EnvironmentObject var detailViewModel: TemplateDetailViewModel
     @EnvironmentObject var executionViewModel: ExecutionViewModel
 
@@ -88,10 +88,10 @@ struct SidebarContentView: View {
 
     var body: some View {
         List(selection: $listSelection) {
-            // ✅ 最近历史（最多 3 条）
-            if !historyViewModel.isEmpty {
+            // ✅ 最近使用（最多 3 条）
+            if !recentCommandsViewModel.isEmpty {
                 RecentHistorySection(
-                    history: Array(historyViewModel.history.prefix(3)),
+                    history: Array(recentCommandsViewModel.recentCommands.prefix(3)),
                     onShowAll: { showHistorySheet = true }
                 )
             }
@@ -173,8 +173,8 @@ struct SidebarContentView: View {
     }
 }
 
-// MARK: - 最近历史区（精简版）
-/// 只负责「快速填充 + 跳转完整历史」
+// MARK: - 最近使用区（精简版）
+/// 只负责「快速填充 + 跳转完整最近使用」
 
 struct RecentHistorySection: View {
 
@@ -186,7 +186,7 @@ struct RecentHistorySection: View {
     @EnvironmentObject var detailViewModel: TemplateDetailViewModel
 
     var body: some View {
-        Section(header: Text("最近历史")) {
+        Section(header: Text("最近使用")) {
 
             ForEach(history) { entry in
                 Button {
@@ -204,7 +204,7 @@ struct RecentHistorySection: View {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.caption)
                         .foregroundColor(.accentColor)
-                    Text("查看全部历史")
+                    Text("查看全部最近使用")
                         .font(.caption)
                         .foregroundColor(.accentColor)
                     Spacer()
@@ -233,11 +233,11 @@ struct RecentHistorySection: View {
     }
 }
 
-// MARK: - 完整历史 Sheet
+// MARK: - 完整最近使用 Sheet
 
 struct HistorySheetView: View {
 
-    @EnvironmentObject var historyViewModel: HistoryViewModel
+    @EnvironmentObject var recentCommandsViewModel: RecentCommandsViewModel
     @EnvironmentObject var viewModel: TemplateListViewModel
     @Environment(\.dismiss) private var dismiss
 
@@ -272,22 +272,22 @@ struct HistorySheetView: View {
         .frame(minWidth: 760, minHeight: 560)
         .sheet(isPresented: $showRenameSheet) {
             RenameSheetView(
-                title: "重命名历史记录",
+                title: "重命名最近使用",
                 text: $renameText,
                 onSave: {
                     if let entry = selectedEntry {
-                        historyViewModel.renameEntry(entry, to: renameText)
+                        recentCommandsViewModel.renameEntry(entry, to: renameText)
                     }
                 }
             )
         }
-        .alert("清空历史记录", isPresented: $showClearConfirm) {
+        .alert("清空最近使用", isPresented: $showClearConfirm) {
             Button("取消", role: .cancel) {}
             Button("清空", role: .destructive) {
-                historyViewModel.clearAll()
+                recentCommandsViewModel.clearAll()
             }
         } message: {
-            Text("确定要清空所有历史记录吗？此操作无法撤销。")
+            Text("确定要清空所有最近使用吗？此操作无法撤销。")
         }
         .onAppear {
             updateSelectionIfNeeded()
@@ -302,9 +302,9 @@ struct HistorySheetView: View {
     private var headerView: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("历史记录")
+                Text("最近使用")
                     .font(.system(size: 16, weight: .semibold))
-                Text("查看与管理 FFmpeg 执行历史")
+                Text("查看与管理最近使用的 FFmpeg 命令")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -312,16 +312,16 @@ struct HistorySheetView: View {
             Spacer()
 
             HistorySummaryView(
-                total: historyViewModel.history.count,
-                success: historyViewModel.successCount,
-                failure: historyViewModel.failureCount
+                total: recentCommandsViewModel.recentCommands.count,
+                success: recentCommandsViewModel.successCount,
+                failure: recentCommandsViewModel.failureCount
             )
 
             HistoryActionButton(
                 title: "清空",
                 systemImage: "trash",
                 tint: .red,
-                isDisabled: historyViewModel.isEmpty
+                isDisabled: recentCommandsViewModel.isEmpty
             ) {
                 showClearConfirm = true
             }
@@ -408,16 +408,16 @@ struct HistorySheetView: View {
 
     private var filteredHistory: [CommandHistory] {
         if searchText.isEmpty {
-            return historyViewModel.history
+            return recentCommandsViewModel.recentCommands
         }
-        return historyViewModel.history.filter {
+        return recentCommandsViewModel.recentCommands.filter {
             $0.title.localizedCaseInsensitiveContains(searchText) ||
             $0.command.localizedCaseInsensitiveContains(searchText)
         }
     }
 
     private func saveAsTemplate(_ entry: CommandHistory) {
-        _ = historyViewModel.saveAsTemplate(entry, name: entry.title, category: nil)
+        _ = recentCommandsViewModel.saveAsTemplate(entry, name: entry.title, category: nil)
         Task {
             await viewModel.loadTemplates()
         }
@@ -455,7 +455,7 @@ struct HistorySheetView: View {
     }
 
     private func deleteEntry(_ entry: CommandHistory) {
-        historyViewModel.deleteEntry(entry)
+        recentCommandsViewModel.deleteEntry(entry)
         if selectedEntry?.id == entry.id {
             selectedEntry = nil
         }
@@ -531,7 +531,7 @@ struct HistorySearchBar: View {
             Image(systemName: "magnifyingglass")
                 .foregroundColor(.secondary)
 
-            TextField("搜索历史记录...", text: $text)
+            TextField("搜索最近使用...", text: $text)
                 .textFieldStyle(.plain)
 
             if !text.isEmpty {
@@ -562,11 +562,11 @@ struct HistoryEmptyState: View {
                 .font(.system(size: 34, weight: .light))
                 .foregroundColor(.secondary)
 
-            Text(isSearching ? "未找到匹配的历史记录" : "暂无历史记录")
+            Text(isSearching ? "未找到匹配的最近使用" : "暂无最近使用")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.secondary)
 
-            Text(isSearching ? "尝试换个关键词再试试" : "执行命令后会在这里出现记录")
+            Text(isSearching ? "尝试换个关键词再试试" : "执行命令后会在这里出现最近使用")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary.opacity(0.7))
         }
@@ -630,9 +630,10 @@ struct HistoryDetailView: View {
                 }
 
                 VStack(spacing: 8) {
-                    LabeledContent("执行时间", value: entry.formattedDate)
+                    LabeledContent("最近使用", value: entry.formattedDate)
                     LabeledContent("相对时间", value: entry.relativeDate)
-                    LabeledContent("结果", value: entry.wasSuccessful ? "完成" : "失败")
+                    LabeledContent("最近结果", value: entry.wasSuccessful ? "完成" : "失败")
+                    LabeledContent("使用次数", value: "\(entry.useCount)")
                 }
                 .font(.system(size: 12))
 
@@ -675,7 +676,7 @@ struct HistoryDetailPlaceholder: View {
                 .font(.system(size: 32))
                 .foregroundColor(.secondary)
 
-            Text("选择一条记录查看详情")
+            Text("选择一条最近使用查看详情")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.secondary)
         }
@@ -701,7 +702,7 @@ struct HistoryStatusPill: View {
     }
 }
 
-// MARK: - 历史记录行视图
+// MARK: - 最近使用行视图
 
 struct HistoryRowView: View {
     let entry: CommandHistory
@@ -911,7 +912,7 @@ struct NoResultsView: View {
 #Preview {
     TemplateListView()
         .environmentObject(TemplateListViewModel())
-        .environmentObject(HistoryViewModel())
+        .environmentObject(RecentCommandsViewModel())
         .environmentObject(TemplateDetailViewModel())
         .environmentObject(ExecutionViewModel())
         .frame(width: 300, height: 600)

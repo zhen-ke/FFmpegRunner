@@ -17,7 +17,7 @@ struct FFmpegRunnerApp: App {
     @StateObject private var detailViewModel: TemplateDetailViewModel
     @StateObject private var previewViewModel: CommandPreviewViewModel
     @StateObject private var executionViewModel: ExecutionViewModel
-    @StateObject private var historyViewModel: HistoryViewModel
+    @StateObject private var recentCommandsViewModel: RecentCommandsViewModel
     @StateObject private var headerViewModel: TemplateHeaderViewModel
     @StateObject private var navigationState: NavigationState
 
@@ -27,7 +27,7 @@ struct FFmpegRunnerApp: App {
         let detailViewModel = TemplateDetailViewModel()
         let previewViewModel = CommandPreviewViewModel(detailViewModel: detailViewModel)
         let executionViewModel = ExecutionViewModel()
-        let historyViewModel = HistoryViewModel()
+        let recentCommandsViewModel = RecentCommandsViewModel()
         let headerViewModel = TemplateHeaderViewModel()
         let navigationState = NavigationState()
 
@@ -35,7 +35,7 @@ struct FFmpegRunnerApp: App {
         _detailViewModel = StateObject(wrappedValue: detailViewModel)
         _previewViewModel = StateObject(wrappedValue: previewViewModel)
         _executionViewModel = StateObject(wrappedValue: executionViewModel)
-        _historyViewModel = StateObject(wrappedValue: historyViewModel)
+        _recentCommandsViewModel = StateObject(wrappedValue: recentCommandsViewModel)
         _headerViewModel = StateObject(wrappedValue: headerViewModel)
         _navigationState = StateObject(wrappedValue: navigationState)
     }
@@ -49,15 +49,15 @@ struct FFmpegRunnerApp: App {
                 .environmentObject(detailViewModel)
                 .environmentObject(previewViewModel)
                 .environmentObject(executionViewModel)
-                .environmentObject(historyViewModel)
+                .environmentObject(recentCommandsViewModel)
                 .environmentObject(headerViewModel)
                 .environmentObject(navigationState)
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear {
                     NotificationService.shared.configure()
-                    // 设置历史记录变更回调
-                    executionViewModel.onHistoryChanged = { [weak historyViewModel] in
-                        historyViewModel?.loadHistory()
+                    // 设置最近使用变更回调
+                    executionViewModel.onRecentCommandsChanged = { [weak recentCommandsViewModel] in
+                        recentCommandsViewModel?.loadRecentCommands()
                     }
                 }
         }

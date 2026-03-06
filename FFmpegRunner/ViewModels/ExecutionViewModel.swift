@@ -6,7 +6,7 @@
 //
 //  ⚠️ 架构约定：
 //  此 ViewModel 仅负责 UI 状态管理和日志展示。
-//  所有业务逻辑（命令验证、执行编排、历史记录）已下沉到 ExecutionController。
+//  所有业务逻辑（命令验证、执行编排、最近使用）已下沉到 ExecutionController。
 //  后续功能（执行队列、多任务、失败重试等）应添加到 Application Layer，
 //  而非直接在此 ViewModel 中实现。
 //
@@ -23,7 +23,7 @@ import Combine
 /// - ✅ 状态描述与颜色
 /// - ❌ 命令验证 → ExecutionController
 /// - ❌ 执行编排 → ExecutionController
-/// - ❌ 历史记录 → ExecutionController
+/// - ❌ 最近使用 → ExecutionController
 @MainActor
 class ExecutionViewModel: ObservableObject {
 
@@ -95,10 +95,10 @@ class ExecutionViewModel: ObservableObject {
     /// Combine 订阅
     private var cancellables = Set<AnyCancellable>()
 
-    /// 历史记录变更回调（用于通知 HistoryViewModel 刷新）
-    var onHistoryChanged: (() -> Void)? {
+    /// 最近使用变更回调（用于通知 RecentCommandsViewModel 刷新）
+    var onRecentCommandsChanged: (() -> Void)? {
         didSet {
-            controller.onHistoryChanged = onHistoryChanged
+            controller.onRecentCommandsChanged = onRecentCommandsChanged
         }
     }
 
@@ -227,7 +227,7 @@ class ExecutionViewModel: ObservableObject {
     /// 执行命令（使用参数数组，推荐路径）
     /// - Parameters:
     ///   - arguments: 参数数组（不包含 ffmpeg 本身）
-    ///   - displayCommand: 用于日志/历史记录显示的命令字符串
+    ///   - displayCommand: 用于日志/最近使用显示的命令字符串
     /// - Note: 这是 Template → Execute 的推荐路径，直接使用参数数组，
     ///         避免 shell escaping + splitCommand 的不可逆问题
     func execute(
@@ -335,6 +335,13 @@ class ExecutionViewModel: ObservableObject {
     /// 导出日志
     func exportLogs() -> String {
         logs.map { (entry: LogEntry) -> String in entry.displayString }.joined(separator: "\n")
+    }
+
+    // MARK: - Backward Compatibility
+
+    var onHistoryChanged: (() -> Void)? {
+        get { onRecentCommandsChanged }
+        set { onRecentCommandsChanged = newValue }
     }
 }
 
