@@ -220,6 +220,16 @@ struct LogContentView: View {
     let autoScroll: Bool
     let isRunning: Bool
 
+    private struct ScrollTrigger: Equatable {
+        let count: Int
+        let lastId: UUID?
+        let lastMessage: String
+        let lastTimestamp: Date?
+        let isRunning: Bool
+    }
+
+    private let bottomAnchorID = "log-bottom-anchor"
+
     /// 滚动节流：使用 Task + cancel 模式
     /// - 天然节流：新请求自动取消旧任务
     /// - 不会排队：始终只有一个 pending task
@@ -229,13 +239,26 @@ struct LogContentView: View {
     /// 滚动节流间隔（秒）
     private let scrollThrottleInterval: Double = 0.05 // 50ms，约 20 fps
 
+    private var scrollTrigger: ScrollTrigger {
+        ScrollTrigger(
+            count: logs.count,
+            lastId: logs.last?.id,
+            lastMessage: logs.last?.message ?? "",
+            lastTimestamp: logs.last?.timestamp,
+            isRunning: isRunning
+        )
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             logListContent
                 .background(Color(NSColor.textBackgroundColor))
-                // 监听最后一条日志的 id，比 count 更语义化
-                // 支持：批量插入、替换日志、过滤器切换等场景
-                .onChange(of: logs.last?.id) { _ in
+                .onAppear {
+                    requestScrollToBottom(proxy: proxy)
+                }
+                // 监听最后一条可见日志的内容和执行状态变化。
+                // 进度日志会原地替换并复用同一个 id，仅监听 id 会漏掉这类更新。
+                .onChange(of: scrollTrigger) { _ in
                     requestScrollToBottom(proxy: proxy)
                 }
         }
@@ -265,6 +288,10 @@ struct LogContentView: View {
                     )
                     .id(last.id)
                 }
+
+                Color.clear
+                    .frame(height: 1)
+                    .id(bottomAnchorID)
             }
             .padding(8)
         }
@@ -273,7 +300,7 @@ struct LogContentView: View {
     /// 节流滚动请求
     /// - 使用 Task + cancel 确保同一时间只有一个滚动任务
     /// - 新请求自动取消旧任务，天然防抖
-    /// - 滚动时取最新的 logs.last，确保始终滚动到最底部
+    /// - 始终滚动到固定底部锚点，避免最后一行原地更新时漏滚动
     private func requestScrollToBottom(proxy: ScrollViewProxy) {
         guard autoScroll else { return }
 
@@ -286,11 +313,8 @@ struct LogContentView: View {
             // 检查是否被取消
             guard !Task.isCancelled else { return }
 
-            // 滚动到当前最新的日志
-            if let lastId = logs.last?.id {
-                withAnimation(.easeOut(duration: 0.1)) {
-                    proxy.scrollTo(lastId, anchor: .bottom)
-                }
+            withAnimation(.easeOut(duration: 0.1)) {
+                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
             }
         }
     }
