@@ -899,10 +899,84 @@ final class RecentCommandsViewModelTests: XCTestCase {
         XCTAssertFalse(savedTemplate.isRawCommandTemplate)
         XCTAssertEqual(savedTemplate.category, "我的模板")
         XCTAssertEqual(savedTemplate.icon, "film")
-        XCTAssertEqual(savedTemplate.parameters.first(where: { $0.key == "input" })?.defaultValue, "clip.mov")
+        XCTAssertEqual(savedTemplate.parameters.first(where: { $0.key == "input" })?.defaultValue, "")
         XCTAssertEqual(savedTemplate.parameters.first(where: { $0.key == "codec" })?.defaultValue, "libx265")
-        XCTAssertEqual(savedTemplate.parameters.first(where: { $0.key == "output" })?.defaultValue, "clip-hevc.mp4")
-        XCTAssertEqual(rendered.displayString, entry.displayCommand)
+        XCTAssertEqual(savedTemplate.parameters.first(where: { $0.key == "output" })?.defaultValue, "")
+        XCTAssertEqual(rendered.displayString, "ffmpeg -i {{input}} -c:v libx265 {{output}}")
+    }
+
+    func testSaveAsTemplateDefaultsStructuredCopiesToUserCategory() async throws {
+        let sandbox = FileManager.default.temporaryDirectory.appendingPathComponent("recent-save-template-default-category-\(UUID().uuidString)", isDirectory: true)
+        let userTemplateDirectory = sandbox.appendingPathComponent("templates", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let sourceTemplate = Template(
+            id: "compress_video_h265",
+            name: "视频压缩 (H.265/HEVC)",
+            description: "Encode video",
+            commandTemplate: "ffmpeg -i {{input}} -c:v libx265 {{output}}",
+            parameters: [
+                TemplateParameter(
+                    key: "input",
+                    label: "Input",
+                    type: .file,
+                    defaultValue: "",
+                    isRequired: true
+                ),
+                TemplateParameter(
+                    key: "output",
+                    label: "Output",
+                    type: .file,
+                    defaultValue: "",
+                    isRequired: true,
+                    constraints: TemplateParameter.Constraints(isOutputFile: true)
+                )
+            ],
+            category: "视频处理",
+            icon: "film"
+        )
+
+        let repository = TemplateRepository(
+            sources: [
+                StaticTemplateSource(identifier: "test", templates: [sourceTemplate]),
+                UserTemplateSource(directory: userTemplateDirectory)
+            ],
+            userDirectory: userTemplateDirectory
+        )
+        let service = RecentCommandsService(
+            recentCommandsDirectory: sandbox.appendingPathComponent("recent", isDirectory: true),
+            legacyHistoryDirectory: sandbox.appendingPathComponent("legacy", isDirectory: true)
+        )
+        let viewModel = RecentCommandsViewModel(
+            recentCommandsService: service,
+            templateRepository: repository
+        )
+
+        let entry = RecentCommand(
+            executable: .ffmpeg,
+            arguments: ["-i", "clip.mov", "-c:v", "libx265", "clip-hevc.mp4"],
+            displayCommand: "ffmpeg -i clip.mov -c:v libx265 clip-hevc.mp4",
+            wasSuccessful: true,
+            templateSnapshot: RecentCommandTemplateSnapshot(
+                templateId: sourceTemplate.id,
+                templateName: sourceTemplate.name,
+                parameterValues: [
+                    "input": "clip.mov",
+                    "output": "clip-hevc.mp4"
+                ]
+            )
+        )
+
+        let didSave = await viewModel.saveAsTemplate(entry, name: "视频压缩 (H.265/HEVC)", category: nil)
+        XCTAssertTrue(didSave)
+
+        let savedTemplates = await repository.loadAllTemplates()
+        let savedTemplate = try XCTUnwrap(savedTemplates.first(where: {
+            $0.id != sourceTemplate.id && $0.name == sourceTemplate.name
+        }))
+        XCTAssertEqual(savedTemplate.category, "用户模板")
+        XCTAssertEqual(savedTemplate.parameters.first(where: { $0.key == "input" })?.defaultValue, "")
+        XCTAssertEqual(savedTemplate.parameters.first(where: { $0.key == "output" })?.defaultValue, "")
     }
 
     func testSaveAsTemplateFallsBackToRawCommandWhenOriginalTemplateCannotBeResolved() async throws {

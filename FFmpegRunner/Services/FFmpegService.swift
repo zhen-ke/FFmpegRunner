@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 /// FFmpeg 来源类型
 enum FFmpegSource: String, CaseIterable, Codable, Sendable {
@@ -576,6 +577,9 @@ private final class ProcessExecutionSession {
     private let displayCommand: String
     private let onLog: (LogEntry) -> Void
 
+    /// 防止 cleanup() 与 cancel() 并发执行时重复关闭管道
+    private var isCleaned = false
+
     init(
         executablePath: String,
         arguments: [String],
@@ -626,6 +630,8 @@ private final class ProcessExecutionSession {
     }
 
     func cleanup() {
+        guard !isCleaned else { return }
+        isCleaned = true
         stopStreaming()
         try? stdoutPipe.fileHandleForReading.close()
         try? stderrPipe.fileHandleForReading.close()
@@ -737,7 +743,7 @@ enum FFmpegError: LocalizedError {
 /// 线程安全的输出数据收集器
 /// 包含 1MB 缓冲区上限，防止长时间任务导致内存溢出
 final class OutputDataCollector: @unchecked Sendable {
-    private let lock = NSLock()
+    private var _lock = os_unfair_lock()
     private var stdoutChunks: [Data] = []
     private var stderrChunks: [Data] = []
     private var stdoutSize = 0
@@ -747,26 +753,26 @@ final class OutputDataCollector: @unchecked Sendable {
     private let maxBufferSize = 1_000_000
 
     func appendStdout(_ data: Data) {
-        lock.lock()
-        defer { lock.unlock() }
+        os_unfair_lock_lock(&_lock)
+        defer { os_unfair_lock_unlock(&_lock) }
         append(data, to: &stdoutChunks, size: &stdoutSize)
     }
 
     func appendStderr(_ data: Data) {
-        lock.lock()
-        defer { lock.unlock() }
+        os_unfair_lock_lock(&_lock)
+        defer { os_unfair_lock_unlock(&_lock) }
         append(data, to: &stderrChunks, size: &stderrSize)
     }
 
     var stdoutData: Data {
-        lock.lock()
-        defer { lock.unlock() }
+        os_unfair_lock_lock(&_lock)
+        defer { os_unfair_lock_unlock(&_lock) }
         return combinedData(from: stdoutChunks, totalSize: stdoutSize)
     }
 
     var stderrData: Data {
-        lock.lock()
-        defer { lock.unlock() }
+        os_unfair_lock_lock(&_lock)
+        defer { os_unfair_lock_unlock(&_lock) }
         return combinedData(from: stderrChunks, totalSize: stderrSize)
     }
 

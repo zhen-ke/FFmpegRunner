@@ -486,31 +486,6 @@ struct CommandRenderer {
         }
     }
 
-    /// 收集缺失占位符（值为空或不存在）
-    private static func collectMissingPlaceholders(
-        commandTemplate: String,
-        context: RenderContext
-    ) -> [String] {
-        let range = NSRange(commandTemplate.startIndex..., in: commandTemplate)
-        let matches = placeholderRegex.matches(in: commandTemplate, range: range)
-
-        var missing: [String] = []
-        var seen: Set<String> = []
-
-        for match in matches {
-            guard let keyRange = Range(match.range(at: 1), in: commandTemplate) else { continue }
-            let key = String(commandTemplate[keyRange])
-            if seen.contains(key) { continue }
-            seen.insert(key)
-
-            let value = context.value(forKey: key) ?? ""
-            if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                missing.append(key)
-            }
-        }
-
-        return missing
-    }
 
     /// 提取模板中的所有占位符
     static func extractPlaceholders(from template: String) -> [String] {

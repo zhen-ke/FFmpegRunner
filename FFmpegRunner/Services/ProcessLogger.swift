@@ -43,18 +43,6 @@ class ProcessLogger: ProcessLoggerProviding {
     /// 缓冲区最大大小（防止内存溢出）
     private let maxBufferSize = 10_000
 
-    // MARK: - FFmpeg 进度解析
-
-    /// FFmpeg 进度信息
-    struct Progress {
-        var frame: Int = 0
-        var fps: Double = 0
-        var size: String = ""
-        var time: String = ""
-        var bitrate: String = ""
-        var speed: String = ""
-    }
-
     // MARK: - Initializer
 
     init() {
@@ -231,44 +219,6 @@ class ProcessLogger: ProcessLoggerProviding {
         ]
         let matchCount = progressKeywords.filter { lowercased.contains($0) }.count
         return matchCount >= 2
-    }
-
-    /// 解析 FFmpeg 进度行（使用字符串分割，性能优于正则表达式）
-    func parseProgress(_ line: String) -> Progress? {
-        guard line.contains("frame=") || line.contains("size=") else { return nil }
-
-        var progress = Progress()
-
-        // 使用空格分割，然后解析 key=value 对
-        let parts = line.split(separator: " ", omittingEmptySubsequences: true)
-
-        for part in parts {
-            let keyValue = part.split(separator: "=", maxSplits: 1)
-            guard keyValue.count == 2 else { continue }
-
-            let key = String(keyValue[0]).trimmingCharacters(in: .whitespaces)
-            let value = String(keyValue[1]).trimmingCharacters(in: .whitespaces)
-
-            switch key {
-            case "frame":
-                progress.frame = Int(value) ?? 0
-            case "fps":
-                progress.fps = Double(value) ?? 0
-            case "size":
-                progress.size = value
-            case "time":
-                progress.time = value
-            case "bitrate":
-                progress.bitrate = value
-            case "speed":
-                // 移除 "x" 后缀（如 "1.5x" -> "1.5"）
-                progress.speed = value.replacingOccurrences(of: "x", with: "")
-            default:
-                break
-            }
-        }
-
-        return progress
     }
 }
 

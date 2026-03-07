@@ -65,10 +65,6 @@ struct UserTemplateSource: TemplateSource {
             withIntermediateDirectories: true
         )
 
-        guard FileManager.default.fileExists(atPath: directory.path) else {
-            return .success([])
-        }
-
         return await TemplateFileLoader.load(from: directory)
     }
 }

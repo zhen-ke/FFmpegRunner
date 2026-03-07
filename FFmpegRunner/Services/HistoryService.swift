@@ -161,9 +161,9 @@ actor RecentCommandsService {
                 displayName: existing.displayName,
                 templateSnapshot: usage.templateSnapshot ?? existing.templateSnapshot
             )
-            recentCommands.insert(updated, at: 0)
+            recentCommands.append(updated)
         } else {
-            recentCommands.insert(
+            recentCommands.append(
                 RecentCommand(
                     executable: usage.executable,
                     arguments: usage.arguments,
@@ -171,13 +171,20 @@ actor RecentCommandsService {
                     lastUsedAt: usage.usedAt,
                     wasSuccessful: usage.wasSuccessful,
                     templateSnapshot: usage.templateSnapshot
-                ),
-                at: 0
+                )
             )
         }
 
+        // 统一排序：与 loadCurrentFile() 语义一致
+        recentCommands.sort { lhs, rhs in
+            if lhs.lastUsedAt != rhs.lastUsedAt {
+                return lhs.lastUsedAt > rhs.lastUsedAt
+            }
+            return lhs.useCount > rhs.useCount
+        }
+
         if recentCommands.count > maxRecentCommandCount {
-            recentCommands = Array(recentCommands.prefix(maxRecentCommandCount))
+            recentCommands.removeLast(recentCommands.count - maxRecentCommandCount)
         }
 
         try await saveRecentCommands(recentCommands)
@@ -229,10 +236,6 @@ actor RecentCommandsService {
         await loadRecentCommands()
     }
 
-    func saveHistory(_ history: [CommandHistory]) async throws {
-        try await saveRecentCommands(history)
-    }
-
     func addEntry(_ entry: CommandHistory) async throws {
         try await recordUsage(
             RecentCommandUsage(
@@ -248,10 +251,6 @@ actor RecentCommandsService {
 
     func deleteEntry(_ entryId: UUID) async throws {
         try await deleteRecentCommand(entryId)
-    }
-
-    func updateEntry(_ entryId: UUID, displayName: String?) async throws {
-        try await updateRecentCommand(entryId, displayName: displayName)
     }
 
     func clearHistory() async throws {

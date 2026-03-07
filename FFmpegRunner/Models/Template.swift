@@ -128,12 +128,17 @@ extension Template {
         description: String,
         category: String?,
         defaultValuesByKey: [String: String] = [:],
-        icon: String? = nil
+        icon: String? = nil,
+        preservingFileParameterDefaults: Bool = false
     ) -> Template {
         let copiedParameters = parameters.map { parameter in
             var parameter = parameter
             if let defaultValue = defaultValuesByKey[parameter.key] {
-                parameter.defaultValue = defaultValue
+                if parameter.type == .file && !preservingFileParameterDefaults {
+                    parameter.defaultValue = ""
+                } else {
+                    parameter.defaultValue = defaultValue
+                }
             }
             return parameter
         }
@@ -144,7 +149,7 @@ extension Template {
             description: description,
             commandTemplate: commandTemplate,
             parameters: copiedParameters,
-            category: category ?? self.category,
+            category: category ?? "用户模板",
             icon: icon ?? self.icon
         )
     }
