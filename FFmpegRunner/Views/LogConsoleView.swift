@@ -376,30 +376,27 @@ struct LogContentView: View {
                 }
 
                 // 底部锚点 + 智能自动滚动检测
-                GeometryReader { geo in
-                    Color.clear
-                        .preference(key: BottomAnchorVisibleKey.self,
-                                    value: geo.frame(in: .named("logScroll")).minY)
-                }
-                .frame(height: 1)
-                .id(bottomAnchorID)
+                // 利用 LazyVStack 的生命周期：锚点离开视口时触发 onDisappear，
+                // 回到视口时触发 onAppear，天然且可靠。
+                Color.clear
+                    .frame(height: 1)
+                    .id(bottomAnchorID)
+                    .onAppear {
+                        isAtBottom = true
+                        // 滚回底部 → 恢复自动滚动
+                        if !autoScroll && !isProgrammaticScroll {
+                            autoScroll = true
+                        }
+                    }
+                    .onDisappear {
+                        isAtBottom = false
+                        // 用户离开底部 → 暂停自动滚动
+                        if autoScroll && !isProgrammaticScroll {
+                            autoScroll = false
+                        }
+                    }
             }
             .padding(8)
-        }
-        .coordinateSpace(name: "logScroll")
-        .onPreferenceChange(BottomAnchorVisibleKey.self) { anchorMinY in
-            let isVisible = anchorMinY < 800 // 底部锚点在可见区域内
-            if !isProgrammaticScroll {
-                // 用户手动滚动到底部 → 恢复自动滚动
-                if isVisible && !isAtBottom {
-                    autoScroll = true
-                }
-                // 用户手动离开底部 → 暂停自动滚动
-                if !isVisible && isAtBottom && autoScroll {
-                    autoScroll = false
-                }
-            }
-            isAtBottom = isVisible
         }
     }
 
@@ -427,15 +424,6 @@ struct LogContentView: View {
             try? await Task.sleep(nanoseconds: 200_000_000)
             isProgrammaticScroll = false
         }
-    }
-}
-
-// MARK: - 底部锚点可见性 PreferenceKey
-
-private struct BottomAnchorVisibleKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
     }
 }
 
