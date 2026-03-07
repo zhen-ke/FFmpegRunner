@@ -38,6 +38,9 @@ class ExecutionViewModel: ObservableObject {
     /// 日志过滤级别
     @Published var logFilter: LogFilter = .all
 
+    /// 日志搜索关键字
+    @Published var searchText: String = ""
+
     /// 过滤后的日志（缓存结果，避免每次 body 刷新都重新过滤）
     @Published private(set) var visibleLogs: [LogEntry] = []
 
@@ -143,19 +146,27 @@ class ExecutionViewModel: ObservableObject {
             self?.appendLog(entry)
         }
 
-        // 监听 logs 和 filter 变化，使用 throttle 防抖处理
+        // 监听 logs、filter、searchText 变化，使用 throttle 防抖处理
         // 避免每次 body 刷新都重新过滤整个日志数组
-        Publishers.CombineLatest($logs, $logFilter)
+        Publishers.CombineLatest3($logs, $logFilter, $searchText)
             .throttle(for: .milliseconds(100), scheduler: RunLoop.main, latest: true)
-            .map { logs, filter -> [LogEntry] in
+            .map { logs, filter, search -> [LogEntry] in
+                var result: [LogEntry]
                 switch filter {
                 case .all:
-                    return logs
+                    result = logs
                 case .important:
-                    return logs.filter { $0.level == .error || $0.level == .warning }
+                    result = logs.filter { $0.level == .error || $0.level == .warning }
                 case .noDebug:
-                    return logs.filter { $0.level != .debug }
+                    result = logs.filter { $0.level != .debug }
                 }
+                // 应用文本搜索
+                if !search.isEmpty {
+                    result = result.filter {
+                        $0.message.localizedCaseInsensitiveContains(search)
+                    }
+                }
+                return result
             }
             .assign(to: &$visibleLogs)
     }
@@ -288,6 +299,7 @@ class ExecutionViewModel: ObservableObject {
     func clearLogs() {
         logs = []
         visibleLogs = []
+        searchText = ""
         lastProgressLogTime = nil
     }
 
@@ -313,23 +325,28 @@ class ExecutionViewModel: ObservableObject {
     private func trimLogsIfNeeded() {
         guard logs.count > maxLogEntries else { return }
 
-        var overflow = logs.count - maxLogEntries
+        let overflow = logs.count - maxLogEntries
 
-        // 优先移除不重要日志（debug/info），保留错误/警告
-        var index = 0
-        while overflow > 0, index < logs.count {
-            if !logs[index].isImportant {
-                logs.remove(at: index)
-                overflow -= 1
-                continue
+        // 单次遍历：优先标记不重要日志为待移除
+        var removedCount = 0
+        var keepIndices: [Int] = []
+        keepIndices.reserveCapacity(maxLogEntries)
+
+        for i in logs.indices {
+            if removedCount < overflow && !logs[i].isImportant {
+                removedCount += 1
+            } else {
+                keepIndices.append(i)
             }
-            index += 1
         }
 
-        // 如果仍超出，移除最旧的日志
-        if overflow > 0 {
-            logs.removeFirst(overflow)
+        // 如果仍超出，从头部移除最旧的日志（含重要日志）
+        if removedCount < overflow {
+            let extra = overflow - removedCount
+            keepIndices = Array(keepIndices.dropFirst(extra))
         }
+
+        logs = keepIndices.map { logs[$0] }
     }
 
     /// 导出日志

@@ -168,8 +168,17 @@ struct LogEntry: Identifiable, Equatable {
     /// 是否包含错误关键字（构造时预计算，避免重复字符串搜索）
     let containsErrorKeyword: Bool
 
+    /// 格式化的时间戳（构造时预计算，避免每次 View 刷新重复格式化）
+    let formattedTimestamp: String
+
     /// 错误关键字列表
     private static let errorKeywords = ["error", "failed", "invalid", "cannot", "no such", "not found", "denied", "fatal"]
+
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter
+    }()
 
     /// 初始化器
     init(
@@ -189,18 +198,9 @@ struct LogEntry: Identifiable, Equatable {
         // 预计算错误关键字检测，避免每次 View 刷新都重新搜索
         let lowercased = message.lowercased()
         self.containsErrorKeyword = Self.errorKeywords.contains { lowercased.contains($0) }
+        // 预计算时间戳格式化
+        self.formattedTimestamp = Self.timestampFormatter.string(from: timestamp)
     }
-
-    /// 格式化的时间戳
-    var formattedTimestamp: String {
-        Self.timestampFormatter.string(from: timestamp)
-    }
-
-    private static let timestampFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        return formatter
-    }()
 
     /// 是否为重要日志（错误/警告）
     var isImportant: Bool {
@@ -217,7 +217,8 @@ struct LogEntry: Identifiable, Equatable {
             message: message,
             isStderr: isStderr,
             isProgress: isProgress,
-            containsErrorKeyword: containsErrorKeyword
+            containsErrorKeyword: containsErrorKeyword,
+            formattedTimestamp: formattedTimestamp
         )
     }
 
@@ -229,7 +230,8 @@ struct LogEntry: Identifiable, Equatable {
         message: String,
         isStderr: Bool,
         isProgress: Bool,
-        containsErrorKeyword: Bool
+        containsErrorKeyword: Bool,
+        formattedTimestamp: String
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -238,6 +240,7 @@ struct LogEntry: Identifiable, Equatable {
         self.isStderr = isStderr
         self.isProgress = isProgress
         self.containsErrorKeyword = containsErrorKeyword
+        self.formattedTimestamp = formattedTimestamp
     }
 }
 

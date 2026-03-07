@@ -51,10 +51,12 @@ struct LogConsoleView: View {
             ConsoleHeaderView(
                 autoScroll: $autoScroll,
                 logFilter: $viewModel.logFilter,
+                searchText: $viewModel.searchText,
                 onClear: viewModel.clearLogs,
                 onExport: { showExportSheet = true },
                 state: viewModel.state,
-                isFFmpegAvailable: viewModel.isFFmpegAvailable
+                isFFmpegAvailable: viewModel.isFFmpegAvailable,
+                matchCount: viewModel.searchText.isEmpty ? nil : viewModel.visibleLogs.count
             )
 
             Divider()
@@ -62,7 +64,7 @@ struct LogConsoleView: View {
             // 日志内容
             LogContentView(
                 logs: viewModel.visibleLogs,
-                autoScroll: autoScroll,
+                autoScroll: $autoScroll,
                 isRunning: viewModel.state.isRunning
             )
 
@@ -104,84 +106,150 @@ struct LogConsoleView: View {
 struct ConsoleHeaderView: View {
     @Binding var autoScroll: Bool
     @Binding var logFilter: LogFilter
+    @Binding var searchText: String
     let onClear: () -> Void
     let onExport: () -> Void
     let state: ExecutionState
     let isFFmpegAvailable: Bool
+    /// 搜索匹配计数（nil 表示未搜索）
+    let matchCount: Int?
 
     @State private var showClearConfirm = false
+    @State private var showSearch = false
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
-        HStack {
-            Text("控制台")
-                .font(.headline)
+        VStack(spacing: 0) {
+            HStack {
+                Text("控制台")
+                    .font(.headline)
 
-            // 执行状态
-            ExecutionStatusBadge(state: state)
+                // 执行状态
+                ExecutionStatusBadge(state: state)
 
-            Spacer()
+                Spacer()
 
-            // FFmpeg 状态
-            if !isFFmpegAvailable {
-                Label("FFmpeg 未找到", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundColor(.orange)
-            }
+                // FFmpeg 状态
+                if !isFFmpegAvailable {
+                    Label("FFmpeg 未找到", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
 
-            // 日志过滤器
-            Menu {
-                ForEach(LogFilter.allCases, id: \.self) { filter in
-                    Button {
-                        logFilter = filter
-                    } label: {
-                        HStack {
-                            Text(filter.rawValue)
-                            if logFilter == filter {
-                                Image(systemName: "checkmark")
+                // 日志过滤器
+                Menu {
+                    ForEach(LogFilter.allCases, id: \.self) { filter in
+                        Button {
+                            logFilter = filter
+                        } label: {
+                            HStack {
+                                Text(filter.rawValue)
+                                if logFilter == filter {
+                                    Image(systemName: "checkmark")
+                                }
                             }
                         }
                     }
+                } label: {
+                    Image(systemName: logFilter == .all ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
                 }
-            } label: {
-                Image(systemName: logFilter == .all ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
-            }
-            .menuStyle(.borderlessButton)
-            .frame(width: 28)
-            .help("日志过滤: \(logFilter.rawValue)")
+                .menuStyle(.borderlessButton)
+                .frame(width: 28)
+                .help("日志过滤: \(logFilter.rawValue)")
 
-            // 自动滚动开关
-            Toggle(isOn: $autoScroll) {
-                Image(systemName: "arrow.down.to.line")
-            }
-            .toggleStyle(.button)
-            .help("自动滚动到底部")
+                // 搜索按钮
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showSearch.toggle()
+                        if showSearch {
+                            isSearchFocused = true
+                        } else {
+                            searchText = ""
+                        }
+                    }
+                } label: {
+                    Image(systemName: showSearch || !searchText.isEmpty
+                        ? "magnifyingglass.circle.fill"
+                        : "magnifyingglass")
+                }
+                .buttonStyle(.bordered)
+                .help("搜索日志")
+                .keyboardShortcut("f", modifiers: .command)
 
-            // 导出按钮
-            Button(action: onExport) {
-                Image(systemName: "square.and.arrow.up")
-            }
-            .buttonStyle(.bordered)
-            .help("导出日志")
+                // 自动滚动开关
+                Toggle(isOn: $autoScroll) {
+                    Image(systemName: "arrow.down.to.line")
+                }
+                .toggleStyle(.button)
+                .help("自动滚动到底部")
 
-            // 清空按钮
-            Button {
-                showClearConfirm = true
-            } label: {
-                Image(systemName: "trash")
+                // 导出按钮
+                Button(action: onExport) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .buttonStyle(.bordered)
+                .help("导出日志")
+
+                // 清空按钮
+                Button {
+                    showClearConfirm = true
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.bordered)
+                .help("清空日志")
+                .confirmationDialog(
+                    "确定要清空所有日志吗？",
+                    isPresented: $showClearConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("清空", role: .destructive, action: onClear)
+                    Button("取消", role: .cancel) {}
+                }
             }
-            .buttonStyle(.bordered)
-            .help("清空日志")
-            .confirmationDialog(
-                "确定要清空所有日志吗？",
-                isPresented: $showClearConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("清空", role: .destructive, action: onClear)
-                Button("取消", role: .cancel) {}
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
+            // 搜索栏（可展开/收起）
+            if showSearch {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+
+                    TextField("搜索日志...", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .font(.system(.caption, design: .monospaced))
+                        .focused($isSearchFocused)
+                        .onSubmit {}
+                        .onExitCommand {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showSearch = false
+                                searchText = ""
+                            }
+                        }
+
+                    if let count = matchCount {
+                        Text("\(count) 条匹配")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 4)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
         .background(Color(NSColor.controlBackgroundColor))
     }
 }
@@ -217,7 +285,7 @@ struct ExecutionStatusBadge: View {
 
 struct LogContentView: View {
     let logs: [LogEntry]
-    let autoScroll: Bool
+    @Binding var autoScroll: Bool
     let isRunning: Bool
 
     private struct ScrollTrigger: Equatable {
@@ -238,6 +306,12 @@ struct LogContentView: View {
 
     /// 滚动节流间隔（秒）
     private let scrollThrottleInterval: Double = 0.05 // 50ms，约 20 fps
+
+    /// 是否处于底部（用于智能自动滚动中断）
+    @State private var isAtBottom = true
+
+    /// 是否是程序触发的滚动（区分用户手动滚动 vs 自动滚动）
+    @State private var isProgrammaticScroll = false
 
     private var scrollTrigger: ScrollTrigger {
         ScrollTrigger(
@@ -280,6 +354,12 @@ struct LogContentView: View {
                         LogEntryRow(entry: entry, isLatest: false, isRunning: isRunning)
                     )
                     .id(entry.id)
+                    .contextMenu {
+                        Button("复制日志") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(entry.message, forType: .string)
+                        }
+                    }
                 }
                 // 最后一行：isLatest 为 true
                 if let last = logs.last {
@@ -287,13 +367,39 @@ struct LogContentView: View {
                         LogEntryRow(entry: last, isLatest: true, isRunning: isRunning)
                     )
                     .id(last.id)
+                    .contextMenu {
+                        Button("复制日志") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(last.message, forType: .string)
+                        }
+                    }
                 }
 
-                Color.clear
-                    .frame(height: 1)
-                    .id(bottomAnchorID)
+                // 底部锚点 + 智能自动滚动检测
+                GeometryReader { geo in
+                    Color.clear
+                        .preference(key: BottomAnchorVisibleKey.self,
+                                    value: geo.frame(in: .named("logScroll")).minY)
+                }
+                .frame(height: 1)
+                .id(bottomAnchorID)
             }
             .padding(8)
+        }
+        .coordinateSpace(name: "logScroll")
+        .onPreferenceChange(BottomAnchorVisibleKey.self) { anchorMinY in
+            let isVisible = anchorMinY < 800 // 底部锚点在可见区域内
+            if !isProgrammaticScroll {
+                // 用户手动滚动到底部 → 恢复自动滚动
+                if isVisible && !isAtBottom {
+                    autoScroll = true
+                }
+                // 用户手动离开底部 → 暂停自动滚动
+                if !isVisible && isAtBottom && autoScroll {
+                    autoScroll = false
+                }
+            }
+            isAtBottom = isVisible
         }
     }
 
@@ -313,10 +419,23 @@ struct LogContentView: View {
             // 检查是否被取消
             guard !Task.isCancelled else { return }
 
+            isProgrammaticScroll = true
             withAnimation(.easeOut(duration: 0.1)) {
                 proxy.scrollTo(bottomAnchorID, anchor: .bottom)
             }
+            // 延迟重置标志，避免滚动动画期间的 preference 变化被误判为用户滚动
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            isProgrammaticScroll = false
         }
+    }
+}
+
+// MARK: - 底部锚点可见性 PreferenceKey
+
+private struct BottomAnchorVisibleKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 

@@ -229,14 +229,4 @@ extension LogEntry {
     var displayString: String {
         "[\(formattedTimestamp)] [\(level.displayName)] \(message)"
     }
-
-    /// 带颜色的属性字符串（用于 NSTextView）
-    var colorCode: String {
-        switch level {
-        case .info: return "34"    // 蓝色
-        case .warning: return "33" // 黄色
-        case .error: return "31"   // 红色
-        case .debug: return "90"   // 灰色
-        }
-    }
 }
