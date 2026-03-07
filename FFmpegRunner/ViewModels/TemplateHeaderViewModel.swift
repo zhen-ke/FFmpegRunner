@@ -167,7 +167,7 @@ class TemplateHeaderViewModel: ObservableObject {
             successMessage = "模板「\(templateName)」保存成功"
             showSuccess = true
 
-            // 刷新模板列表
+            // 重新加载模板列表以纳入新保存的模板
             await listViewModel.loadTemplates()
 
             // 清空控制台和重置执行状态

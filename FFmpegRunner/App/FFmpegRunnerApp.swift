@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import AppKit
 
 @main
 struct FFmpegRunnerApp: App {
@@ -67,7 +66,6 @@ struct FFmpegRunnerApp: App {
         .commands {
             AppCommands(
                 navigationState: navigationState,
-                listViewModel: listViewModel,
                 detailViewModel: detailViewModel,
                 previewViewModel: previewViewModel,
                 executionViewModel: executionViewModel,
@@ -91,7 +89,6 @@ struct AppCommands: Commands {
     // MARK: - Properties
 
     let navigationState: NavigationState
-    let listViewModel: TemplateListViewModel
     let detailViewModel: TemplateDetailViewModel
     let previewViewModel: CommandPreviewViewModel
     let executionViewModel: ExecutionViewModel
@@ -107,24 +104,6 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut("s", modifiers: [.command, .option])
         }
-
-        // 文件菜单
-        CommandGroup(after: .newItem) {
-            Button("刷新模板") {
-                Task {
-                    await listViewModel.refresh()
-                }
-            }
-            .keyboardShortcut("r", modifiers: .command)
-
-            Divider()
-
-            Button("导入模板...") {
-                importTemplate()
-            }
-            .keyboardShortcut("i", modifiers: [.command, .shift])
-        }
-
         // 编辑菜单
         CommandGroup(after: .pasteboard) {
             Button("复制命令") {
@@ -160,24 +139,6 @@ struct AppCommands: Commands {
                 executionViewModel.clearLogs()
             }
             .keyboardShortcut("k", modifiers: .command)
-        }
-    }
-
-    // MARK: - Private Methods
-
-    private func importTemplate() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.prompt = "导入"
-        panel.message = "选择一个 JSON 格式的模板文件"
-
-        if panel.runModal() == .OK, let url = panel.url {
-            Task {
-                await listViewModel.importTemplate(from: url)
-            }
         }
     }
 }
