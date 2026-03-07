@@ -165,12 +165,12 @@ struct SidebarContentView: View {
     private func deleteTemplate(_ template: Template) async {
         let success = TemplateRepository.shared.deleteUserTemplate(template)
         if success {
-            // 如果删除的是当前选中的模板，清空选择
+            // 本地移除，避免完整重新加载导致 UI 闪烁
+            viewModel.removeTemplate(template)
+            // 如果删除的是当前选中的模板，自动选中第一个
             if viewModel.selectedTemplate?.id == template.id {
-                viewModel.selectedTemplate = nil
+                viewModel.selectedTemplate = viewModel.filteredTemplates.first
             }
-            // 刷新模板列表
-            await viewModel.loadTemplates()
         } else {
             activeAlert = .deleteError("无法删除模板，请检查文件权限。")
         }

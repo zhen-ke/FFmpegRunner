@@ -97,6 +97,11 @@ class TemplateListViewModel: ObservableObject {
         selectedTemplate = template
     }
 
+    /// 本地移除模板（不触发完整重新加载）
+    func removeTemplate(_ template: Template) {
+        templates.removeAll { $0.id == template.id }
+    }
+
     /// 刷新模板列表
     func refresh() async {
         await loadTemplates()
