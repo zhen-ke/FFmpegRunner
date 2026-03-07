@@ -79,20 +79,39 @@ struct ParameterUIHint: Codable, Hashable {
     /// 占位符文本
     var placeholder: String? = nil
 
+    /// 复合控件类型（如 "gifFilter"、"timeRange"）
+    /// 用于在 ParameterFormView 中路由到特殊 UI 控件
+    var compositeType: String? = nil
+
+    /// 复合控件关联的兄弟参数 key（如 timeRange 关联 duration）
+    var compositeGroup: String? = nil
+
+    /// 是否隐藏（被复合控件代理的参数标记为 true）
+    var hidden: Bool = false
+
     init(
         multiline: Bool = false,
         monospace: Bool = false,
-        placeholder: String? = nil
+        placeholder: String? = nil,
+        compositeType: String? = nil,
+        compositeGroup: String? = nil,
+        hidden: Bool = false
     ) {
         self.multiline = multiline
         self.monospace = monospace
         self.placeholder = placeholder
+        self.compositeType = compositeType
+        self.compositeGroup = compositeGroup
+        self.hidden = hidden
     }
 
     private enum CodingKeys: String, CodingKey {
         case multiline
         case monospace
         case placeholder
+        case compositeType
+        case compositeGroup
+        case hidden
     }
 
     init(from decoder: Decoder) throws {
@@ -100,6 +119,9 @@ struct ParameterUIHint: Codable, Hashable {
         multiline = try container.decodeIfPresent(Bool.self, forKey: .multiline) ?? false
         monospace = try container.decodeIfPresent(Bool.self, forKey: .monospace) ?? false
         placeholder = try container.decodeIfPresent(String.self, forKey: .placeholder)
+        compositeType = try container.decodeIfPresent(String.self, forKey: .compositeType)
+        compositeGroup = try container.decodeIfPresent(String.self, forKey: .compositeGroup)
+        hidden = try container.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -107,6 +129,9 @@ struct ParameterUIHint: Codable, Hashable {
         try container.encode(multiline, forKey: .multiline)
         try container.encode(monospace, forKey: .monospace)
         try container.encodeIfPresent(placeholder, forKey: .placeholder)
+        try container.encodeIfPresent(compositeType, forKey: .compositeType)
+        try container.encodeIfPresent(compositeGroup, forKey: .compositeGroup)
+        if hidden { try container.encode(hidden, forKey: .hidden) }
     }
 }
 

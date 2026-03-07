@@ -37,7 +37,8 @@
       "isRequired": true,
       "uiHint": {
         "multiline": true,
-        "monospace": true
+        "monospace": true,
+        "compositeType": "gifFilter"
       }
     },
     {

@@ -84,6 +84,9 @@ final class TemplateDetailViewModel: ObservableObject {
     private var cache = TemplateDetailCache()
     private let outputPathEngine = OutputPathAutoFillEngine()
 
+    /// macOS 系统 Undo 管理器，支持 ⌘Z / ⇧⌘Z
+    let undoManager = UndoManager()
+
     // MARK: - Initialization
 
     init(template: Template? = nil) {
@@ -102,6 +105,7 @@ final class TemplateDetailViewModel: ObservableObject {
         let initialValues = TemplateValue.from(template: template)
         cache.rebuild(template: template, values: initialValues)
         outputPathEngine.reset()
+        undoManager.removeAllActions()
         state = buildState(template: template, values: initialValues)
     }
 
@@ -112,7 +116,14 @@ final class TemplateDetailViewModel: ObservableObject {
               index < state.values.count else { return }
 
         var nextValues = state.values
-        if nextValues[index].rawValue == value { return }
+        let oldValue = nextValues[index].rawValue
+        if oldValue == value { return }
+
+        // 注册 Undo
+        undoManager.registerUndo(withTarget: self) { vm in
+            vm.updateValue(key: key, value: oldValue)
+        }
+        undoManager.setActionName("修改 \(cache.parameter(for: key)?.label ?? key)")
 
         nextValues[index].rawValue = value
 
@@ -148,6 +159,7 @@ final class TemplateDetailViewModel: ObservableObject {
 
     /// 重置为默认值
     func resetToDefaults() {
+        undoManager.removeAllActions()
         selectTemplate(state.template)
     }
 

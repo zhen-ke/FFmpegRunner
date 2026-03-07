@@ -19,14 +19,21 @@
       "type": "string",
       "defaultValue": "00:00:00",
       "placeholder": "格式 HH:MM:SS 或秒数",
-      "isRequired": true
+      "isRequired": true,
+      "uiHint": {
+        "compositeType": "timeRange",
+        "compositeGroup": "duration"
+      }
     },
     {
       "key": "duration",
       "label": "截取时长 (秒)",
       "type": "number",
       "defaultValue": "60",
-      "isRequired": true
+      "isRequired": true,
+      "uiHint": {
+        "hidden": true
+      }
     },
     {
       "key": "output",

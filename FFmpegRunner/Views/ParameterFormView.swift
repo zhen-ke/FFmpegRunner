@@ -20,18 +20,19 @@ struct ParameterFormView: View {
         VStack(alignment: .leading, spacing: 16) {
             if let template = viewModel.template {
                 ForEach(template.parameters) { parameter in
-                    if template.id == "video_to_gif", parameter.key == "filter" {
+                    if parameter.uiHint?.compositeType == "gifFilter" {
                         GifFpsWidthField(
                             filterValue: viewModel.binding(for: parameter.key),
                             validationError: viewModel.validationErrors[parameter.key]
                         )
-                    } else if template.id == "fast_cut", parameter.key == "startTime" {
+                    } else if parameter.uiHint?.compositeType == "timeRange" {
+                        let groupKey = parameter.uiHint?.compositeGroup ?? "duration"
                         FastCutTimeRangeField(
-                            startTime: viewModel.binding(for: "startTime"),
-                            duration: viewModel.binding(for: "duration"),
-                            startValidationError: viewModel.validationErrors["startTime"]
+                            startTime: viewModel.binding(for: parameter.key),
+                            duration: viewModel.binding(for: groupKey),
+                            startValidationError: viewModel.validationErrors[parameter.key]
                         )
-                    } else if template.id == "fast_cut", parameter.key == "duration" {
+                    } else if parameter.uiHint?.hidden == true {
                         EmptyView()
                     } else {
                         ParameterFieldView(

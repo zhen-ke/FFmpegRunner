@@ -52,6 +52,7 @@ struct FFmpegRunnerApp: App {
                 .environmentObject(recentCommandsViewModel)
                 .environmentObject(headerViewModel)
                 .environmentObject(navigationState)
+                .background(UndoManagerInstaller(undoManager: detailViewModel.undoManager))
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear {
                     NotificationService.shared.configure()

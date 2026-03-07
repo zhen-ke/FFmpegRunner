@@ -60,6 +60,8 @@
 		001A0037 /* TemplateHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0037 /* TemplateHeaderView.swift */; };
 		001A0038 /* SaveAsTemplateSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0038 /* SaveAsTemplateSheet.swift */; };
 		001A0039 /* EmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0039 /* EmptyStateView.swift */; };
+		001A0040 /* ExecutionAlerts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0040 /* ExecutionAlerts.swift */; };
+		001A0041 /* UndoManagerInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0041 /* UndoManagerInstaller.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -118,6 +120,8 @@
 		001B0037 /* TemplateHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateHeaderView.swift; sourceTree = "<group>"; };
 		001B0038 /* SaveAsTemplateSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaveAsTemplateSheet.swift; sourceTree = "<group>"; };
 		001B0039 /* EmptyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyStateView.swift; sourceTree = "<group>"; };
+		001B0040 /* ExecutionAlerts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutionAlerts.swift; sourceTree = "<group>"; };
+		001B0041 /* UndoManagerInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UndoManagerInstaller.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -169,6 +173,7 @@
 			children = (
 				001B0001 /* FFmpegRunnerApp.swift */,
 				001B0002 /* AppEnvironment.swift */,
+				001B0041 /* UndoManagerInstaller.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -236,6 +241,7 @@
 				001B0037 /* TemplateHeaderView.swift */,
 				001B0038 /* SaveAsTemplateSheet.swift */,
 				001B0039 /* EmptyStateView.swift */,
+				001B0040 /* ExecutionAlerts.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -458,6 +464,8 @@
 				001A0037 /* TemplateHeaderView.swift in Sources */,
 				001A0038 /* SaveAsTemplateSheet.swift in Sources */,
 				001A0039 /* EmptyStateView.swift in Sources */,
+				001A0040 /* ExecutionAlerts.swift in Sources */,
+				001A0041 /* UndoManagerInstaller.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
