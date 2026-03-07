@@ -79,11 +79,15 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
 
     /// 相对时间描述
     var relativeDate: String {
+        Self.relativeDateFormatter.localizedString(for: lastUsedAt, relativeTo: Date())
+    }
+
+    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.unitsStyle = .full
-        return formatter.localizedString(for: lastUsedAt, relativeTo: Date())
-    }
+        return formatter
+    }()
 
     /// 用于结构化去重的签名。
     var signature: Signature {

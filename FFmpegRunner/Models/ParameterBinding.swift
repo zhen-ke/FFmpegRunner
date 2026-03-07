@@ -80,7 +80,9 @@ struct ParameterBinding: Identifiable, Hashable {
     }
 
     static func == (lhs: ParameterBinding, rhs: ParameterBinding) -> Bool {
-        lhs.key == rhs.key && lhs.rawValue == rhs.rawValue
+        lhs.parameter == rhs.parameter &&
+        lhs.rawValue == rhs.rawValue &&
+        lhs.parsedValue == rhs.parsedValue
     }
 }
 

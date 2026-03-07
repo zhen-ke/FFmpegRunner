@@ -60,7 +60,13 @@ struct Template: Codable, Identifiable, Hashable {
     }
 
     static func == (lhs: Template, rhs: Template) -> Bool {
-        lhs.id == rhs.id
+        lhs.id == rhs.id &&
+        lhs.name == rhs.name &&
+        lhs.description == rhs.description &&
+        lhs.commandTemplate == rhs.commandTemplate &&
+        lhs.parameters == rhs.parameters &&
+        lhs.category == rhs.category &&
+        lhs.icon == rhs.icon
     }
 }
 

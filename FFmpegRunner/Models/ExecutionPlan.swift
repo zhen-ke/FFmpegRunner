@@ -126,7 +126,9 @@ extension ExecutionPlan {
         lhs.executable == rhs.executable &&
         lhs.arguments == rhs.arguments &&
         lhs.displayCommand == rhs.displayCommand &&
-        lhs.templateId == rhs.templateId
+        lhs.templateId == rhs.templateId &&
+        lhs.templateName == rhs.templateName &&
+        lhs.validatedBindings == rhs.validatedBindings
     }
 }
 

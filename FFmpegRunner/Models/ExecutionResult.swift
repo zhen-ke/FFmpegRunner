@@ -33,9 +33,13 @@ struct ExecutionResult {
         exitCode == 0
     }
 
-    /// 是否被取消 (FFmpeg 收到 q 退出通常为 255，被 kill 通常为 SIGTERM(15) 或 SIGKILL(9))
+    /// 是否被取消
+    /// - FFmpeg 收到 `q` 退出通常为 255
+    /// - 被 SIGINT (Ctrl-C) 终止: 128 + 2 = 130
+    /// - 被 SIGTERM 终止: 128 + 15 = 143
+    /// - 被 SIGKILL 终止: 128 + 9 = 137
     var isCancelled: Bool {
-        exitCode == 255 || exitCode == 15 || exitCode == 9 || exitCode == 2
+        exitCode == 255 || exitCode == 130 || exitCode == 143 || exitCode == 137
     }
 
     /// 执行耗时（秒）

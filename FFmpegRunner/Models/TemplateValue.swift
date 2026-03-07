@@ -31,7 +31,8 @@ enum ParsedValue: Hashable {
     var stringValue: String {
         switch self {
         case .string(let s): return s
-        case .number(let n): return String(n)
+        case .number(let n):
+            return n.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(n)) : String(n)
         case .bool(let b): return b ? "true" : "false"
         case .file(let url): return url.path
         }
@@ -101,7 +102,10 @@ extension TemplateValue {
     }
 
     static func == (lhs: TemplateValue, rhs: TemplateValue) -> Bool {
-        lhs.key == rhs.key && lhs.rawValue == rhs.rawValue
+        lhs.key == rhs.key &&
+        lhs.rawValue == rhs.rawValue &&
+        lhs.parsedValue == rhs.parsedValue &&
+        lhs.validationResult == rhs.validationResult
     }
 }
 
@@ -180,7 +184,7 @@ typealias TemplateValueDict = [String: TemplateValue]
 extension Array where Element == TemplateValue {
     /// 转换为字典
     var asDictionary: TemplateValueDict {
-        Dictionary(uniqueKeysWithValues: map { ($0.key, $0) })
+        Dictionary(map { ($0.key, $0) }, uniquingKeysWith: { _, last in last })
     }
 
     /// 检查是否所有值都有效
