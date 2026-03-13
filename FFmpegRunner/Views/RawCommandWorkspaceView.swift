@@ -39,7 +39,7 @@ struct RawCommandWorkspaceView: View {
                         }
                     }
 
-                    Text("直接编辑完整 FFmpeg 命令，执行日志保留在下方控制台，不再重复显示单独预览。")
+                    Text("直接编辑完整 FFmpeg 命令，日志保留在下方控制台。输入参数时可用 Tab 补全常见选项。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }

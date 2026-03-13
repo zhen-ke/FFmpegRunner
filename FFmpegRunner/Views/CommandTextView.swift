@@ -76,7 +76,9 @@ struct CommandTextView: View {
     @State private var selectionRange: NSRange = NSRange(location: 0, length: 0)
 
     /// 路径校验提示
-    @State private var validationIssues: [CommandPathIssue] = []
+    @State private var diagnostics: [CommandEditorDiagnostic] = []
+    @State private var inlineCompletionSuffix = ""
+    @State private var completionReplacementRange = NSRange(location: NSNotFound, length: 0)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -89,6 +91,8 @@ struct CommandTextView: View {
                         isFocused: $isFocused,
                         isDragging: $isDragging,
                         selectionRange: $selectionRange,
+                        inlineCompletionSuffix: inlineCompletionSuffix,
+                        onRequestCompletion: { handleCompletionRequest() },
                         onInsertFile: { insertFile(isDirectory: false) },
                         onInsertDirectory: { insertFile(isDirectory: true) }
                     )
@@ -132,17 +136,12 @@ struct CommandTextView: View {
                 }
             }
 
-            if !validationIssues.isEmpty {
+            if !diagnostics.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(validationIssues) { issue in
-                        HStack(spacing: 6) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 10))
-                                .foregroundColor(.red)
-                            Text(issue.message)
-                                .font(.caption2)
-                                .foregroundColor(.red)
-                        }
+                    ForEach(diagnostics) { diagnostic in
+                        Label(diagnostic.message, systemImage: diagnostic.severity.symbolName)
+                            .font(.caption)
+                            .foregroundStyle(diagnostic.severity == .error ? .red : .orange)
                     }
                 }
                 .padding(.leading, 4)
@@ -151,12 +150,22 @@ struct CommandTextView: View {
         .onAppear {
             updateMenuHint(for: text, selection: selectionRange)
             flushPendingInsertionsIfPossible()
+            refreshCompletionSuggestions()
         }
         .onChange(of: text) { newValue in
             updateMenuHint(for: newValue, selection: selectionRange)
+            refreshCompletionSuggestions()
         }
         .onChange(of: selectionRange) { newRange in
             updateMenuHint(for: text, selection: newRange)
+            refreshCompletionSuggestions()
+        }
+        .onChange(of: isFocused) { newValue in
+            if !newValue {
+                inlineCompletionSuffix = ""
+            } else {
+                refreshCompletionSuggestions()
+            }
         }
         .task(id: coordinator != nil) {
             await MainActor.run {
@@ -171,7 +180,7 @@ struct CommandTextView: View {
             }
 
             guard !Task.isCancelled else { return }
-            validationIssues = collectValidationIssues(from: text)
+            diagnostics = CommandEditorAssistant.diagnostics(for: text)
         }
     }
 
@@ -224,94 +233,102 @@ struct CommandTextView: View {
         }
     }
 
-    // MARK: - Path Validation
+    private func handleCompletionRequest() -> Bool {
+        let result = currentCompletionContext(force: true)
+        completionReplacementRange = result.range
+
+        guard let suggestion = result.suggestion else {
+            inlineCompletionSuffix = ""
+            return false
+        }
+
+        applyCompletion(suggestion)
+        return true
+    }
+
+    private func applyCompletion(_ suggestion: String) {
+        guard completionReplacementRange.location != NSNotFound else { return }
+        coordinator?.applyCompletion(suggestion, replacing: completionReplacementRange)
+        inlineCompletionSuffix = ""
+    }
+
+    private func refreshCompletionSuggestions() {
+        let result = currentCompletionContext(force: false)
+        completionReplacementRange = result.range
+        inlineCompletionSuffix = result.inlineSuffix
+    }
+
+    private func currentCompletionContext(force: Bool) -> (suggestion: String?, range: NSRange, inlineSuffix: String) {
+        guard isFocused else {
+            return (nil, NSRange(location: NSNotFound, length: 0), "")
+        }
+
+        let range = completionRange(in: text, selection: selectionRange)
+        let partial = substring(in: text, range: range)
+        let suggestions = CommandEditorAssistant.completions(
+            for: text,
+            selectedRange: selectionRange,
+            partialRange: range
+        )
+        let suggestion = suggestions.first
+
+        guard let suggestion else {
+            return (nil, range, "")
+        }
+
+        let isCursorAtTokenEnd = selectionRange.location != NSNotFound &&
+            selectionRange.length == 0 &&
+            selectionRange.location == range.location + range.length
+        let shouldShowInline = !force &&
+            !partial.isEmpty &&
+            isCursorAtTokenEnd &&
+            suggestion.hasPrefix(partial) &&
+            suggestion.count > partial.count
+        let inlineSuffix = shouldShowInline ? String(suggestion.dropFirst(partial.count)) : ""
+        return (suggestion, range, inlineSuffix)
+    }
+
+    private func completionRange(in text: String, selection: NSRange) -> NSRange {
+        guard selection.location != NSNotFound else {
+            return NSRange(location: text.utf16.count, length: 0)
+        }
+
+        let nsText = text as NSString
+        let length = nsText.length
+        let cursor = min(max(selection.location, 0), length)
+
+        var start = cursor
+        while start > 0 {
+            let scalar = UnicodeScalar(nsText.character(at: start - 1))
+            guard let scalar,
+                  !CharacterSet.whitespacesAndNewlines.contains(scalar) else {
+                break
+            }
+            start -= 1
+        }
+
+        var end = cursor
+        while end < length {
+            let scalar = UnicodeScalar(nsText.character(at: end))
+            guard let scalar,
+                  !CharacterSet.whitespacesAndNewlines.contains(scalar) else {
+                break
+            }
+            end += 1
+        }
+
+        return NSRange(location: start, length: end - start)
+    }
+
+    private func substring(in text: String, range: NSRange) -> String {
+        guard let swiftRange = Range(range, in: text) else { return "" }
+        return String(text[swiftRange])
+    }
 
     private func stringIndexForUTF16Offset(_ offset: Int, in text: String) -> String.Index {
         let clampedOffset = min(max(offset, 0), text.utf16.count)
         let utf16Index = text.utf16.index(text.utf16.startIndex, offsetBy: clampedOffset)
         return String.Index(utf16Index, within: text) ?? text.endIndex
-    }
-
-    private func collectValidationIssues(from text: String) -> [CommandPathIssue] {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
-
-        let args = CommandRenderer.splitCommand(trimmed)
-        guard !args.isEmpty else { return [] }
-
-        var issues: [CommandPathIssue] = []
-        let fm = FileManager.default
-
-        // 1) 校验 -i 输入文件是否存在（仅检查绝对路径或 ~）
-        for index in 0..<args.count {
-            guard args[index] == "-i", index + 1 < args.count else { continue }
-            let candidate = args[index + 1]
-            guard shouldValidatePath(candidate) else { continue }
-
-            let expanded = (candidate as NSString).expandingTildeInPath
-            if !fm.fileExists(atPath: expanded) {
-                issues.append(CommandPathIssue(message: "输入文件不存在：\(candidate)"))
-            }
-        }
-
-        // 2) 输出格式与扩展名不一致（轻量提示）
-        if let output = findOutputPath(in: args),
-           let format = findLastFormat(in: args),
-           let ext = output.pathExtensionLowercased,
-           !ext.isEmpty,
-           format != ext {
-            issues.append(CommandPathIssue(message: "输出格式 (-f \(format)) 与扩展名 (.\(ext)) 可能不一致"))
-        }
-
-        // 限制提示数量，避免干扰
-        if issues.count > 3 {
-            return Array(issues.prefix(3))
-        }
-
-        return issues
-    }
-
-    private func shouldValidatePath(_ value: String) -> Bool {
-        if value.hasPrefix("-") { return false }
-        if value == "-" { return false }
-        if value.contains("://") { return false }
-        if value.hasPrefix("pipe:") || value.hasPrefix("concat:") { return false }
-        return value.hasPrefix("/") || value.hasPrefix("~")
-    }
-
-    private func findOutputPath(in args: [String]) -> String? {
-        // 需要跳过值的常见 FFmpeg flags
-        let flagsWithValue: Set<String> = [
-            "-i", "-f", "-c", "-c:v", "-c:a", "-b:v", "-b:a",
-            "-r", "-s", "-vf", "-af", "-preset", "-crf",
-            "-map", "-t", "-ss", "-to", "-filter_complex"
-        ]
-
-        var i = 0
-        var lastPositional: String?
-
-        while i < args.count {
-            let arg = args[i]
-            if flagsWithValue.contains(arg) {
-                i += 2 // 跳过 flag 及其值
-            } else if arg.hasPrefix("-") {
-                i += 1 // 跳过无值 flag
-            } else {
-                lastPositional = arg
-                i += 1
-            }
-        }
-
-        return lastPositional
-    }
-
-    private func findLastFormat(in args: [String]) -> String? {
-        var format: String?
-        for index in 0..<args.count {
-            guard args[index] == "-f", index + 1 < args.count else { continue }
-            format = args[index + 1].lowercased()
-        }
-        return format
     }
 }
 
@@ -388,13 +405,6 @@ private extension View {
     }
 }
 
-// MARK: - Command Path Issue
-
-private struct CommandPathIssue: Identifiable {
-    let id = UUID()
-    let message: String
-}
-
 private extension String {
     var pathExtensionLowercased: String? {
         let ext = (self as NSString).pathExtension.lowercased()
@@ -418,6 +428,8 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
     @Binding var isFocused: Bool
     @Binding var isDragging: Bool
     @Binding var selectionRange: NSRange
+    var inlineCompletionSuffix: String
+    var onRequestCompletion: (() -> Bool)?
     var onInsertFile: (() -> Void)?
     var onInsertDirectory: (() -> Void)?
 
@@ -460,6 +472,8 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
         // 设置代理
         textView.delegate = context.coordinator
         context.coordinator.textView = textView
+        textView.inlineCompletionSuffix = inlineCompletionSuffix
+        textView.onRequestCompletion = onRequestCompletion
         textView.onInsertFile = onInsertFile
         textView.onInsertDirectory = onInsertDirectory
 
@@ -485,6 +499,8 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
             (textView as? CommandNSTextView)?.invalidatePathCacheExternally()
         }
         if let commandTextView = textView as? CommandNSTextView {
+            commandTextView.inlineCompletionSuffix = inlineCompletionSuffix
+            commandTextView.onRequestCompletion = onRequestCompletion
             commandTextView.onInsertFile = onInsertFile
             commandTextView.onInsertDirectory = onInsertDirectory
         }
@@ -560,12 +576,39 @@ struct CommandTextViewRepresentable: NSViewRepresentable {
             textView.insertText(textWithSpacing, replacementRange: range)
             parent.text = textView.string
         }
+
+        func applyCompletion(_ suggestion: String, replacing range: NSRange) {
+            guard let textView = textView else { return }
+
+            let nsText = textView.string as NSString
+            let nextLocation = range.location + range.length
+            let needsTrailingSpace: Bool
+            if nextLocation >= nsText.length {
+                needsTrailingSpace = true
+            } else {
+                let nextScalar = UnicodeScalar(nsText.character(at: nextLocation))
+                needsTrailingSpace = nextScalar.map { !CharacterSet.whitespacesAndNewlines.contains($0) } ?? true
+            }
+
+            let replacement = needsTrailingSpace ? "\(suggestion) " : suggestion
+            textView.insertText(replacement, replacementRange: range)
+            parent.text = textView.string
+        }
     }
 }
 
 // MARK: - Custom NSTextView with Drag Support
 
 final class CommandNSTextView: NSTextView {
+    var inlineCompletionSuffix = "" {
+        didSet {
+            if oldValue != inlineCompletionSuffix {
+                setNeedsDisplay(bounds)
+            }
+        }
+    }
+
+    var onRequestCompletion: (() -> Bool)?
 
     var onInsertFile: (() -> Void)?
     var onInsertDirectory: (() -> Void)?
@@ -696,6 +739,8 @@ final class CommandNSTextView: NSTextView {
         }
 
         super.draw(dirtyRect)
+
+        drawInlineCompletionIfNeeded()
     }
 
     // MARK: - Keyboard Shortcuts
@@ -714,7 +759,70 @@ final class CommandNSTextView: NSTextView {
             return
         }
 
+        if flags.isEmpty, event.keyCode == 48, onRequestCompletion?() == true {
+            return
+        }
+
         super.keyDown(with: event)
+    }
+
+    private func drawInlineCompletionIfNeeded() {
+        guard !inlineCompletionSuffix.isEmpty,
+              let font,
+              let rect = inlineCompletionRect() else {
+            return
+        }
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.tertiaryLabelColor
+        ]
+        NSAttributedString(string: inlineCompletionSuffix, attributes: attributes)
+            .draw(at: rect.origin)
+    }
+
+    private func inlineCompletionRect() -> NSRect? {
+        guard let layoutManager, let textContainer else { return nil }
+
+        let selection = selectedRange()
+        guard selection.location != NSNotFound, selection.length == 0 else { return nil }
+
+        let lineHeight = layoutManager.defaultLineHeight(for: font ?? .monospacedSystemFont(ofSize: 13, weight: .regular))
+
+        if string.isEmpty {
+            return NSRect(
+                x: textContainerInset.width,
+                y: textContainerInset.height,
+                width: 0,
+                height: lineHeight
+            )
+        }
+
+        let maxCharacterIndex = string.utf16.count
+        let characterIndex = min(selection.location, maxCharacterIndex)
+
+        if characterIndex == 0 {
+            return NSRect(
+                x: textContainerInset.width,
+                y: textContainerInset.height,
+                width: 0,
+                height: lineHeight
+            )
+        }
+
+        let anchorIndex = min(characterIndex - 1, maxCharacterIndex - 1)
+        let glyphIndex = layoutManager.glyphIndexForCharacter(at: anchorIndex)
+        var rect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyphIndex, length: 1), in: textContainer)
+        rect.origin.x += textContainerInset.width
+        rect.origin.y += textContainerInset.height
+
+        if characterIndex == maxCharacterIndex {
+            rect.origin.x += rect.width
+        }
+
+        rect.size.width = 0
+        rect.size.height = lineHeight
+        return rect
     }
 
     // MARK: - Drag & Drop

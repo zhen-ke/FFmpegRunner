@@ -14,6 +14,7 @@
 		87BFD673DA0A43C0AE0C4AA0 /* TemplateValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA5DAA0F6C8C4BADA831EA35 /* TemplateValidator.swift */; };
 		530950BCB4F94F878F4555CD /* TemplateSorter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F18260226DD42C193DB5E8D /* TemplateSorter.swift */; };
 		08C7C357CCD34E78A24FD67F /* TemplateRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69A961845DB84B18B9E0C1A0 /* TemplateRepository.swift */; };
+		001A0044 /* CommandEditorAssistant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0044 /* CommandEditorAssistant.swift */; };
 		001A0001 /* FFmpegRunnerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0001 /* FFmpegRunnerApp.swift */; };
 		001A0002 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0002 /* AppEnvironment.swift */; };
 		001A0003 /* Template.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0003 /* Template.swift */; };
@@ -56,6 +57,7 @@
 		001A0034 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0034 /* SettingsView.swift */; };
 		002A0001 /* SplitCommandTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002B0001 /* SplitCommandTests.swift */; };
 		002A0002 /* CommandValidatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002B0002 /* CommandValidatorTests.swift */; };
+		002A0004 /* CommandEditorAssistantTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002B0004 /* CommandEditorAssistantTests.swift */; };
 		00A1B001 /* FFmpegServiceRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00A1B002 /* FFmpegServiceRegressionTests.swift */; };
 		001A0035 /* TemplateHeaderViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0035 /* TemplateHeaderViewModel.swift */; };
 		001A0036 /* LogFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0036 /* LogFilter.swift */; };
@@ -93,6 +95,7 @@
 		001B0017 /* ParameterFormView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParameterFormView.swift; sourceTree = "<group>"; };
 		001B0042 /* StandardTemplateWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StandardTemplateWorkspaceView.swift; sourceTree = "<group>"; };
 		001B0043 /* RawCommandWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawCommandWorkspaceView.swift; sourceTree = "<group>"; };
+		001B0044 /* CommandEditorAssistant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandEditorAssistant.swift; sourceTree = "<group>"; };
 		001B0050 /* CommandTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandTextView.swift; sourceTree = "<group>"; };
 		001B0018 /* CommandPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPreviewView.swift; sourceTree = "<group>"; };
 		001B0019 /* LogConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogConsoleView.swift; sourceTree = "<group>"; };
@@ -117,6 +120,7 @@
 		001B0034 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		002B0001 /* SplitCommandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitCommandTests.swift; sourceTree = "<group>"; };
 		002B0002 /* CommandValidatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandValidatorTests.swift; sourceTree = "<group>"; };
+		002B0004 /* CommandEditorAssistantTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandEditorAssistantTests.swift; sourceTree = "<group>"; };
 		00A1B002 /* FFmpegServiceRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFmpegServiceRegressionTests.swift; sourceTree = "<group>"; };
 		002B0003 /* FFmpegRunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FFmpegRunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		001B0035 /* TemplateHeaderViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateHeaderViewModel.swift; sourceTree = "<group>"; };
@@ -208,6 +212,7 @@
 				FA5DAA0F6C8C4BADA831EA35 /* TemplateValidator.swift */,
 				3F18260226DD42C193DB5E8D /* TemplateSorter.swift */,
 				69A961845DB84B18B9E0C1A0 /* TemplateRepository.swift */,
+				001B0044 /* CommandEditorAssistant.swift */,
 				001B0008 /* CommandRenderer.swift */,
 				001B0009 /* FFmpegService.swift */,
 				001B0010 /* ProcessLogger.swift */,
@@ -286,6 +291,7 @@
 			children = (
 				002B0001 /* SplitCommandTests.swift */,
 				002B0002 /* CommandValidatorTests.swift */,
+				002B0004 /* CommandEditorAssistantTests.swift */,
 				00A1B002 /* FFmpegServiceRegressionTests.swift */,
 			);
 			path = FFmpegRunnerTests;
@@ -399,6 +405,7 @@
 			files = (
 				002A0001 /* SplitCommandTests.swift in Sources */,
 				002A0002 /* CommandValidatorTests.swift in Sources */,
+				002A0004 /* CommandEditorAssistantTests.swift in Sources */,
 				00A1B001 /* FFmpegServiceRegressionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -430,6 +437,7 @@
 				87BFD673DA0A43C0AE0C4AA0 /* TemplateValidator.swift in Sources */,
 				530950BCB4F94F878F4555CD /* TemplateSorter.swift in Sources */,
 				08C7C357CCD34E78A24FD67F /* TemplateRepository.swift in Sources */,
+				001A0044 /* CommandEditorAssistant.swift in Sources */,
 				001A0001 /* FFmpegRunnerApp.swift in Sources */,
 				001A0002 /* AppEnvironment.swift in Sources */,
 				001A0003 /* Template.swift in Sources */,
