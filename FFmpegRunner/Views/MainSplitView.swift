@@ -49,55 +49,20 @@ struct DetailContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 模板信息头部
             TemplateHeaderView()
-
             Divider()
-
-            // 主内容区域
-            HSplitView {
-                // 左侧：参数表单
-                VStack(spacing: 0) {
-                    Text("参数设置")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                        .background(Color(NSColor.controlBackgroundColor))
-
-                    Divider()
-
-                    ScrollView {
-                        ParameterFormView()
-                            .padding()
-                    }
-                }
-                .frame(minWidth: 300)
-
-                // 右侧：命令预览和日志
-                VStack(spacing: 0) {
-                    // 命令预览
-                    CommandPreviewView()
-                        .padding([.horizontal, .top], 12)
-                        .padding(.bottom, 4)
-                        .frame(minHeight: 140, maxHeight: 220)
-
-                    Divider()
-
-                    // 日志控制台
-                    LogConsoleView()
-                }
-                .frame(minWidth: 400)
+            if detailViewModel.template?.isRawCommandTemplate == true {
+                RawCommandWorkspaceView()
+            } else {
+                StandardTemplateWorkspaceView()
             }
         }
         .onAppear {
-            // DetailContentView 仅在 selectedTemplate != nil 时创建，
-            // 需要把当前选择同步到详情模型。
             detailViewModel.selectTemplate(listViewModel.selectedTemplate)
         }
         .onChange(of: listViewModel.selectedTemplate) { newTemplate in
             headerViewModel.cancelPendingExecution()
             detailViewModel.selectTemplate(newTemplate)
-            // 切换模板或历史记录时，重置控制台
             executionViewModel.clearLogs()
             executionViewModel.reset()
         }
