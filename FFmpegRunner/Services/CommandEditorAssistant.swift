@@ -2,7 +2,7 @@
 //  CommandEditorAssistant.swift
 //  FFmpegRunner
 //
-//  自定义命令编辑辅助：基础诊断与常用补全（重构版）
+//  自定义命令编辑辅助：Lexer + Knowledge Base + Conflict 诊断
 //
 
 import Foundation
@@ -31,54 +31,53 @@ struct CommandEditorDiagnostic: Equatable, Identifiable {
     }
 }
 
-// MARK: - Parsed Command
+// MARK: - Lexer Token
+//
+// Lexer 的职责：将原始字符串序列转为带语义标注的 Token 序列。
+// 不做任何跨 token 关联，不做 "这个值属于哪个 flag" 的判断——那是 Parser 的事。
 
-/// 单次解析结果，诊断与补全共享，避免重复遍历。
-struct ParsedCommand {
-    let executable: CommandExecutable?
-
-    /// 解析后的 token 序列，区分语义角色
-    let tokens: [ParsedToken]
-
-    /// 输出路径（ffmpeg positional 语义下的最后一个非输入 positional）
-    let outputPath: String?
-
-    /// 输入路径列表（-i 的值）
-    let inputPaths: [String]
-
-    /// 所有 -f 的最后一次赋值
-    let lastExplicitFormat: String?
-
-    /// 末尾 flag 缺少值（解析结束时仍处于 expectValue 状态）
-    let trailingFlagMissingValue: String?
-}
-
-enum ParsedToken {
+enum Token: Equatable {
+    /// 可执行文件名，例如 "ffmpeg"
     case executable(String)
+
+    /// 普通 flag，例如 "-y", "-an"
     case flag(String)
-    case value(String, for: String)   // value, 所属 flag
-    case positional(String)           // 不属于任何 flag 的裸 token
-    case informational(String)        // -version / -help 等
+
+    /// 带流限定符的 flag，例如 "-c:v", "-filter:a"
+    /// - flag: 基础 flag 名，如 "-c"
+    /// - stream: 流限定符，如 "v" / "a" / "s" / "V"
+    case streamSpecifier(flag: String, stream: String)
+
+    /// 信息性 flag，执行后直接输出信息并退出，如 "-version", "-help"
+    case informational(String)
+
+    /// 裸字符串，尚未确定语义（可能是 flag 的值，也可能是 positional）
+    case word(String)
+
+    /// flag 的原始字面量（含流限定符前缀，若有）
+    var rawText: String {
+        switch self {
+        case .executable(let s), .flag(let s), .informational(let s), .word(let s):
+            return s
+        case .streamSpecifier(let f, let s):
+            return "\(f):\(s)"
+        }
+    }
+
+    /// 是否是任意形式的 flag（flag / streamSpecifier / informational）
+    var isAnyFlag: Bool {
+        switch self {
+        case .flag, .streamSpecifier, .informational: return true
+        default: return false
+        }
+    }
 }
 
-// MARK: - Parser (State Machine)
+// MARK: - Lexer
 
-private enum ParseState {
-    case expectToken
-    case expectValue(for: String)
-}
-
-private struct CommandParser {
-
-    static let flagsRequiringValue: Set<String> = [
-        "-i", "-vf", "-af", "-filter_complex", "-c", "-c:v", "-c:a",
-        "-preset", "-crf", "-pix_fmt", "-movflags", "-map",
-        "-ss", "-to", "-t", "-r", "-s", "-b:v", "-b:a",
-        "-f", "-profile:v", "-profile:a", "-level", "-tune", "-metadata",
-        "-frames:v", "-frames:a", "-vframes", "-aframes",
-        "-aspect", "-vbsf", "-absf", "-threads", "-pass", "-passlogfile",
-        "-filter:v", "-filter:a", "-bufsize", "-maxrate", "-minrate"
-    ]
+/// 将一个原始 token 字符串数组转为 [Token]。
+/// 输入来自 CommandRenderer.splitCommandStrict，每个元素已是完整 token（无需处理引号）。
+private enum Lexer {
 
     private static let informationalFlags: Set<String> = [
         "-version", "-buildconf", "-formats", "-muxers", "-demuxers",
@@ -87,152 +86,369 @@ private struct CommandParser {
         "-bsfs", "-help", "-h", "-L"
     ]
 
-    /// 将原始 token 数组解析为 `ParsedCommand`。
-    static func parse(_ rawArgs: [String]) -> ParsedCommand {
-        guard !rawArgs.isEmpty else {
+    /// 合法流限定符
+    private static let streamSpecifiers: Set<String> = ["v", "V", "a", "s", "d", "t"]
+
+    static func lex(_ rawArgs: [String]) -> [Token] {
+        guard !rawArgs.isEmpty else { return [] }
+
+        var tokens: [Token] = []
+
+        for (index, raw) in rawArgs.enumerated() {
+            if index == 0 {
+                tokens.append(.executable(raw))
+                continue
+            }
+
+            guard raw.hasPrefix("-"), raw.count > 1 else {
+                tokens.append(.word(raw))
+                continue
+            }
+
+            if informationalFlags.contains(raw) {
+                tokens.append(.informational(raw))
+                continue
+            }
+
+            // 检测流限定符："-c:v", "-filter:a" 等
+            // 格式：-<name>:<specifier>
+            if let colonIndex = raw.firstIndex(of: ":") {
+                let specifier = String(raw[raw.index(after: colonIndex)...])
+                let baseName  = String(raw[..<colonIndex])   // 含 "-"
+                if streamSpecifiers.contains(specifier) {
+                    tokens.append(.streamSpecifier(flag: baseName, stream: specifier))
+                    continue
+                }
+            }
+
+            tokens.append(.flag(raw))
+        }
+
+        return tokens
+    }
+}
+
+// MARK: - Knowledge Base
+
+/// 格式知识条目：记录某种容器格式支持的编解码器与相关约束。
+struct FormatProfile {
+    let videoCodecs: [String]
+    let audioCodecs: [String]
+    let recommendedMovflags: [String]
+}
+
+/// FFmpeg 知识库：格式、编解码器、preset 等静态知识的单一来源。
+/// 设计为值类型 + 静态数据，后续可替换为从 JSON / plist 动态加载。
+struct KnowledgeBase {
+
+    // MARK: Format Profiles
+
+    static let formatProfiles: [String: FormatProfile] = [
+        "mp4": FormatProfile(
+            videoCodecs: ["libx264", "libx265", "h264_videotoolbox", "hevc_videotoolbox", "copy"],
+            audioCodecs: ["aac", "libopus", "copy"],
+            recommendedMovflags: ["+faststart"]
+        ),
+        "mov": FormatProfile(
+            videoCodecs: ["libx264", "libx265", "h264_videotoolbox", "hevc_videotoolbox",
+                          "prores_ks", "copy"],
+            audioCodecs: ["aac", "pcm_s16le", "pcm_s24le", "copy"],
+            recommendedMovflags: []
+        ),
+        "matroska": FormatProfile(
+            videoCodecs: ["libx264", "libx265", "libvpx-vp9", "av1", "copy"],
+            audioCodecs: ["aac", "libopus", "libvorbis", "flac", "copy"],
+            recommendedMovflags: []
+        ),
+        "webm": FormatProfile(
+            videoCodecs: ["libvpx-vp9", "av1"],
+            audioCodecs: ["libopus", "libvorbis"],
+            recommendedMovflags: []
+        ),
+        "mpegts": FormatProfile(
+            videoCodecs: ["libx264", "libx265", "copy"],
+            audioCodecs: ["aac", "libopus", "copy"],
+            recommendedMovflags: []
+        ),
+        "flv": FormatProfile(
+            videoCodecs: ["libx264", "copy"],
+            audioCodecs: ["aac", "copy"],
+            recommendedMovflags: []
+        ),
+    ]
+
+    // MARK: Codec Suggestions (fallback，无格式上下文时使用)
+
+    static let allVideoCodecs = [
+        "libx264", "libx265", "h264_videotoolbox", "hevc_videotoolbox",
+        "libvpx-vp9", "av1", "prores_ks", "copy"
+    ]
+
+    static let allAudioCodecs = [
+        "aac", "libopus", "libvorbis", "pcm_s16le", "pcm_s24le", "flac", "copy"
+    ]
+
+    static let allCodecs = allVideoCodecs + allAudioCodecs
+
+    // MARK: Other Value Lists
+
+    static let genericPresets = [
+        "ultrafast", "superfast", "veryfast", "faster",
+        "fast", "medium", "slow", "slower", "veryslow"
+    ]
+
+    static let pixelFormats = [
+        "yuv420p", "yuv422p", "yuv444p", "nv12", "p010le", "yuv420p10le"
+    ]
+
+    static let containerFormats = [
+        "mp4", "mov", "matroska", "webm", "mpegts", "flv",
+        "image2", "gif", "null", "rawvideo", "wav", "flac"
+    ]
+
+    static let movflagsValues = [
+        "+faststart", "+frag_keyframe", "+empty_moov", "+default_base_moof"
+    ]
+
+    static let profilesH264 = ["baseline", "main", "high", "high10", "high422", "high444"]
+    static let tuneValues    = ["film", "animation", "grain", "stillimage", "fastdecode", "zerolatency"]
+
+    // MARK: Context-Aware Codec Lookup
+
+    /// 根据当前已知格式和流类型返回推荐编解码器。
+    /// - Parameters:
+    ///   - format: -f 的值（如 "mp4"），为 nil 时返回全量列表
+    ///   - stream: 流限定符（"v" / "a"），为 nil 时合并视频+音频
+    static func codecs(format: String?, stream: String?) -> [String] {
+        guard let format, let profile = formatProfiles[format] else {
+            switch stream {
+            case "v", "V": return allVideoCodecs
+            case "a":      return allAudioCodecs
+            default:       return allCodecs
+            }
+        }
+        switch stream {
+        case "v", "V": return profile.videoCodecs
+        case "a":      return profile.audioCodecs
+        default:       return profile.videoCodecs + profile.audioCodecs
+        }
+    }
+
+    // MARK: Conflict Rules
+
+    /// 已知冲突规则：(flagA, flagB, 诊断消息)
+    /// flagA / flagB 均为 rawText，支持精确匹配。
+    /// 特殊情况：a == "-c:v" 时，只在值确实为 "copy" 时触发（由诊断层负责检查）。
+    static let conflictRules: [(a: String, b: String, message: String)] = [
+        (
+            a: "-c:v",
+            b: "-vf",
+            message: "-c:v copy 与 -vf 不能同时使用：copy 模式跳过解码，无法应用视频滤镜"
+        ),
+        (
+            a: "-c:v",
+            b: "-filter_complex",
+            message: "-c:v copy 与 -filter_complex 不能同时使用：copy 模式跳过解码，无法应用滤镜"
+        ),
+        (
+            a: "-an",
+            b: "-c:a",
+            message: "-an（禁用音频）与 -c:a 同时出现，-c:a 将被忽略"
+        ),
+        (
+            a: "-an",
+            b: "-b:a",
+            message: "-an（禁用音频）与 -b:a 同时出现，-b:a 将被忽略"
+        ),
+        (
+            a: "-vn",
+            b: "-c:v",
+            message: "-vn（禁用视频）与 -c:v 同时出现，-c:v 将被忽略"
+        ),
+        (
+            a: "-vn",
+            b: "-vf",
+            message: "-vn（禁用视频）与 -vf 同时出现，-vf 将被忽略"
+        ),
+    ]
+}
+
+// MARK: - Parsed Command
+//
+// Parser 的职责：消费 Lexer 产出的 [Token]，建立 flag→value 的关联，
+// 提取 inputPaths / outputPath / format 等高层语义，供诊断和补全使用。
+
+struct ParsedCommand {
+    let executable: CommandExecutable?
+    let tokens: [Token]
+
+    /// flag rawText → 对应的值
+    let flagValues: [String: String]
+
+    /// 输入路径列表（-i 的所有值）
+    let inputPaths: [String]
+
+    /// 输出路径（最后一个非 -i 值的 positional）
+    let outputPath: String?
+
+    /// -f 最后一次赋的值（lowercased）
+    let lastExplicitFormat: String?
+
+    /// 末尾 flag 还未取到值（命令不完整）
+    let trailingFlagMissingValue: String?
+
+    /// 所有出现过的 flag rawText 集合（含 streamSpecifier 形式）
+    let presentFlags: Set<String>
+
+    /// 便捷：某 flag 的值是否为 "copy"
+    func isCopy(flag: String) -> Bool {
+        flagValues[flag]?.lowercased() == "copy"
+    }
+}
+
+// MARK: - Parser
+
+private enum ParserState {
+    case expectToken
+    case expectValue(for: Token)    // 持有完整 Token 以保留 stream 信息
+}
+
+private struct CommandParser {
+
+    /// 需要紧跟一个值的 flag 基础名（不含流限定符）
+    static let baseFlagsRequiringValue: Set<String> = [
+        "-i", "-vf", "-af", "-filter_complex", "-c", "-preset", "-crf",
+        "-pix_fmt", "-movflags", "-map", "-ss", "-to", "-t", "-r",
+        "-s", "-b", "-f", "-profile", "-level", "-tune", "-metadata",
+        "-frames", "-vframes", "-aframes", "-aspect", "-vbsf", "-absf",
+        "-threads", "-pass", "-passlogfile", "-filter", "-bufsize",
+        "-maxrate", "-minrate"
+    ]
+
+    private static func requiresValue(_ token: Token) -> Bool {
+        switch token {
+        case .flag(let name):
+            return baseFlagsRequiringValue.contains(name)
+        case .streamSpecifier(let base, _):
+            return baseFlagsRequiringValue.contains(base)
+        default:
+            return false
+        }
+    }
+
+    static func parse(_ lexedTokens: [Token]) -> ParsedCommand {
+        guard !lexedTokens.isEmpty else {
             return ParsedCommand(
-                executable: nil, tokens: [], outputPath: nil,
-                inputPaths: [], lastExplicitFormat: nil, trailingFlagMissingValue: nil
+                executable: nil, tokens: [], flagValues: [:],
+                inputPaths: [], outputPath: nil, lastExplicitFormat: nil,
+                trailingFlagMissingValue: nil, presentFlags: []
             )
         }
 
-        let executable = CommandExecutable.from(token: rawArgs[0])
-        var tokens: [ParsedToken] = [.executable(rawArgs[0])]
-        var state: ParseState = .expectToken
+        let executable: CommandExecutable?
+        if case .executable(let name) = lexedTokens[0] {
+            executable = CommandExecutable.from(token: name)
+        } else {
+            executable = nil
+        }
 
-        var inputPaths: [String] = []
-        var positionals: [String] = []
-        var lastFormat: String?
+        var state: ParserState = .expectToken
+        var flagValues:   [String: String] = [:]
+        var inputPaths:   [String] = []
+        var positionals:  [String] = []
+        var lastFormat:   String?
         var trailingFlag: String?
+        var presentFlags: Set<String> = []
 
-        for token in rawArgs.dropFirst() {
+        for token in lexedTokens.dropFirst() {
             switch state {
-            case .expectValue(let flag):
-                tokens.append(.value(token, for: flag))
-                // 记录特殊值
-                if flag == "-i" { inputPaths.append(token) }
-                if flag == "-f" { lastFormat = token.lowercased() }
+            case .expectValue(let flagToken):
+                if case .word(let val) = token {
+                    let key = flagToken.rawText
+                    flagValues[key] = val
+                    if key == "-i" { inputPaths.append(val) }
+                    if key == "-f" { lastFormat = val.lowercased() }
+                }
                 state = .expectToken
 
             case .expectToken:
-                if informationalFlags.contains(token) {
-                    tokens.append(.informational(token))
-                } else if flagsRequiringValue.contains(token) {
-                    tokens.append(.flag(token))
-                    state = .expectValue(for: token)
-                } else if token.hasPrefix("-") {
-                    // boolean flag（无值）
-                    tokens.append(.flag(token))
-                } else {
-                    tokens.append(.positional(token))
-                    positionals.append(token)
+                switch token {
+                case .informational:
+                    presentFlags.insert(token.rawText)
+
+                case .flag, .streamSpecifier:
+                    presentFlags.insert(token.rawText)
+                    if requiresValue(token) {
+                        state = .expectValue(for: token)
+                    }
+
+                case .word(let val):
+                    positionals.append(val)
+
+                case .executable:
+                    break
                 }
             }
         }
 
-        // 末尾 flag 缺少值
-        if case .expectValue(let flag) = state {
-            trailingFlag = flag
+        if case .expectValue(let flagToken) = state {
+            trailingFlag = flagToken.rawText
         }
 
-        // 输出路径：positionals 中排除所有 -i 的值，取最后一个
-        let inputSet = Set(inputPaths)
+        let inputSet   = Set(inputPaths)
         let outputPath = positionals.last(where: { !inputSet.contains($0) })
 
         return ParsedCommand(
             executable: executable,
-            tokens: tokens,
-            outputPath: outputPath,
+            tokens: lexedTokens,
+            flagValues: flagValues,
             inputPaths: inputPaths,
+            outputPath: outputPath,
             lastExplicitFormat: lastFormat,
-            trailingFlagMissingValue: trailingFlag
+            trailingFlagMissingValue: trailingFlag,
+            presentFlags: presentFlags
         )
     }
 }
 
 // MARK: - Completion Context
 
-/// 光标所在语义位置，用于精确补全。
 enum CompletionContext {
     case executableName(partial: String)
     case flagName(partial: String)
-    case flagValue(flag: String, partial: String)
+    case flagValue(flag: String, stream: String?, partial: String)
     case unknown
 }
 
 private struct CompletionContextResolver {
 
-    /// 根据光标前的 token 流与当前 partial token 确定补全语义。
-    static func resolve(
-        prefixTokens: [String],
-        partial: String
-    ) -> CompletionContext {
-        // 第一个 token 位置 → 补全可执行文件名
+    static func resolve(prefixTokens: [String], partial: String) -> CompletionContext {
         if prefixTokens.isEmpty {
             return .executableName(partial: partial)
         }
 
-        // 前一个 token 是需要值的 flag → 补全该 flag 的值
-        if let last = prefixTokens.last,
-           CommandParser.flagsRequiringValue.contains(last) {
-            return .flagValue(flag: last, partial: partial)
+        if let lastRaw = prefixTokens.last {
+            // 借用 Lexer 对最后一个 token 做类型识别（传入哑 executable 以满足 index==0 规则）
+            let lastLexed = Lexer.lex(["_", lastRaw]).last
+
+            switch lastLexed {
+            case .flag(let name)
+                where CommandParser.baseFlagsRequiringValue.contains(name):
+                return .flagValue(flag: lastRaw, stream: nil, partial: partial)
+
+            case .streamSpecifier(let base, let stream)
+                where CommandParser.baseFlagsRequiringValue.contains(base):
+                return .flagValue(flag: lastRaw, stream: stream, partial: partial)
+
+            default:
+                break
+            }
         }
 
-        // partial 以 "-" 开头 → 补全 flag 名
-        if partial.hasPrefix("-") {
-            return .flagName(partial: partial)
-        }
-
-        // partial 为空且处于 token 边界 → 补全 flag 名（默认）
-        if partial.isEmpty {
-            return .flagName(partial: "")
-        }
+        if partial.hasPrefix("-") { return .flagName(partial: partial) }
+        if partial.isEmpty        { return .flagName(partial: "") }
 
         return .unknown
-    }
-}
-
-// MARK: - Suggestion Registry
-
-/// 所有补全建议的单一来源，便于后续扩展为运行时加载。
-struct SuggestionRegistry {
-
-    static let executableNames = CommandExecutable.allCases.map(\.binaryName)
-
-    static let flags = [
-        "-i", "-vf", "-af", "-filter_complex", "-c:v", "-c:a",
-        "-preset", "-crf", "-pix_fmt", "-movflags", "-map",
-        "-ss", "-to", "-t", "-r", "-s", "-b:v", "-b:a",
-        "-an", "-vn", "-shortest", "-y", "-n", "-f",
-        "-frames:v", "-threads", "-pass", "-passlogfile",
-        "-aspect", "-bufsize", "-maxrate", "-minrate",
-        "-version", "-buildconf", "-formats", "-codecs", "-encoders",
-        "-decoders", "-filters", "-pix_fmts", "-help"
-    ]
-
-    static func values(for flag: String) -> [String]? {
-        switch flag {
-        case "-c", "-c:v", "-c:a":
-            return ["libx264", "libx265", "h264_videotoolbox", "hevc_videotoolbox",
-                    "copy", "aac", "libopus", "pcm_s16le", "libvpx-vp9", "av1"]
-        case "-preset":
-            return ["ultrafast", "superfast", "veryfast", "faster",
-                    "fast", "medium", "slow", "slower", "veryslow"]
-        case "-pix_fmt":
-            return ["yuv420p", "yuv422p", "yuv444p", "nv12", "p010le", "yuv420p10le"]
-        case "-f":
-            return ["mp4", "mov", "matroska", "mpegts", "image2", "gif", "null", "rawvideo", "wav", "flac"]
-        case "-movflags":
-            return ["+faststart", "+frag_keyframe", "+empty_moov", "+default_base_moof"]
-        case "-profile:v":
-            return ["baseline", "main", "high", "high10", "high422", "high444"]
-        case "-tune":
-            return ["film", "animation", "grain", "stillimage", "fastdecode", "zerolatency"]
-        case "-pass":
-            return ["1", "2"]
-        default:
-            return nil
-        }
     }
 }
 
@@ -246,7 +462,6 @@ struct CommandEditorAssistant {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
 
-        // 前置校验（使用项目已有的 CommandValidator）
         switch CommandValidator.validate(trimmed) {
         case .emptyCommand:
             return []
@@ -260,7 +475,9 @@ struct CommandEditorAssistant {
 
         guard let rawArgs = try? CommandRenderer.splitCommandStrict(trimmed) else { return [] }
 
-        let parsed = CommandParser.parse(rawArgs)
+        let lexed  = Lexer.lex(rawArgs)
+        let parsed = CommandParser.parse(lexed)
+
         var result: [CommandEditorDiagnostic] = []
 
         // 1. 末尾 flag 缺少值
@@ -268,25 +485,29 @@ struct CommandEditorAssistant {
             result.append(.init(severity: .error, message: "参数 \(flag) 缺少取值"))
         }
 
-        // 2. ffmpeg 命令缺少输出目标
-        if parsed.executable == .ffmpeg,
-           !isInformational(parsed),
-           parsed.outputPath == nil {
+        let isInfo = parsed.tokens.contains {
+            if case .informational = $0 { return true }
+            return false
+        }
+
+        // 2. 缺少输出目标
+        if parsed.executable == .ffmpeg, !isInfo, parsed.outputPath == nil {
             result.append(.init(severity: .warning, message: "未检测到输出目标，执行时大概率会失败"))
         }
 
-        // 3. 输出扩展名与 -f 不一致
+        // 3. 缺少输入源
+        if parsed.executable == .ffmpeg, !isInfo,
+           parsed.outputPath != nil, parsed.inputPaths.isEmpty {
+            result.append(.init(severity: .warning, message: "未检测到输入源（-i）"))
+        }
+
+        // 4. 输出扩展名与 -f 不一致
         if let mismatch = outputFormatMismatch(parsed) {
             result.append(.init(severity: .warning, message: mismatch))
         }
 
-        // 4. 无输入源（有输出但没有 -i）
-        if parsed.executable == .ffmpeg,
-           !isInformational(parsed),
-           parsed.outputPath != nil,
-           parsed.inputPaths.isEmpty {
-            result.append(.init(severity: .warning, message: "未检测到输入源（-i）"))
-        }
+        // 5. Conflict 诊断
+        result.append(contentsOf: conflictDiagnostics(parsed))
 
         return Array(result.prefix(3))
     }
@@ -305,6 +526,11 @@ struct CommandEditorAssistant {
         )
         let prefixTokens = (try? CommandRenderer.splitCommandStrict(prefixText)) ?? []
 
+        // 解析前缀以获取格式上下文（Knowledge Base 过滤用）
+        let prefixLexed  = Lexer.lex(prefixTokens.isEmpty ? ["_"] : prefixTokens)
+        let prefixParsed = CommandParser.parse(prefixLexed)
+        let activeFormat = prefixParsed.lastExplicitFormat
+
         let context = CompletionContextResolver.resolve(
             prefixTokens: prefixTokens,
             partial: partial
@@ -312,13 +538,13 @@ struct CommandEditorAssistant {
 
         switch context {
         case .executableName(let partial):
-            return filter(SuggestionRegistry.executableNames, matching: partial)
+            return filter(CommandExecutable.allCases.map(\.binaryName), matching: partial)
 
         case .flagName(let partial):
-            return filter(SuggestionRegistry.flags, matching: partial)
+            return filter(flagSuggestions, matching: partial)
 
-        case .flagValue(let flag, let partial):
-            let suggestions = SuggestionRegistry.values(for: flag) ?? []
+        case .flagValue(let flag, let stream, let partial):
+            let suggestions = valueSuggestions(flag: flag, stream: stream, format: activeFormat)
             return filter(suggestions, matching: partial)
 
         case .unknown:
@@ -327,25 +553,83 @@ struct CommandEditorAssistant {
     }
 }
 
-// MARK: - Private Helpers
+// MARK: - Private: Diagnostic Helpers
 
 private extension CommandEditorAssistant {
-
-    static func isInformational(_ parsed: ParsedCommand) -> Bool {
-        parsed.tokens.contains {
-            if case .informational = $0 { return true }
-            return false
-        }
-    }
 
     static func outputFormatMismatch(_ parsed: ParsedCommand) -> String? {
         guard let output = parsed.outputPath,
               let format = parsed.lastExplicitFormat,
-              let ext = (output as NSString).pathExtension.lowercased().nonEmpty,
-              format != ext else {
-            return nil
-        }
+              let ext    = (output as NSString).pathExtension.lowercased().nonEmpty,
+              format != ext else { return nil }
         return "输出格式 (-f \(format)) 与扩展名 (.\(ext)) 可能不一致"
+    }
+
+    static func conflictDiagnostics(_ parsed: ParsedCommand) -> [CommandEditorDiagnostic] {
+        var result: [CommandEditorDiagnostic] = []
+
+        for rule in KnowledgeBase.conflictRules {
+            guard parsed.presentFlags.contains(rule.a),
+                  parsed.presentFlags.contains(rule.b) else { continue }
+
+            // -c:v 冲突只在值确实为 copy 时报告，避免 "-c:v libx264 -vf scale" 误报
+            if rule.a == "-c:v" {
+                guard parsed.isCopy(flag: "-c:v") else { continue }
+            }
+
+            result.append(.init(severity: .error, message: rule.message))
+        }
+
+        return result
+    }
+}
+
+// MARK: - Private: Completion Helpers
+
+private extension CommandEditorAssistant {
+
+    static let flagSuggestions: [String] = [
+        "-i", "-vf", "-af", "-filter_complex", "-c:v", "-c:a",
+        "-preset", "-crf", "-pix_fmt", "-movflags", "-map",
+        "-ss", "-to", "-t", "-r", "-s", "-b:v", "-b:a",
+        "-an", "-vn", "-shortest", "-y", "-n", "-f",
+        "-frames:v", "-threads", "-pass", "-passlogfile",
+        "-aspect", "-bufsize", "-maxrate", "-minrate",
+        "-profile:v", "-tune", "-level",
+        "-version", "-buildconf", "-formats", "-codecs",
+        "-encoders", "-decoders", "-filters", "-pix_fmts", "-help"
+    ]
+
+    /// 根据 flag 类型、流限定符、当前格式上下文返回建议列表。
+    static func valueSuggestions(flag: String, stream: String?, format: String?) -> [String] {
+        let baseName: String
+        if let colon = flag.firstIndex(of: ":") {
+            baseName = String(flag[..<colon])
+        } else {
+            baseName = flag
+        }
+
+        switch baseName {
+        case "-c":
+            // 核心：结合格式上下文 + 流类型，只返回兼容的编解码器
+            return KnowledgeBase.codecs(format: format, stream: stream)
+        case "-preset":
+            return KnowledgeBase.genericPresets
+        case "-pix_fmt":
+            return KnowledgeBase.pixelFormats
+        case "-f":
+            return KnowledgeBase.containerFormats
+        case "-movflags":
+            return KnowledgeBase.movflagsValues
+        case "-profile":
+            return KnowledgeBase.profilesH264
+        case "-tune":
+            return KnowledgeBase.tuneValues
+        case "-pass":
+            return ["1", "2"]
+        default:
+            return []
+        }
     }
 
     static func filter(_ suggestions: [String], matching partial: String) -> [String] {
@@ -360,7 +644,7 @@ private extension CommandEditorAssistant {
     }
 }
 
-// MARK: - Minor Extensions
+// MARK: - Extensions
 
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
