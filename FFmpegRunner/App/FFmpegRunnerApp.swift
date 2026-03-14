@@ -60,6 +60,9 @@ struct FFmpegRunnerApp: App {
                         recentCommandsViewModel?.loadRecentCommands()
                     }
                 }
+                .task {
+                    await FFmpegKnowledgePreloader.preload()
+                }
         }
         .windowStyle(.automatic)
         .windowResizability(.contentMinSize)

@@ -270,21 +270,35 @@ struct CommandTextView: View {
             selectedRange: selectionRange,
             partialRange: range
         )
-        let suggestion = suggestions.first
-
-        guard let suggestion else {
+        guard let suggestion = suggestions.first else {
             return (nil, range, "")
         }
 
         let isCursorAtTokenEnd = selectionRange.location != NSNotFound &&
             selectionRange.length == 0 &&
             selectionRange.location == range.location + range.length
-        let shouldShowInline = !force &&
-            !partial.isEmpty &&
-            isCursorAtTokenEnd &&
-            suggestion.hasPrefix(partial) &&
-            suggestion.count > partial.count
-        let inlineSuffix = shouldShowInline ? String(suggestion.dropFirst(partial.count)) : ""
+
+        let shouldShowInline: Bool
+        if partial.isEmpty {
+            // 光标在空格后：直接展示完整建议作为 ghost text
+            shouldShowInline = !force && isCursorAtTokenEnd
+        } else {
+            // 光标在已输入前缀中间/末尾：展示剩余部分
+            shouldShowInline = !force &&
+                isCursorAtTokenEnd &&
+                suggestion.hasPrefix(partial) &&
+                suggestion.count > partial.count
+        }
+
+        let inlineSuffix: String
+        if shouldShowInline {
+            inlineSuffix = partial.isEmpty
+                ? suggestion                                    // 完整单词作为 ghost text
+                : String(suggestion.dropFirst(partial.count))   // 剩余部分
+        } else {
+            inlineSuffix = ""
+        }
+
         return (suggestion, range, inlineSuffix)
     }
 

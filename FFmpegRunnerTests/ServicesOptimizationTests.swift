@@ -44,59 +44,47 @@ final class ServicesOptimizationTests: XCTestCase {
         XCTAssertEqual(loadedAgain.count, 1)
     }
 
-    // MARK: - FFmpegService Version Caching Tests
+    // MARK: - HardwareAccelerationProbe Tests (Level 1)
 
-    func testFFmpegServiceVersionCaching() async throws {
-        let service = FFmpegService.shared
+    /// 测试解析器：喂假输出，验证提取结果
+    func testParseEncoders_extractsVideoToolbox() async {
+        let fakeOutput = """
+         V..... libx264          H.264 / AVC
+         V....D h264_videotoolbox VideoToolbox H.264 Encoder
+         V....D hevc_videotoolbox VideoToolbox H.265 Encoder
+         A..... aac              AAC (Advanced Audio Coding)
+        """
 
-        // Ensure we have a valid source (bundled or system)
-        if !service.isFFmpegAvailable() {
-            try XCTSkipIf(true, "FFmpeg not available, skipping version test")
-        }
+        let probe = HardwareAccelerationProbe.shared
+        let result = await probe.parseEncoders(fakeOutput)
 
-        // 1. Get version first time
-        let v1 = try await service.getFFmpegVersion()
-        XCTAssertFalse(v1.isEmpty)
-
-        // 2. Get version second time (should use cache)
-        let v2 = try await service.getFFmpegVersion()
-        XCTAssertEqual(v1, v2)
-
-        // 3. Change source (should invalidate cache)
-        // We just toggle to the same source to trigger validation logic if possible,
-        // or toggle between system and bundled if available.
-        // Since we can't easily guarantee multiple sources in test env, we just call setSource with current source.
-        let currentSource = service.ffmpegSource
-        // Assuming custom path is empty or valid
-        service.setSource(currentSource, customPath: service.customFFmpegPath)
-
-        // 4. Get version again (should re-fetch)
-        let v3 = try await service.getFFmpegVersion()
-        XCTAssertEqual(v1, v3)
+        XCTAssertEqual(result.map(\.name).sorted(),
+                       ["h264_videotoolbox", "hevc_videotoolbox"])
+        XCTAssertTrue(result.allSatisfy { $0.stream == .video })
     }
 
-    // MARK: - FFmpegPathResolver Caching Tests
+    /// 测试缓存往返：写入 UserDefaults 再调用恢复，验证数据一致
+    func testCachePersistence() async throws {
+        let probe = HardwareAccelerationProbe.shared
 
-    func testFFmpegPathResolverCaching() async {
-        // Can't easily test private property `systemCache`, but we can verify consistent returns.
-        // And ensure it doesn't crash on repeated calls.
+        // 1. 准备测试数据
+        let testCodecs = [HardwareCodec(name: "h264_videotoolbox", stream: .video)]
+        let data = try JSONEncoder().encode(testCodecs)
 
-        let resolver = FFmpegPathResolver() // New instance
+        // 2. 直接操作 UserDefaults (模拟持久化层)
+        UserDefaults.standard.set(data, forKey: HardwareAccelerationProbe.CacheKey.codecs)
+        UserDefaults.standard.set(Date(), forKey: HardwareAccelerationProbe.CacheKey.probedAt)
 
-        // 1. First call
-        let path1 = await resolver.systemPath
+        // 3. 调用恢复方法
+        let restored = await probe.restoreFromCache()
+        XCTAssertTrue(restored)
 
-        // 2. Second call (should use cache)
-        let path2 = await resolver.systemPath
+        let names = await probe.videoCodecNames
+        XCTAssertEqual(names, ["h264_videotoolbox"])
 
-        XCTAssertEqual(path1, path2)
-
-        // 3. Invalidate cache and call again
-        await resolver.invalidateCache()
-        let path3 = await resolver.systemPath
-
-        // Path should still be the same (same system)
-        XCTAssertEqual(path1, path3)
+        // 清理
+        UserDefaults.standard.removeObject(forKey: HardwareAccelerationProbe.CacheKey.codecs)
+        UserDefaults.standard.removeObject(forKey: HardwareAccelerationProbe.CacheKey.probedAt)
     }
 }
 

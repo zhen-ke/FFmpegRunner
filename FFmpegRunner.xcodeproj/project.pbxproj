@@ -15,6 +15,8 @@
 		530950BCB4F94F878F4555CD /* TemplateSorter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F18260226DD42C193DB5E8D /* TemplateSorter.swift */; };
 		08C7C357CCD34E78A24FD67F /* TemplateRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69A961845DB84B18B9E0C1A0 /* TemplateRepository.swift */; };
 		001A0044 /* CommandEditorAssistant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0044 /* CommandEditorAssistant.swift */; };
+		32A900010001000100010001 /* HardwareAccelerationProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32B900010001000100010001 /* HardwareAccelerationProbe.swift */; };
+		32A900020002000200020002 /* FFmpegKnowledgePreloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32B900020002000200020002 /* FFmpegKnowledgePreloader.swift */; };
 		001A0001 /* FFmpegRunnerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0001 /* FFmpegRunnerApp.swift */; };
 		001A0002 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0002 /* AppEnvironment.swift */; };
 		001A0003 /* Template.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0003 /* Template.swift */; };
@@ -96,6 +98,8 @@
 		001B0042 /* StandardTemplateWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StandardTemplateWorkspaceView.swift; sourceTree = "<group>"; };
 		001B0043 /* RawCommandWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawCommandWorkspaceView.swift; sourceTree = "<group>"; };
 		001B0044 /* CommandEditorAssistant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandEditorAssistant.swift; sourceTree = "<group>"; };
+		32B900010001000100010001 /* HardwareAccelerationProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardwareAccelerationProbe.swift; sourceTree = "<group>"; };
+		32B900020002000200020002 /* FFmpegKnowledgePreloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFmpegKnowledgePreloader.swift; sourceTree = "<group>"; };
 		001B0050 /* CommandTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandTextView.swift; sourceTree = "<group>"; };
 		001B0018 /* CommandPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPreviewView.swift; sourceTree = "<group>"; };
 		001B0019 /* LogConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogConsoleView.swift; sourceTree = "<group>"; };
@@ -213,6 +217,8 @@
 				3F18260226DD42C193DB5E8D /* TemplateSorter.swift */,
 				69A961845DB84B18B9E0C1A0 /* TemplateRepository.swift */,
 				001B0044 /* CommandEditorAssistant.swift */,
+				32B900010001000100010001 /* HardwareAccelerationProbe.swift */,
+				32B900020002000200020002 /* FFmpegKnowledgePreloader.swift */,
 				001B0008 /* CommandRenderer.swift */,
 				001B0009 /* FFmpegService.swift */,
 				001B0010 /* ProcessLogger.swift */,
@@ -438,6 +444,8 @@
 				530950BCB4F94F878F4555CD /* TemplateSorter.swift in Sources */,
 				08C7C357CCD34E78A24FD67F /* TemplateRepository.swift in Sources */,
 				001A0044 /* CommandEditorAssistant.swift in Sources */,
+				32A900010001000100010001 /* HardwareAccelerationProbe.swift in Sources */,
+				32A900020002000200020002 /* FFmpegKnowledgePreloader.swift in Sources */,
 				001A0001 /* FFmpegRunnerApp.swift in Sources */,
 				001A0002 /* AppEnvironment.swift in Sources */,
 				001A0003 /* Template.swift in Sources */,
