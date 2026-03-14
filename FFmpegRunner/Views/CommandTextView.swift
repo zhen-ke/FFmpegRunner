@@ -375,16 +375,16 @@ struct CommandTextView: View {
             }
         }
         // ② 合并两个 onChange 为一次调度，消除同帧双次触发补全计算
-        .onChange(of: text) { newValue in
+        .onChange(of: text, perform: { newValue in
             viewModel.text = newValue
             viewModel.handleEditorStateChange()
-        }
-        .onChange(of: viewModel.selectionRange) { _ in
+        })
+        .onChange(of: viewModel.selectionRange, perform: { _ in
             viewModel.handleEditorStateChange()
-        }
-        .onChange(of: viewModel.isFocused) { focused in
+        })
+        .onChange(of: viewModel.isFocused, perform: { focused in
             viewModel.handleFocusChange(focused: focused)
-        }
+        })
         .onAppear {
             viewModel.text = text
             viewModel.handleEditorStateChange()
