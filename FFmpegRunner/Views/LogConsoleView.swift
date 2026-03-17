@@ -3,32 +3,64 @@
 //  FFmpegRunner
 //
 
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
-import AppKit
+
+// MARK: - 语义颜色
+
+extension Color {
+    enum Console {
+        static let errorBackground = Color.red.opacity(0.08)
+        static let activeHighlight = Color.accentColor.opacity(0.05)
+        static let stderrText = Color(NSColor.systemOrange).opacity(0.9)
+    }
+}
 
 // MARK: - 文件名格式化
 
 private let filenameFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyyMMdd_HHmmss"
-    return formatter
+    let f = DateFormatter()
+    f.dateFormat = "yyyyMMdd_HHmmss"
+    return f
 }()
 
 // MARK: - 控制台主题
 
 private enum ConsoleTheme {
     static let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-    static let boldFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
+    static let emphasisFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
+    static let timestampFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    static let metadataFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+
     static let background = NSColor.textBackgroundColor
-    static let timestamp = NSColor.secondaryLabelColor.withAlphaComponent(0.72)
+    static let chromeBackground = NSColor.controlBackgroundColor
+    static let border = NSColor.separatorColor.withAlphaComponent(0.22)
+    static let divider = NSColor.separatorColor.withAlphaComponent(0.18)
+
+    static let text = NSColor.textColor
+    static let timestamp = NSColor.secondaryLabelColor.withAlphaComponent(0.6)
     static let debug = NSColor.secondaryLabelColor
-    static let info = NSColor.systemBlue.withAlphaComponent(0.9)
-    static let warning = NSColor.systemOrange
-    static let error = NSColor.systemRed
-    static let stderr = NSColor.systemOrange.withAlphaComponent(0.92)
-    static let activeBackground = NSColor.controlAccentColor.withAlphaComponent(0.08)
+    static let warning = NSColor.systemOrange.withAlphaComponent(0.92)
+    static let error = NSColor.systemRed.withAlphaComponent(0.95)
+    static let stderr = NSColor.systemOrange.withAlphaComponent(0.88)
     static let errorBackground = NSColor.systemRed.withAlphaComponent(0.08)
+    static let activeHighlight = NSColor.controlAccentColor.withAlphaComponent(0.05)
+}
+
+private final class ConsoleLogTextView: NSTextView {
+    var onUserScrollEvent: (() -> Void)?
+    var lineMenuProvider: ((NSPoint) -> NSMenu?)?
+
+    override func scrollWheel(with event: NSEvent) {
+        onUserScrollEvent?()
+        super.scrollWheel(with: event)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        return lineMenuProvider?(point) ?? super.menu(for: event)
+    }
 }
 
 // MARK: - LogConsoleView
@@ -37,9 +69,6 @@ struct LogConsoleView: View {
     @EnvironmentObject var viewModel: ExecutionViewModel
 
     @State private var showExportSheet = false
-    @State private var isAtBottom = true
-    @State private var unreadCount = 0
-    @State private var jumpToLatestToken = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -58,19 +87,9 @@ struct LogConsoleView: View {
 
             LogContentView(
                 logs: viewModel.visibleLogs,
-                followEnabled: $viewModel.autoScroll,
-                isRunning: viewModel.state.isRunning,
-                isAtBottom: $isAtBottom,
-                unreadCount: $unreadCount,
-                jumpToLatestToken: jumpToLatestToken
+                autoScroll: $viewModel.autoScroll,
+                isRunning: viewModel.state.isRunning
             )
-
-            if unreadCount > 0 && !viewModel.autoScroll {
-                NewOutputBanner(unreadCount: unreadCount) {
-                    viewModel.autoScroll = true
-                    jumpToLatestToken += 1
-                }
-            }
 
             ConsoleStatusBar(
                 logCount: viewModel.visibleLogs.count,
@@ -85,36 +104,6 @@ struct LogConsoleView: View {
             contentType: .plainText,
             defaultFilename: "ffmpeg_log_\(filenameFormatter.string(from: Date())).txt"
         ) { _ in }
-    }
-}
-
-// MARK: - NewOutputBanner
-
-struct NewOutputBanner: View {
-    let unreadCount: Int
-    let onJumpToLatest: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.down.to.line")
-                .foregroundStyle(Color.accentColor)
-                .font(.caption)
-
-            Text("新日志 \(unreadCount)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Spacer()
-
-            Button("跳到最新", action: onJumpToLatest)
-                .font(.caption)
-                .buttonStyle(.borderless)
-                .foregroundStyle(Color.accentColor)
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 5)
-        .background(Color.accentColor.opacity(0.08))
-        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
 
@@ -147,17 +136,30 @@ struct ConsoleHeaderView: View {
                 if !isFFmpegAvailable {
                     Label("FFmpeg 未找到", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundColor(.orange)
                 }
 
-                Picker("过滤", selection: $logFilter) {
+                Menu {
                     ForEach(LogFilter.allCases, id: \.self) { filter in
-                        Text(filter.shortLabel).tag(filter)
+                        Button {
+                            logFilter = filter
+                        } label: {
+                            HStack {
+                                Text(filter.rawValue)
+                                if logFilter == filter {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
                     }
+                } label: {
+                    Image(systemName: logFilter == .all
+                          ? "line.3.horizontal.decrease.circle"
+                          : "line.3.horizontal.decrease.circle.fill")
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 160)
-                .help("日志过滤")
+                .menuStyle(.borderlessButton)
+                .frame(width: 28)
+                .help("日志过滤: \(logFilter.rawValue)")
 
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
@@ -178,12 +180,10 @@ struct ConsoleHeaderView: View {
                 .keyboardShortcut("f", modifiers: .command)
 
                 Toggle(isOn: $autoScroll) {
-                    Image(systemName: autoScroll ? "arrow.down.to.line" : "pause.circle")
-                        .foregroundStyle(autoScroll ? Color.primary : Color.orange)
+                    Image(systemName: "arrow.down.to.line")
                 }
                 .toggleStyle(.button)
-                .help(autoScroll ? "自动滚动中（点击暂停）" : "已暂停（点击恢复）")
-                .tint(autoScroll ? .accentColor : .orange)
+                .help("自动滚动到底部")
 
                 Button(action: onExport) {
                     Image(systemName: "square.and.arrow.up")
@@ -213,7 +213,7 @@ struct ConsoleHeaderView: View {
             if showSearch {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
+                        .foregroundColor(.secondary)
                         .font(.caption)
 
                     TextField("搜索日志...", text: $searchText)
@@ -230,7 +230,7 @@ struct ConsoleHeaderView: View {
                     if let count = matchCount {
                         Text("\(count) 条匹配")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundColor(.secondary)
                     }
 
                     if !searchText.isEmpty {
@@ -238,7 +238,7 @@ struct ConsoleHeaderView: View {
                             searchText = ""
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
+                                .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
                     }
@@ -268,9 +268,7 @@ struct ExecutionStatusBadge: View {
                     .fill(state.displayColor)
                     .frame(width: 8, height: 8)
             }
-
-            Text(state.displayText)
-                .font(.caption)
+            Text(state.displayText).font(.caption)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -283,22 +281,60 @@ struct ExecutionStatusBadge: View {
 
 struct LogContentView: View {
     let logs: [LogEntry]
-    @Binding var followEnabled: Bool
+    @Binding var autoScroll: Bool
     let isRunning: Bool
-    @Binding var isAtBottom: Bool
-    @Binding var unreadCount: Int
-    let jumpToLatestToken: Int
 
     var body: some View {
-        InteractiveLogConsoleView(
-            logs: logs,
-            isRunning: isRunning,
-            followEnabled: $followEnabled,
-            isAtBottom: $isAtBottom,
-            unreadCount: $unreadCount,
-            jumpToLatestToken: jumpToLatestToken
-        )
-        .background(Color(NSColor.textBackgroundColor))
+        ZStack {
+            Color(ConsoleTheme.background)
+
+            InteractiveLogConsoleView(
+                logs: logs,
+                isRunning: isRunning,
+                followEnabled: $autoScroll
+            )
+
+            if logs.isEmpty {
+                ConsoleEmptyState(isRunning: isRunning)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color(ConsoleTheme.divider))
+                .frame(height: 1)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color(ConsoleTheme.border))
+                .frame(height: 1)
+        }
+    }
+}
+
+private struct ConsoleEmptyState: View {
+    let isRunning: Bool
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: isRunning ? "ellipsis.message" : "terminal")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            Text(isRunning ? "等待输出..." : "控制台已就绪")
+                .font(.subheadline.weight(.medium))
+
+            Text(
+                isRunning
+                ? "新的 FFmpeg 输出会持续追加到这里。"
+                : "运行命令后，这里会显示可选择、可搜索、可暂停跟随的日志。"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+        }
+        .padding(20)
+        .frame(maxWidth: 320)
     }
 }
 
@@ -308,9 +344,6 @@ private struct InteractiveLogConsoleView: NSViewRepresentable {
     let logs: [LogEntry]
     let isRunning: Bool
     @Binding var followEnabled: Bool
-    @Binding var isAtBottom: Bool
-    @Binding var unreadCount: Int
-    let jumpToLatestToken: Int
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -325,7 +358,12 @@ private struct InteractiveLogConsoleView: NSViewRepresentable {
         scrollView.drawsBackground = false
         scrollView.contentView.postsBoundsChangedNotifications = true
 
-        let textView = NSTextView()
+        let textView = ConsoleLogTextView(frame: NSRect(origin: .zero, size: scrollView.contentSize))
+        textView.minSize = .zero
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
         textView.isEditable = false
         textView.isSelectable = true
         textView.allowsUndo = false
@@ -370,24 +408,25 @@ private struct InteractiveLogConsoleView: NSViewRepresentable {
         var parent: InteractiveLogConsoleView
 
         private weak var scrollView: NSScrollView?
-        private weak var textView: NSTextView?
+        private weak var textView: ConsoleLogTextView?
         private var boundsObserver: NSObjectProtocol?
+        private var liveScrollStartObserver: NSObjectProtocol?
+        private var liveScrollEndObserver: NSObjectProtocol?
 
         private var suppressViewportSync = false
         private var lastRenderFingerprint: Int?
-        private var lastJumpToLatestToken: Int
         private var lastFollowEnabled: Bool
-        private var previousLogIDs: [UUID] = []
-        private var unreadCountSnapshot: Int
-        private var isAtBottomSnapshot: Bool
         private let bottomThreshold: CGFloat = 12
+        private let userScrollGraceInterval: TimeInterval = 0.35
+        private var lastUserScrollTimestamp: TimeInterval = 0
+        private var isLiveScrolling = false
+        private var renderedLines: [ConsoleRenderedLine] = []
+        private var contextMenuMessage: String?
+        private var contextMenuFullLog: String?
 
         init(_ parent: InteractiveLogConsoleView) {
             self.parent = parent
-            self.lastJumpToLatestToken = parent.jumpToLatestToken
             self.lastFollowEnabled = parent.followEnabled
-            self.unreadCountSnapshot = parent.unreadCount
-            self.isAtBottomSnapshot = parent.isAtBottom
             super.init()
         }
 
@@ -395,18 +434,50 @@ private struct InteractiveLogConsoleView: NSViewRepresentable {
             if let boundsObserver {
                 NotificationCenter.default.removeObserver(boundsObserver)
             }
+            if let liveScrollStartObserver {
+                NotificationCenter.default.removeObserver(liveScrollStartObserver)
+            }
+            if let liveScrollEndObserver {
+                NotificationCenter.default.removeObserver(liveScrollEndObserver)
+            }
         }
 
-        func attach(scrollView: NSScrollView, textView: NSTextView) {
+        func attach(scrollView: NSScrollView, textView: ConsoleLogTextView) {
             self.scrollView = scrollView
             self.textView = textView
+
+            textView.onUserScrollEvent = { [weak self] in
+                self?.markUserScroll()
+            }
+            textView.lineMenuProvider = { [weak self] point in
+                self?.makeLineMenu(at: point)
+            }
 
             boundsObserver = NotificationCenter.default.addObserver(
                 forName: NSView.boundsDidChangeNotification,
                 object: scrollView.contentView,
                 queue: .main
             ) { [weak self] _ in
-                self?.syncViewportState(userInitiated: true)
+                self?.syncViewportState(allowFollowStateChange: self?.isLikelyUserScroll ?? false)
+            }
+
+            liveScrollStartObserver = NotificationCenter.default.addObserver(
+                forName: NSScrollView.willStartLiveScrollNotification,
+                object: scrollView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.markUserScroll()
+                self?.isLiveScrolling = true
+            }
+
+            liveScrollEndObserver = NotificationCenter.default.addObserver(
+                forName: NSScrollView.didEndLiveScrollNotification,
+                object: scrollView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.markUserScroll()
+                self?.isLiveScrolling = false
+                self?.syncViewportState(allowFollowStateChange: true)
             }
         }
 
@@ -415,21 +486,15 @@ private struct InteractiveLogConsoleView: NSViewRepresentable {
 
             let currentFollowEnabled = parent.followEnabled
             let followWasResumed = currentFollowEnabled && !lastFollowEnabled
-            let jumpRequested = parent.jumpToLatestToken != lastJumpToLatestToken
-            let currentLogIDs = logs.map(\.id)
-            let appendedCount = appendedEntryCount(from: previousLogIDs, to: currentLogIDs)
             let renderFingerprint = ConsoleTextRenderer.fingerprint(for: logs, isRunning: isRunning)
             let contentChanged = renderFingerprint != lastRenderFingerprint
-            let isInitialRender = lastRenderFingerprint == nil
 
             if contentChanged {
                 let selectedRange = textView.selectedRange()
                 let visibleOrigin = scrollView.contentView.bounds.origin
 
                 suppressViewportSync = true
-                textView.textStorage?.setAttributedString(
-                    ConsoleTextRenderer.attributedString(for: logs, isRunning: isRunning)
-                )
+                syncTextStorage(logs: logs, isRunning: isRunning)
                 textView.setSelectedRange(.clamped(selectedRange, maxUTF16Length: textView.string.utf16.count))
 
                 if currentFollowEnabled {
@@ -439,49 +504,106 @@ private struct InteractiveLogConsoleView: NSViewRepresentable {
                 }
 
                 scheduleViewportSync()
-            } else if currentFollowEnabled && (followWasResumed || jumpRequested) {
+            } else if currentFollowEnabled && followWasResumed {
                 suppressViewportSync = true
                 scrollToBottom()
                 scheduleViewportSync()
             }
 
-            if logs.isEmpty {
-                setUnreadCount(0)
-                setIsAtBottom(true)
-            } else if currentFollowEnabled {
-                setUnreadCount(0)
-            } else if !isInitialRender, let appendedCount, appendedCount > 0 {
-                setUnreadCount(unreadCountSnapshot + appendedCount)
-            } else if !isInitialRender, contentChanged, appendedCount == nil {
-                setUnreadCount(0)
-            }
-
-            previousLogIDs = currentLogIDs
             lastRenderFingerprint = renderFingerprint
-            lastJumpToLatestToken = parent.jumpToLatestToken
             lastFollowEnabled = currentFollowEnabled
+        }
+
+        private func syncTextStorage(logs: [LogEntry], isRunning: Bool) {
+            guard let textView, let textStorage = textView.textStorage else { return }
+
+            let update = ConsoleTextRenderer.makeUpdate(
+                logs: logs,
+                previous: renderedLines,
+                isRunning: isRunning
+            )
+
+            textStorage.beginEditing()
+            defer { textStorage.endEditing() }
+
+            switch update {
+            case .rebuild(let render):
+                textStorage.setAttributedString(render.text)
+                renderedLines = render.lines
+
+            case .incremental(let changes, let append):
+                for change in changes {
+                    applyReplacement(change, textStorage: textStorage)
+                }
+
+                if let append {
+                    if textStorage.length > 0 && append.leadingNewline {
+                        textStorage.append(NSAttributedString(string: "\n"))
+                    }
+
+                    let appendStart = textStorage.length
+                    textStorage.append(append.text)
+
+                    var location = appendStart
+                    for (index, line) in append.lines.enumerated() {
+                        if index > 0 {
+                            location += 1
+                        }
+                        renderedLines.append(
+                            ConsoleRenderedLine(
+                                id: line.id,
+                                fingerprint: line.fingerprint,
+                                range: NSRange(location: location, length: line.text.length)
+                            )
+                        )
+                        location += line.text.length
+                    }
+                }
+            }
+        }
+
+        private func applyReplacement(
+            _ change: ConsoleLineChange,
+            textStorage: NSTextStorage
+        ) {
+            let currentRange = renderedLines[change.index].range
+            textStorage.replaceCharacters(in: currentRange, with: change.text)
+
+            let delta = change.text.length - currentRange.length
+            renderedLines[change.index].fingerprint = change.fingerprint
+            renderedLines[change.index].range.length = change.text.length
+
+            guard delta != 0 else { return }
+            for nextIndex in (change.index + 1)..<renderedLines.count {
+                renderedLines[nextIndex].range.location += delta
+            }
         }
 
         private func scheduleViewportSync() {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.suppressViewportSync = false
-                self.syncViewportState(userInitiated: false)
+                self.syncViewportState(allowFollowStateChange: false)
             }
         }
 
-        private func syncViewportState(userInitiated: Bool) {
+        private var isLikelyUserScroll: Bool {
+            isLiveScrolling ||
+            (ProcessInfo.processInfo.systemUptime - lastUserScrollTimestamp) <= userScrollGraceInterval
+        }
+
+        private func markUserScroll() {
+            lastUserScrollTimestamp = ProcessInfo.processInfo.systemUptime
+        }
+
+        private func syncViewportState(allowFollowStateChange: Bool) {
             guard !suppressViewportSync, let scrollView else { return }
 
-            let atBottom = isScrolledToBottom(scrollView)
-            setIsAtBottom(atBottom)
-
-            if atBottom {
-                setUnreadCount(0)
-                if userInitiated && !parent.followEnabled {
+            if isScrolledToBottom(scrollView) {
+                if allowFollowStateChange && !parent.followEnabled {
                     setFollowEnabled(true)
                 }
-            } else if userInitiated && parent.followEnabled {
+            } else if allowFollowStateChange && parent.followEnabled {
                 setFollowEnabled(false)
             }
         }
@@ -496,7 +618,6 @@ private struct InteractiveLogConsoleView: NSViewRepresentable {
             guard let textView else { return }
             let endRange = NSRange(location: textView.string.utf16.count, length: 0)
             textView.scrollRangeToVisible(endRange)
-            setUnreadCount(0)
         }
 
         private func restoreVisibleOrigin(_ origin: NSPoint) {
@@ -511,12 +632,6 @@ private struct InteractiveLogConsoleView: NSViewRepresentable {
             scrollView.reflectScrolledClipView(scrollView.contentView)
         }
 
-        private func appendedEntryCount(from oldIDs: [UUID], to newIDs: [UUID]) -> Int? {
-            guard newIDs.count >= oldIDs.count else { return nil }
-            guard Array(newIDs.prefix(oldIDs.count)) == oldIDs else { return nil }
-            return newIDs.count - oldIDs.count
-        }
-
         private func setFollowEnabled(_ value: Bool) {
             guard parent.followEnabled != value else { return }
             lastFollowEnabled = value
@@ -525,28 +640,147 @@ private struct InteractiveLogConsoleView: NSViewRepresentable {
             }
         }
 
-        private func setIsAtBottom(_ value: Bool) {
-            guard isAtBottomSnapshot != value else { return }
-            isAtBottomSnapshot = value
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.isAtBottom = value
-            }
+        private func makeLineMenu(at point: NSPoint) -> NSMenu? {
+            guard let lineEntry = lineEntry(at: point) else { return nil }
+
+            contextMenuMessage = lineEntry.message
+            contextMenuFullLog = fullLogString(for: lineEntry)
+
+            let menu = NSMenu()
+            let copyMessageItem = NSMenuItem(
+                title: "复制正文",
+                action: #selector(copyContextMenuMessage),
+                keyEquivalent: ""
+            )
+            copyMessageItem.target = self
+            menu.addItem(copyMessageItem)
+
+            let copyFullLogItem = NSMenuItem(
+                title: "复制完整日志",
+                action: #selector(copyContextMenuFullLog),
+                keyEquivalent: ""
+            )
+            copyFullLogItem.target = self
+            menu.addItem(copyFullLogItem)
+            return menu
         }
 
-        private func setUnreadCount(_ value: Int) {
-            let sanitizedValue = max(0, value)
-            guard unreadCountSnapshot != sanitizedValue else { return }
-            unreadCountSnapshot = sanitizedValue
-            DispatchQueue.main.async { [weak self] in
-                self?.parent.unreadCount = sanitizedValue
+        private func lineEntry(at point: NSPoint) -> LogEntry? {
+            guard let textView,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer,
+                  !renderedLines.isEmpty
+            else {
+                return nil
             }
+
+            let containerPoint = NSPoint(
+                x: point.x - textView.textContainerOrigin.x,
+                y: point.y - textView.textContainerOrigin.y
+            )
+            let hitRect = layoutManager.usedRect(for: textContainer).insetBy(dx: -6, dy: -2)
+            guard hitRect.contains(containerPoint) else { return nil }
+
+            let charIndex = layoutManager.characterIndex(
+                for: containerPoint,
+                in: textContainer,
+                fractionOfDistanceBetweenInsertionPoints: nil
+            )
+            guard let lineIndex = renderedLineIndex(forCharacterIndex: charIndex) else { return nil }
+            guard parent.logs.indices.contains(lineIndex) else { return nil }
+
+            textView.setSelectedRange(renderedLines[lineIndex].range)
+            return parent.logs[lineIndex]
+        }
+
+        private func fullLogString(for entry: LogEntry) -> String {
+            "[\(entry.formattedTimestamp)] [\(entry.level.displayName)] \(entry.message)"
+        }
+
+        private func renderedLineIndex(forCharacterIndex charIndex: Int) -> Int? {
+            guard !renderedLines.isEmpty else { return nil }
+
+            for (index, line) in renderedLines.enumerated() {
+                let lower = line.range.location
+                let upper = NSMaxRange(line.range)
+
+                if lower...upper ~= charIndex {
+                    return index
+                }
+
+                if index + 1 < renderedLines.count {
+                    let nextLower = renderedLines[index + 1].range.location
+                    if charIndex > upper && charIndex < nextLower {
+                        return index
+                    }
+                }
+            }
+
+            if let lastIndex = renderedLines.indices.last,
+               charIndex >= renderedLines[lastIndex].range.location {
+                return lastIndex
+            }
+
+            return nil
+        }
+
+        @objc
+        private func copyContextMenuMessage() {
+            guard let contextMenuMessage else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(contextMenuMessage, forType: .string)
+        }
+
+        @objc
+        private func copyContextMenuFullLog() {
+            guard let contextMenuFullLog else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(contextMenuFullLog, forType: .string)
         }
     }
+}
+
+private struct ConsoleRenderableLine {
+    let id: UUID
+    let fingerprint: Int
+    let text: NSAttributedString
+}
+
+private struct ConsoleRenderedLine {
+    let id: UUID
+    var fingerprint: Int
+    var range: NSRange
+}
+
+private struct ConsoleRenderState {
+    let text: NSAttributedString
+    let lines: [ConsoleRenderedLine]
+}
+
+private struct ConsoleAppendBlock {
+    let leadingNewline: Bool
+    let text: NSAttributedString
+    let lines: [ConsoleRenderableLine]
+}
+
+private struct ConsoleLineChange {
+    let index: Int
+    let fingerprint: Int
+    let text: NSAttributedString
+}
+
+private enum ConsoleRenderUpdate {
+    case rebuild(ConsoleRenderState)
+    case incremental(changes: [ConsoleLineChange], append: ConsoleAppendBlock?)
 }
 
 // MARK: - ConsoleTextRenderer
 
 private enum ConsoleTextRenderer {
+    private static let timestampColumn: CGFloat = 64
+    private static let levelColumn: CGFloat = 100
+    private static let messageColumn: CGFloat = 108
+
     static func fingerprint(for logs: [LogEntry], isRunning: Bool) -> Int {
         var hasher = Hasher()
         hasher.combine(isRunning)
@@ -557,6 +791,7 @@ private enum ConsoleTextRenderer {
             hasher.combine(entry.level.rawValue)
             hasher.combine(entry.message)
             hasher.combine(entry.isStderr)
+            hasher.combine(entry.isProgress)
             hasher.combine(entry.containsErrorKeyword)
             hasher.combine(entry.formattedTimestamp)
         }
@@ -564,60 +799,179 @@ private enum ConsoleTextRenderer {
         return hasher.finalize()
     }
 
-    static func attributedString(for logs: [LogEntry], isRunning: Bool) -> NSAttributedString {
-        let result = NSMutableAttributedString()
-
-        for index in logs.indices {
-            let entry = logs[index]
-            let isLatest = index == logs.indices.last && isRunning
-            result.append(line(for: entry, highlightLatest: isLatest))
-
-            if index != logs.index(before: logs.endIndex) {
-                result.append(NSAttributedString(string: "\n"))
-            }
+    static func makeUpdate(
+        logs: [LogEntry],
+        previous: [ConsoleRenderedLine],
+        isRunning: Bool
+    ) -> ConsoleRenderUpdate {
+        let targetLines = logs.enumerated().map { index, entry in
+            makeLine(
+                for: entry,
+                highlightLatest: index == logs.indices.last && isRunning
+            )
         }
 
-        return result
+        let previousIDs = previous.map(\.id)
+        let targetIDs = targetLines.map(\.id)
+
+        if previous.isEmpty || targetLines.isEmpty || targetLines.count < previous.count {
+            return .rebuild(buildRender(from: targetLines))
+        }
+
+        if previousIDs == targetIDs {
+            let changes = targetLines.enumerated().compactMap { index, line -> ConsoleLineChange? in
+                guard previous[index].fingerprint != line.fingerprint else { return nil }
+                return ConsoleLineChange(index: index, fingerprint: line.fingerprint, text: line.text)
+            }
+            return .incremental(changes: changes, append: nil)
+        }
+
+        guard Array(targetIDs.prefix(previousIDs.count)) == previousIDs else {
+            return .rebuild(buildRender(from: targetLines))
+        }
+
+        let prefixChanges = previous.indices.compactMap { index -> ConsoleLineChange? in
+            guard previous[index].fingerprint != targetLines[index].fingerprint else { return nil }
+            return ConsoleLineChange(
+                index: index,
+                fingerprint: targetLines[index].fingerprint,
+                text: targetLines[index].text
+            )
+        }
+
+        let appendedLines = Array(targetLines.dropFirst(previous.count))
+        let appendBlock: ConsoleAppendBlock? = appendedLines.isEmpty
+            ? nil
+            : ConsoleAppendBlock(
+                leadingNewline: !previous.isEmpty,
+                text: joinedText(from: appendedLines),
+                lines: appendedLines
+            )
+
+        return .incremental(changes: prefixChanges, append: appendBlock)
+    }
+
+    private static func buildRender(from lines: [ConsoleRenderableLine]) -> ConsoleRenderState {
+        let text = NSMutableAttributedString()
+        var rendered: [ConsoleRenderedLine] = []
+
+        for index in lines.indices {
+            if index > 0 {
+                text.append(NSAttributedString(string: "\n"))
+            }
+
+            let start = text.length
+            text.append(lines[index].text)
+            rendered.append(
+                ConsoleRenderedLine(
+                    id: lines[index].id,
+                    fingerprint: lines[index].fingerprint,
+                    range: NSRange(location: start, length: lines[index].text.length)
+                )
+            )
+        }
+
+        return ConsoleRenderState(text: text, lines: rendered)
+    }
+
+    private static func joinedText(from lines: [ConsoleRenderableLine]) -> NSAttributedString {
+        let text = NSMutableAttributedString()
+
+        for index in lines.indices {
+            if index > 0 {
+                text.append(NSAttributedString(string: "\n"))
+            }
+            text.append(lines[index].text)
+        }
+
+        return text
+    }
+
+    private static func makeLine(
+        for entry: LogEntry,
+        highlightLatest: Bool
+    ) -> ConsoleRenderableLine {
+        ConsoleRenderableLine(
+            id: entry.id,
+            fingerprint: lineFingerprint(for: entry, highlightLatest: highlightLatest),
+            text: line(for: entry, highlightLatest: highlightLatest)
+        )
+    }
+
+    private static func lineFingerprint(for entry: LogEntry, highlightLatest: Bool) -> Int {
+        var hasher = Hasher()
+        hasher.combine(entry.id)
+        hasher.combine(entry.message)
+        hasher.combine(entry.level.rawValue)
+        hasher.combine(entry.isStderr)
+        hasher.combine(entry.isProgress)
+        hasher.combine(entry.containsErrorKeyword)
+        hasher.combine(entry.formattedTimestamp)
+        hasher.combine(highlightLatest)
+        return hasher.finalize()
     }
 
     private static func line(for entry: LogEntry, highlightLatest: Bool) -> NSAttributedString {
         let line = NSMutableAttributedString()
-        let levelLabel = entry.level.displayName.padding(toLength: 7, withPad: " ", startingAt: 0)
-        let backgroundColor = backgroundColor(for: entry, highlightLatest: highlightLatest)
+        let paragraphStyle = paragraphStyle()
+        let lineBackground = backgroundColor(for: entry, highlightLatest: highlightLatest)
+        let level = shortLevelLabel(for: entry).padding(toLength: 5, withPad: " ", startingAt: 0)
 
-        line.append(fragment(entry.formattedTimestamp, color: ConsoleTheme.timestamp, background: backgroundColor))
-        line.append(fragment(" ", color: nil, background: backgroundColor))
         line.append(
             fragment(
-                levelLabel,
-                color: levelColor(for: entry),
-                background: backgroundColor,
-                font: entry.level == .error ? ConsoleTheme.boldFont : ConsoleTheme.font
+                shortTimestamp(for: entry),
+                color: ConsoleTheme.timestamp,
+                background: lineBackground,
+                font: ConsoleTheme.timestampFont,
+                paragraphStyle: paragraphStyle
             )
         )
-        line.append(fragment(" ", color: nil, background: backgroundColor))
+        line.append(fragment("\t", background: lineBackground, paragraphStyle: paragraphStyle))
+        line.append(
+            fragment(
+                level,
+                color: metadataColor(for: entry),
+                background: lineBackground,
+                font: ConsoleTheme.metadataFont,
+                paragraphStyle: paragraphStyle
+            )
+        )
+        line.append(fragment("\t", background: lineBackground, paragraphStyle: paragraphStyle))
         line.append(
             fragment(
                 entry.message,
                 color: messageColor(for: entry),
-                background: backgroundColor,
-                font: entry.level == .error ? ConsoleTheme.boldFont : ConsoleTheme.font
+                background: lineBackground,
+                font: entry.level == .error ? ConsoleTheme.emphasisFont : ConsoleTheme.font,
+                paragraphStyle: paragraphStyle
             )
         )
 
         return line
     }
 
+    private static func paragraphStyle() -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byWordWrapping
+        style.lineSpacing = 2
+        style.paragraphSpacing = 0
+        style.tabStops = [
+            NSTextTab(textAlignment: .left, location: timestampColumn),
+            NSTextTab(textAlignment: .left, location: levelColumn),
+            NSTextTab(textAlignment: .left, location: messageColumn)
+        ]
+        style.defaultTabInterval = messageColumn
+        style.headIndent = messageColumn
+        return style
+    }
+
     private static func fragment(
         _ string: String,
-        color: NSColor?,
-        background: NSColor?,
-        font: NSFont = ConsoleTheme.font
+        color: NSColor? = nil,
+        background: NSColor? = nil,
+        font: NSFont = ConsoleTheme.font,
+        paragraphStyle: NSParagraphStyle
     ) -> NSAttributedString {
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineBreakMode = .byWordWrapping
-        paragraphStyle.lineSpacing = 1
-
         var attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .paragraphStyle: paragraphStyle
@@ -633,10 +987,27 @@ private enum ConsoleTextRenderer {
         return NSAttributedString(string: string, attributes: attributes)
     }
 
-    private static func levelColor(for entry: LogEntry) -> NSColor {
+    private static func shortTimestamp(for entry: LogEntry) -> String {
+        String(entry.formattedTimestamp.prefix(8))
+    }
+
+    private static func shortLevelLabel(for entry: LogEntry) -> String {
         switch entry.level {
         case .info:
-            return ConsoleTheme.info
+            return "INFO"
+        case .warning:
+            return "WARN"
+        case .error:
+            return "ERR"
+        case .debug:
+            return "DBG"
+        }
+    }
+
+    private static func metadataColor(for entry: LogEntry) -> NSColor {
+        switch entry.level {
+        case .info:
+            return entry.isStderr ? ConsoleTheme.stderr : ConsoleTheme.timestamp
         case .warning:
             return ConsoleTheme.warning
         case .error:
@@ -653,14 +1024,14 @@ private enum ConsoleTextRenderer {
         if entry.containsErrorKeyword {
             return ConsoleTheme.warning
         }
-        if entry.isStderr {
-            return ConsoleTheme.stderr
-        }
+
         switch entry.level {
         case .debug:
             return ConsoleTheme.debug
+        case .warning:
+            return ConsoleTheme.warning
         default:
-            return NSColor.textColor
+            return ConsoleTheme.text
         }
     }
 
@@ -669,7 +1040,7 @@ private enum ConsoleTextRenderer {
             return ConsoleTheme.errorBackground
         }
         if highlightLatest {
-            return ConsoleTheme.activeBackground
+            return ConsoleTheme.activeHighlight
         }
         return nil
     }
@@ -689,33 +1060,31 @@ struct ConsoleStatusBar: View {
                 Circle()
                     .fill(state.displayColor)
                     .frame(width: 6, height: 6)
-
                 Text(state.displayText)
                     .font(.caption2)
                     .fontWeight(.medium)
-                    .foregroundStyle(state.displayColor)
+                    .foregroundColor(state.displayColor)
             }
 
             Divider().frame(height: 12)
 
             Text("\(logCount) 条日志")
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundColor(.secondary)
 
             Spacer()
 
             if let result = lastResult {
                 Text("耗时: \(result.formattedDuration)")
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundColor(.secondary)
             }
 
-            if let ffmpegVersion {
+            if let version = ffmpegVersion {
                 Divider().frame(height: 12)
-
-                Text(ffmpegVersion)
+                Text(version)
                     .font(.caption2)
-                    .foregroundStyle(.secondary.opacity(0.7))
+                    .foregroundColor(.secondary.opacity(0.7))
             }
         }
         .padding(.horizontal)
@@ -724,16 +1093,14 @@ struct ConsoleStatusBar: View {
     }
 }
 
-// MARK: - LogDocument
+// MARK: - LogDocument（用于导出）
 
 struct LogDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.plainText] }
 
     var content: String
 
-    init(content: String) {
-        self.content = content
-    }
+    init(content: String) { self.content = content }
 
     init(configuration: ReadConfiguration) throws {
         content = configuration.file.regularFileContents
@@ -750,17 +1117,16 @@ struct LogDocument: FileDocument {
 #Preview {
     LogConsoleView()
         .environmentObject({
-            let viewModel = ExecutionViewModel()
-            viewModel.appendLog(LogEntry(timestamp: Date(), level: .info, message: "开始执行命令..."))
-            viewModel.appendLog(LogEntry(timestamp: Date(), level: .debug, message: "frame=  100 fps=30 size=1024kB time=00:00:03.33"))
-            viewModel.appendLog(LogEntry(timestamp: Date(), level: .debug, message: "frame=  150 fps=30 size=1536kB time=00:00:05.00"))
-            viewModel.appendLog(LogEntry(timestamp: Date(), level: .info, message: "正在处理视频流..."))
-            viewModel.appendLog(LogEntry(timestamp: Date(), level: .warning, message: "deprecated option used"))
-            viewModel.appendLog(LogEntry(timestamp: Date(), level: .debug, message: "frame=  200 fps=29 size=2048kB time=00:00:06.67"))
-            viewModel.appendLog(LogEntry(timestamp: Date(), level: .error, message: "Error opening file: Permission denied"))
-            viewModel.appendLog(LogEntry(timestamp: Date(), level: .error, message: "Conversion failed: invalid codec"))
-            viewModel.appendLog(LogEntry(timestamp: Date(), level: .info, message: "尝试使用备用路径..."))
-            return viewModel
+            let vm = ExecutionViewModel()
+            vm.appendLog(LogEntry(timestamp: Date(), level: .info, message: "开始执行命令..."))
+            vm.appendLog(LogEntry(timestamp: Date(), level: .debug, message: "frame=  100 fps=30 size=1024kB time=00:00:03.33"))
+            vm.appendLog(LogEntry(timestamp: Date(), level: .debug, message: "frame=  150 fps=30 size=1536kB time=00:00:05.00"))
+            vm.appendLog(LogEntry(timestamp: Date(), level: .info, message: "正在处理视频流..."))
+            vm.appendLog(LogEntry(timestamp: Date(), level: .warning, message: "deprecated option used"))
+            vm.appendLog(LogEntry(timestamp: Date(), level: .debug, message: "frame=  200 fps=29 size=2048kB time=00:00:06.67"))
+            vm.appendLog(LogEntry(timestamp: Date(), level: .error, message: "Error opening file: Permission denied"))
+            vm.appendLog(LogEntry(timestamp: Date(), level: .info, message: "尝试使用备用路径..."))
+            return vm
         }())
-        .frame(width: 700, height: 400)
+        .frame(width: 700, height: 350)
 }

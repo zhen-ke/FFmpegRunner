@@ -20,7 +20,6 @@ import Combine
 /// 职责边界：
 /// - ✅ UI 状态展示（state, logs, lastResult）
 /// - ✅ 日志收集与裁剪
-/// - ✅ 自动滚动状态持久化（autoScroll，@AppStorage source of truth）
 /// - ✅ 状态描述与颜色
 /// - ❌ 命令验证 → ExecutionController
 /// - ❌ 执行编排 → ExecutionController
@@ -51,32 +50,13 @@ class ExecutionViewModel: ObservableObject {
     /// FFmpeg 版本信息（从 Controller 同步）
     @Published private(set) var ffmpegVersion: String?
 
-    // FIX 1: autoScroll 从 View 层的 @AppStorage + @State 双重状态
-    //        下沉到 ViewModel，成为唯一 source of truth。
-    //        View 层通过 Binding 读写，消除了 onAppear 首帧同步的闪烁风险。
-    //
-    //        原设计问题：
-    //        - @AppStorage(preferredAutoScroll) + @State(autoScroll) 两份状态
-    //        - onAppear { autoScroll = preferredAutoScroll } 存在首帧不一致
-    //        - onChangeCompat 单向写回，逻辑分散在 View 层
-    //
-    //        修复：ViewModel 直接持有 @Published autoScroll，持久化在 UserDefaults
-    //        通过 didSet 实现，View 层只使用 $viewModel.autoScroll Binding。
-    @Published var autoScroll: Bool {
-        didSet {
-            UserDefaults.standard.set(autoScroll, forKey: "autoScrollLog")
-            // 诊断：记录所有 autoScroll 赋值，包含调用栈，覆盖 ViewModel 层的路径
-            #if DEBUG
-            let stack = Thread.callStackSymbols.prefix(6).joined(separator: "\n    ")
-            let ts = String(format: "%.4f", Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 1000))
-            print("📌 [VM.autoScroll \(ts)] → \(autoScroll)\n    \(stack)")
-            #endif
-        }
-    }
+    /// 日志自动滚动状态
+    @Published var autoScroll = true
 
     /// 简短的 FFmpeg 版本号（优化 UI 显示）
     var ffmpegVersionShort: String {
         guard let fullVersion = ffmpegVersion else { return "FFmpeg" }
+        // 尝试提取类似 "ffmpeg version 7.1" 中的 "7.1"
         if let range = fullVersion.range(of: #"version\s+(\d+\.\d+(?:\.\d+)?)"#, options: .regularExpression) {
             let versionPart = fullVersion[range]
             if let numberRange = versionPart.range(of: #"\d+\.\d+(?:\.\d+)?"#, options: .regularExpression) {
@@ -113,13 +93,6 @@ class ExecutionViewModel: ObservableObject {
         TimeInterval(UserSettings.shared.progressCoalesceIntervalMs) / 1000.0
     }
 
-    // MARK: - Private State
-
-    /// 日志裁剪的溢出容忍量
-    /// FIX 3: 不再每次 appendLog 都裁剪，而是攒够 trimOverflowThreshold 条后批量裁剪
-    /// 原设计：每条日志都触发 O(n) 遍历，FFmpeg 高频输出下持续有开销
-    private let trimOverflowThreshold: Int = 50
-
     // MARK: - Dependencies
 
     /// 执行控制器 (Application Layer)
@@ -141,8 +114,6 @@ class ExecutionViewModel: ObservableObject {
     // MARK: - Initialization
 
     init(controller: ExecutionController? = nil) {
-        // FIX 1 cont.: 初始化时从 UserDefaults 读取持久化值，不依赖 onAppear
-        self.autoScroll = UserDefaults.standard.object(forKey: "autoScrollLog") as? Bool ?? true
         self.controller = controller ?? ExecutionController()
 
         setupBindings()
@@ -178,37 +149,29 @@ class ExecutionViewModel: ObservableObject {
             self?.appendLog(entry)
         }
 
-        // FIX 4: 搜索与日志新增使用不同的防抖策略
-        //
-        // 原设计：所有场景统一 throttle(100ms)，搜索输入有明显延迟感
-        //
-        // 修复：在合并前各自预处理，保持单一 CombineLatest3 结构避免
-        // @MainActor + assign(to:) 在分段 pipeline 下的编译器类型推断问题。
-        // - $logs / $logFilter：throttle 100ms，高频日志不触发过多重算
-        // - $searchText：debounce 50ms，输入停顿后立即响应
-        Publishers.CombineLatest3(
-            $logs.throttle(for: .milliseconds(100), scheduler: RunLoop.main, latest: true),
-            $logFilter.throttle(for: .milliseconds(100), scheduler: RunLoop.main, latest: true),
-            $searchText.debounce(for: .milliseconds(50), scheduler: RunLoop.main)
-        )
-        .map { logs, filter, search -> [LogEntry] in
-            var result: [LogEntry]
-            switch filter {
-            case .all:
-                result = logs
-            case .important:
-                result = logs.filter { $0.level == .error || $0.level == .warning }
-            case .noDebug:
-                result = logs.filter { $0.level != .debug }
-            }
-            if !search.isEmpty {
-                result = result.filter {
-                    $0.message.localizedCaseInsensitiveContains(search)
+        // 监听 logs、filter、searchText 变化，使用 throttle 防抖处理
+        // 避免每次 body 刷新都重新过滤整个日志数组
+        Publishers.CombineLatest3($logs, $logFilter, $searchText)
+            .throttle(for: .milliseconds(100), scheduler: RunLoop.main, latest: true)
+            .map { logs, filter, search -> [LogEntry] in
+                var result: [LogEntry]
+                switch filter {
+                case .all:
+                    result = logs
+                case .important:
+                    result = logs.filter { $0.level == .error || $0.level == .warning }
+                case .noDebug:
+                    result = logs.filter { $0.level != .debug }
                 }
+                // 应用文本搜索
+                if !search.isEmpty {
+                    result = result.filter {
+                        $0.message.localizedCaseInsensitiveContains(search)
+                    }
+                }
+                return result
             }
-            return result
-        }
-        .assign(to: &$visibleLogs)
+            .assign(to: &$visibleLogs)
     }
 
     // MARK: - Public Methods (Delegate to Controller)
@@ -276,6 +239,11 @@ class ExecutionViewModel: ObservableObject {
     }
 
     /// 执行命令（使用参数数组，推荐路径）
+    /// - Parameters:
+    ///   - arguments: 参数数组（不包含 ffmpeg 本身）
+    ///   - displayCommand: 用于日志/最近使用显示的命令字符串
+    /// - Note: 这是 Template → Execute 的推荐路径，直接使用参数数组，
+    ///         避免 shell escaping + splitCommand 的不可逆问题
     func execute(
         arguments: [String],
         displayCommand: String,
@@ -307,7 +275,7 @@ class ExecutionViewModel: ObservableObject {
 
         appendLog(LogEntry(
             timestamp: Date(),
-            level: .warning,
+            level: .info,
             message: "用户取消执行"
         ))
     }
@@ -354,20 +322,15 @@ class ExecutionViewModel: ObservableObject {
         }
 
         logs.append(entry)
-
-        // FIX 3 cont.: 批量裁剪，超出容忍量才触发，而非每条都检查
-        // 触发条件：logs.count > maxLogEntries + trimOverflowThreshold
-        // 这样在高频场景下，裁剪频率从 O(每条) 降低到 O(每 N 条)
-        if logs.count > maxLogEntries + trimOverflowThreshold {
-            trimLogs()
-        }
+        trimLogsIfNeeded()
     }
 
-    /// 批量裁剪日志至 maxLogEntries
-    private func trimLogs() {
-        let overflow = logs.count - maxLogEntries
-        guard overflow > 0 else { return }
+    private func trimLogsIfNeeded() {
+        guard logs.count > maxLogEntries else { return }
 
+        let overflow = logs.count - maxLogEntries
+
+        // 单次遍历：优先标记不重要日志为待移除
         var removedCount = 0
         var keepIndices: [Int] = []
         keepIndices.reserveCapacity(maxLogEntries)
@@ -380,6 +343,7 @@ class ExecutionViewModel: ObservableObject {
             }
         }
 
+        // 如果仍超出，从头部移除最旧的日志（含重要日志）
         if removedCount < overflow {
             let extra = overflow - removedCount
             keepIndices = Array(keepIndices.dropFirst(extra))
@@ -434,20 +398,6 @@ extension ExecutionViewModel {
         case .completed(let result): return result.isSuccess ? "green" : "red"
         case .cancelled: return "orange"
         case .error: return "red"
-        }
-    }
-}
-
-// MARK: - LogFilter 扩展
-// FIX 3 cont.: 新增 shortLabel 供 Picker segmented style 使用（更简短的标签）
-
-extension LogFilter {
-    /// Picker 显示用短标签
-    var shortLabel: String {
-        switch self {
-        case .all:       return "全部"
-        case .important: return "重要"
-        case .noDebug:   return "精简"
         }
     }
 }

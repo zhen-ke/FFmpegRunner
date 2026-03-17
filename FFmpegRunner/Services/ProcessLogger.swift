@@ -158,7 +158,7 @@ class ProcessLogger: ProcessLoggerProviding {
         let isProgress = isProgressLine(lowercased)
 
         // 检测日志级别
-        let level = detectLogLevel(lowercased, isError: isError, isProgress: isProgress)
+        let level = detectLogLevel(lowercased, isProgress: isProgress)
 
         // 创建日志条目
         let entry = LogEntry(
@@ -181,7 +181,7 @@ class ProcessLogger: ProcessLoggerProviding {
     }
 
     /// 检测日志级别
-    private func detectLogLevel(_ lowercased: String, isError: Bool, isProgress: Bool) -> LogLevel {
+    private func detectLogLevel(_ lowercased: String, isProgress: Bool) -> LogLevel {
         // 错误
         if lowercased.contains("error") ||
            lowercased.contains("failed") ||
@@ -202,8 +202,8 @@ class ProcessLogger: ProcessLoggerProviding {
             return .debug
         }
 
-        // 默认
-        return isError ? .warning : .info
+        // FFmpeg 大量正常日志写入 stderr，默认应视为普通信息而非警告。
+        return .info
     }
 
     /// 是否为 FFmpeg 进度行

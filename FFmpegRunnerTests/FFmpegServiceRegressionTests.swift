@@ -259,6 +259,36 @@ final class FFmpegServiceRegressionTests: XCTestCase {
         let stderrLog = try XCTUnwrap(capturedLogs.first(where: { $0.message == "stderr-tail" }))
         XCTAssertFalse(stdoutLog.isStderr)
         XCTAssertTrue(stderrLog.isStderr)
+        XCTAssertEqual(stdoutLog.level, .info)
+        XCTAssertEqual(stderrLog.level, .info)
+    }
+
+    func testProcessLoggerOnlyElevatesStderrWhenSemanticsRequireIt() async throws {
+        let logger = ProcessLogger()
+        logger.callbackQueue = .main
+
+        var capturedLogs: [LogEntry] = []
+        let logsExpectation = expectation(description: "process logger emits semantic levels")
+        logsExpectation.expectedFulfillmentCount = 3
+
+        logger.onLog = { entry in
+            capturedLogs.append(entry)
+            logsExpectation.fulfill()
+        }
+
+        logger.processOutput("muxing overhead: 0.65%\n", isError: true)
+        logger.processOutput("deprecated option used\n", isError: true)
+        logger.processOutput("Error opening input file\n", isError: true)
+
+        await fulfillment(of: [logsExpectation], timeout: 1.0)
+
+        let muxingLog = try XCTUnwrap(capturedLogs.first(where: { $0.message == "muxing overhead: 0.65%" }))
+        let deprecatedLog = try XCTUnwrap(capturedLogs.first(where: { $0.message == "deprecated option used" }))
+        let errorLog = try XCTUnwrap(capturedLogs.first(where: { $0.message == "Error opening input file" }))
+
+        XCTAssertEqual(muxingLog.level, .info)
+        XCTAssertEqual(deprecatedLog.level, .warning)
+        XCTAssertEqual(errorLog.level, .error)
     }
 
     func testExecutionControllerTracksAsyncSystemPathResolution() async throws {

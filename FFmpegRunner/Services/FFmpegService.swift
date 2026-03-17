@@ -644,7 +644,7 @@ private final class ProcessExecutionSession {
 
         onLog(LogEntry(
             timestamp: Date(),
-            level: .warning,
+            level: .info,
             message: "正在停止执行..."
         ))
 
