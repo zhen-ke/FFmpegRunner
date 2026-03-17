@@ -26,11 +26,29 @@ class TemplateHeaderViewModel: ObservableObject {
     /// 显示执行前确认
     @Published var showRunConfirmation = false
 
+    /// 显示执行前完整预览
+    @Published var showRunPreviewSheet = false
+
+    /// 显示首次运行安全提醒
+    @Published var showSafetyWarning = false
+
     /// 执行前确认标题
     @Published private(set) var runConfirmationTitle = "确认执行"
 
     /// 执行前确认内容
     @Published private(set) var runConfirmationMessage = ""
+
+    /// 执行前预览标题
+    @Published private(set) var runPreviewTitle = "执行预览"
+
+    /// 执行前预览的完整命令
+    @Published private(set) var runPreviewCommand = ""
+
+    /// 执行前预览的输出路径
+    @Published private(set) var runPreviewOutputPath: String?
+
+    /// 执行前预览的可执行文件
+    @Published private(set) var runPreviewExecutable = CommandExecutable.ffmpeg.binaryName
 
     /// 显示覆盖确认对话框
     @Published var showOverwriteConfirm = false
@@ -90,18 +108,26 @@ class TemplateHeaderViewModel: ObservableObject {
         )
         pendingExecutionRequest = request
 
-        if UserSettings.shared.confirmBeforeRun {
-            prepareRunConfirmation(for: request)
-            showRunConfirmation = true
+        if CommandValidator.needsFirstRunWarning(
+            hasAcknowledged: UserSettings.shared.hasAcknowledgedSafetyWarning
+        ) {
+            showSafetyWarning = true
             return
         }
 
-        await continuePendingExecution(executionViewModel: executionViewModel)
+        await presentExecutionReviewIfNeeded(executionViewModel: executionViewModel)
     }
 
     func confirmPendingExecution(executionViewModel: ExecutionViewModel) async {
         showRunConfirmation = false
+        showRunPreviewSheet = false
         await continuePendingExecution(executionViewModel: executionViewModel)
+    }
+
+    func acknowledgeSafetyWarning(executionViewModel: ExecutionViewModel) async {
+        UserSettings.shared.hasAcknowledgedSafetyWarning = true
+        showSafetyWarning = false
+        await presentExecutionReviewIfNeeded(executionViewModel: executionViewModel)
     }
 
     func confirmPendingOverwrite(executionViewModel: ExecutionViewModel) async {
@@ -119,9 +145,14 @@ class TemplateHeaderViewModel: ObservableObject {
     func cancelPendingExecution() {
         pendingExecutionRequest = nil
         showRunConfirmation = false
+        showRunPreviewSheet = false
+        showSafetyWarning = false
         showOverwriteConfirm = false
         existingOutputFile = ""
         runConfirmationMessage = ""
+        runPreviewCommand = ""
+        runPreviewOutputPath = nil
+        runPreviewExecutable = CommandExecutable.ffmpeg.binaryName
     }
 
     /// 执行命令
@@ -203,6 +234,23 @@ class TemplateHeaderViewModel: ObservableObject {
         )
     }
 
+    private func presentExecutionReviewIfNeeded(executionViewModel: ExecutionViewModel) async {
+        guard let request = pendingExecutionRequest else { return }
+
+        guard UserSettings.shared.confirmBeforeRun else {
+            await continuePendingExecution(executionViewModel: executionViewModel)
+            return
+        }
+
+        if UserSettings.shared.showCommandPreviewBeforeRun {
+            prepareRunPreview(for: request)
+            showRunPreviewSheet = true
+        } else {
+            prepareRunConfirmation(for: request)
+            showRunConfirmation = true
+        }
+    }
+
     private func outputConflictExists(for request: PendingExecutionRequest) -> Bool {
         guard let outputPath = request.currentCommand.outputPath,
               FileManager.default.fileExists(atPath: outputPath) else {
@@ -230,5 +278,12 @@ class TemplateHeaderViewModel: ObservableObject {
         } else {
             runConfirmationMessage = commandPreview
         }
+    }
+
+    private func prepareRunPreview(for request: PendingExecutionRequest) {
+        runPreviewTitle = "执行「\(request.templateName)」"
+        runPreviewCommand = request.currentCommand.displayString
+        runPreviewOutputPath = request.currentCommand.outputPath
+        runPreviewExecutable = request.currentCommand.executable.binaryName
     }
 }

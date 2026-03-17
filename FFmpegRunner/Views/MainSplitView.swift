@@ -14,6 +14,7 @@ struct MainSplitView: View {
 
     @EnvironmentObject var listViewModel: TemplateListViewModel
     @EnvironmentObject var navigationState: NavigationState
+    @AppStorage("sidebarWidth") private var sidebarWidth = 250.0
 
     // MARK: - Body
 
@@ -21,7 +22,11 @@ struct MainSplitView: View {
         NavigationSplitView(columnVisibility: $navigationState.columnVisibility) {
             // 左侧：模板列表
             TemplateListView()
-                .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 350)
+                .navigationSplitViewColumnWidth(
+                    min: 220,
+                    ideal: CGFloat(sidebarWidth),
+                    max: 420
+                )
         } detail: {
             // 右侧：详情视图
             if listViewModel.selectedTemplate != nil {

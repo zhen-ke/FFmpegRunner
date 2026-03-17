@@ -330,6 +330,14 @@ class FFmpegService: ObservableObject {
         self.ffmpegSource = source
     }
 
+    /// 设置 ffprobe 覆盖路径；为空时回退到自动推导
+    func setFFprobePathOverride(_ path: String) {
+        UserSettings.shared.ffprobePath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        applyImmediateResolvedPaths()
+        objectWillChange.send()
+        Task { await updateResolvedPathsAsync() }
+    }
+
     /// 刷新系统 FFmpeg 路径缓存
     func refreshSystemPath() async {
         await pathResolver.invalidateCache()

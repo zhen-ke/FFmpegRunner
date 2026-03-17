@@ -31,7 +31,7 @@ class UserSettings: ObservableObject {
     @AppStorage("customFFmpegPath") var customFFmpegPath: String = ""
 
     /// FFprobe 可执行文件路径
-    @AppStorage("ffprobePath") var ffprobePath: String = "/opt/homebrew/bin/ffprobe"
+    @AppStorage("ffprobePath") var ffprobePath: String = ""
 
     // MARK: - UI 设置
 
@@ -93,7 +93,7 @@ class UserSettings: ObservableObject {
     func resetAll() {
         ffmpegSourceRaw = FFmpegSource.bundled.rawValue
         customFFmpegPath = ""
-        ffprobePath = "/opt/homebrew/bin/ffprobe"
+        ffprobePath = ""
         autoScrollLog = true
         maxLogEntries = 1000
         enableVerboseLogging = false
@@ -108,6 +108,18 @@ class UserSettings: ObservableObject {
         lastOutputDirectory = ""
         hasAcknowledgedSafetyWarning = false
         showCommandPreviewBeforeRun = true
+    }
+
+    /// 清除最近使用记录
+    func clearRecentSelections() {
+        lastTemplateId = ""
+        lastInputDirectory = ""
+        lastOutputDirectory = ""
+    }
+
+    /// 重置首次运行提醒状态
+    func resetSafetyAcknowledgement() {
+        hasAcknowledgedSafetyWarning = false
     }
 }
 

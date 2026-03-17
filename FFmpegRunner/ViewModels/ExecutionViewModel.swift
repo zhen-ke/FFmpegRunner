@@ -51,7 +51,11 @@ class ExecutionViewModel: ObservableObject {
     @Published private(set) var ffmpegVersion: String?
 
     /// 日志自动滚动状态
-    @Published var autoScroll = true
+    @Published var autoScroll = UserSettings.shared.autoScrollLog {
+        didSet {
+            UserSettings.shared.autoScrollLog = autoScroll
+        }
+    }
 
     /// 简短的 FFmpeg 版本号（优化 UI 显示）
     var ffmpegVersionShort: String {
