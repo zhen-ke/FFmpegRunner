@@ -5,80 +5,46 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
-
-// MARK: - 语义颜色
-
-extension Color {
-    enum Console {
-        static let errorBackground = Color.red.opacity(0.08)
-        static let activeHighlight = Color.accentColor.opacity(0.05)
-        static let stderrText      = Color(NSColor.systemOrange).opacity(0.9)
-    }
-}
+import AppKit
 
 // MARK: - 文件名格式化
 
 private let filenameFormatter: DateFormatter = {
-    let f = DateFormatter()
-    f.dateFormat = "yyyyMMdd_HHmmss"
-    return f
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyyMMdd_HHmmss"
+    return formatter
 }()
 
-// MARK: - onChange 兼容封装（macOS 13 / 14+）
+// MARK: - 控制台主题
 
-struct OnChangeCompat<V: Equatable>: ViewModifier {
-    let value: V
-    let action: (V) -> Void
-
-    func body(content: Content) -> some View {
-        if #available(macOS 14.0, *) {
-            content.onChange(of: value) { _, newValue in action(newValue) }
-        } else {
-            content.onChange(of: value) { newValue in action(newValue) }
-        }
-    }
-}
-
-extension View {
-    func onChangeCompat<V: Equatable>(of value: V, perform action: @escaping (V) -> Void) -> some View {
-        modifier(OnChangeCompat(value: value, action: action))
-    }
-}
-
-// MARK: - contextMenu 复用
-
-private struct LogEntryContextMenu: ViewModifier {
-    let message: String
-    func body(content: Content) -> some View {
-        content.contextMenu {
-            Button("复制日志") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(message, forType: .string)
-            }
-        }
-    }
-}
-
-private extension View {
-    func logContextMenu(message: String) -> some View {
-        modifier(LogEntryContextMenu(message: message))
-    }
+private enum ConsoleTheme {
+    static let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    static let boldFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
+    static let background = NSColor.textBackgroundColor
+    static let timestamp = NSColor.secondaryLabelColor.withAlphaComponent(0.72)
+    static let debug = NSColor.secondaryLabelColor
+    static let info = NSColor.systemBlue.withAlphaComponent(0.9)
+    static let warning = NSColor.systemOrange
+    static let error = NSColor.systemRed
+    static let stderr = NSColor.systemOrange.withAlphaComponent(0.92)
+    static let activeBackground = NSColor.controlAccentColor.withAlphaComponent(0.08)
+    static let errorBackground = NSColor.systemRed.withAlphaComponent(0.08)
 }
 
 // MARK: - LogConsoleView
 
 struct LogConsoleView: View {
-
     @EnvironmentObject var viewModel: ExecutionViewModel
-    @AppStorage("autoScrollLog") private var preferredAutoScroll = true
 
-    @State private var autoScroll = true
     @State private var showExportSheet = false
+    @State private var isAtBottom = true
+    @State private var unreadCount = 0
+    @State private var jumpToLatestToken = 0
 
     var body: some View {
         VStack(spacing: 0) {
             ConsoleHeaderView(
-                autoScroll: $autoScroll,
+                autoScroll: $viewModel.autoScroll,
                 logFilter: $viewModel.logFilter,
                 searchText: $viewModel.searchText,
                 onClear: viewModel.clearLogs,
@@ -92,9 +58,19 @@ struct LogConsoleView: View {
 
             LogContentView(
                 logs: viewModel.visibleLogs,
-                autoScroll: $autoScroll,
-                isRunning: viewModel.state.isRunning
+                followEnabled: $viewModel.autoScroll,
+                isRunning: viewModel.state.isRunning,
+                isAtBottom: $isAtBottom,
+                unreadCount: $unreadCount,
+                jumpToLatestToken: jumpToLatestToken
             )
+
+            if unreadCount > 0 && !viewModel.autoScroll {
+                NewOutputBanner(unreadCount: unreadCount) {
+                    viewModel.autoScroll = true
+                    jumpToLatestToken += 1
+                }
+            }
 
             ConsoleStatusBar(
                 logCount: viewModel.visibleLogs.count,
@@ -103,19 +79,42 @@ struct LogConsoleView: View {
                 state: viewModel.state
             )
         }
-        .onAppear {
-            autoScroll = preferredAutoScroll
-        }
-        // 单向同步：只在 autoScroll 变化时持久化，不反向同步，避免循环触发
-        .onChangeCompat(of: autoScroll) { newValue in
-            preferredAutoScroll = newValue
-        }
         .fileExporter(
             isPresented: $showExportSheet,
             document: LogDocument(content: viewModel.exportLogs()),
             contentType: .plainText,
             defaultFilename: "ffmpeg_log_\(filenameFormatter.string(from: Date())).txt"
         ) { _ in }
+    }
+}
+
+// MARK: - NewOutputBanner
+
+struct NewOutputBanner: View {
+    let unreadCount: Int
+    let onJumpToLatest: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.down.to.line")
+                .foregroundStyle(Color.accentColor)
+                .font(.caption)
+
+            Text("新日志 \(unreadCount)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            Button("跳到最新", action: onJumpToLatest)
+                .font(.caption)
+                .buttonStyle(.borderless)
+                .foregroundStyle(Color.accentColor)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 5)
+        .background(Color.accentColor.opacity(0.08))
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
 
@@ -148,38 +147,26 @@ struct ConsoleHeaderView: View {
                 if !isFFmpegAvailable {
                     Label("FFmpeg 未找到", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
-                        .foregroundColor(.orange)
+                        .foregroundStyle(.orange)
                 }
 
-                // 日志过滤器
-                Menu {
+                Picker("过滤", selection: $logFilter) {
                     ForEach(LogFilter.allCases, id: \.self) { filter in
-                        Button {
-                            logFilter = filter
-                        } label: {
-                            HStack {
-                                Text(filter.rawValue)
-                                if logFilter == filter {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
+                        Text(filter.shortLabel).tag(filter)
                     }
-                } label: {
-                    Image(systemName: logFilter == .all
-                          ? "line.3.horizontal.decrease.circle"
-                          : "line.3.horizontal.decrease.circle.fill")
                 }
-                .menuStyle(.borderlessButton)
-                .frame(width: 28)
-                .help("日志过滤: \(logFilter.rawValue)")
+                .pickerStyle(.segmented)
+                .frame(width: 160)
+                .help("日志过滤")
 
-                // 搜索按钮
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         showSearch.toggle()
-                        if showSearch { isSearchFocused = true }
-                        else          { searchText = "" }
+                        if showSearch {
+                            isSearchFocused = true
+                        } else {
+                            searchText = ""
+                        }
                     }
                 } label: {
                     Image(systemName: showSearch || !searchText.isEmpty
@@ -190,22 +177,23 @@ struct ConsoleHeaderView: View {
                 .help("搜索日志")
                 .keyboardShortcut("f", modifiers: .command)
 
-                // 自动滚动开关
                 Toggle(isOn: $autoScroll) {
-                    Image(systemName: "arrow.down.to.line")
+                    Image(systemName: autoScroll ? "arrow.down.to.line" : "pause.circle")
+                        .foregroundStyle(autoScroll ? Color.primary : Color.orange)
                 }
                 .toggleStyle(.button)
-                .help("自动滚动到底部")
+                .help(autoScroll ? "自动滚动中（点击暂停）" : "已暂停（点击恢复）")
+                .tint(autoScroll ? .accentColor : .orange)
 
-                // 导出
                 Button(action: onExport) {
                     Image(systemName: "square.and.arrow.up")
                 }
                 .buttonStyle(.bordered)
                 .help("导出日志")
 
-                // 清空
-                Button { showClearConfirm = true } label: {
+                Button {
+                    showClearConfirm = true
+                } label: {
                     Image(systemName: "trash")
                 }
                 .buttonStyle(.bordered)
@@ -222,11 +210,10 @@ struct ConsoleHeaderView: View {
             .padding(.horizontal)
             .padding(.vertical, 8)
 
-            // 搜索栏（可展开/收起）
             if showSearch {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                         .font(.caption)
 
                     TextField("搜索日志...", text: $searchText)
@@ -243,7 +230,7 @@ struct ConsoleHeaderView: View {
                     if let count = matchCount {
                         Text("\(count) 条匹配")
                             .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                     }
 
                     if !searchText.isEmpty {
@@ -251,7 +238,7 @@ struct ConsoleHeaderView: View {
                             searchText = ""
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
                     }
@@ -281,7 +268,9 @@ struct ExecutionStatusBadge: View {
                     .fill(state.displayColor)
                     .frame(width: 8, height: 8)
             }
-            Text(state.displayText).font(.caption)
+
+            Text(state.displayText)
+                .font(.caption)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -294,206 +283,395 @@ struct ExecutionStatusBadge: View {
 
 struct LogContentView: View {
     let logs: [LogEntry]
-    @Binding var autoScroll: Bool
+    @Binding var followEnabled: Bool
     let isRunning: Bool
-
-    // 只比较真正需要触发滚动的字段，移除 lastMessage 字符串比较
-    private struct ScrollTrigger: Equatable {
-        let count: Int
-        let lastId: UUID?
-        let isRunning: Bool
-    }
-
-    private let bottomAnchorID = "log-bottom-anchor"
-    private let scrollThrottleInterval: Double = 0.05
-
-    // 用计数器代替布尔标志，正确处理并发滚动请求
-    @State private var programmaticScrollCount = 0
-    @State private var scrollTask: Task<Void, Never>?
-
-    private var scrollTrigger: ScrollTrigger {
-        ScrollTrigger(
-            count: logs.count,
-            lastId: logs.last?.id,
-            isRunning: isRunning
-        )
-    }
+    @Binding var isAtBottom: Bool
+    @Binding var unreadCount: Int
+    let jumpToLatestToken: Int
 
     var body: some View {
-        ScrollViewReader { proxy in
-            logListContent
-                .background(Color(NSColor.textBackgroundColor))
-                .onAppear {
-                    requestScrollToBottom(proxy: proxy)
-                }
-                .onChangeCompat(of: scrollTrigger) { _ in
-                    requestScrollToBottom(proxy: proxy)
-                }
-        }
-        .onDisappear {
-            scrollTask?.cancel()
-            scrollTask = nil
-        }
-    }
-
-    private var logListContent: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(logs.dropLast(1), id: \.id) { entry in
-                    EquatableView(content:
-                        LogEntryRow(entry: entry, isLatest: false, isRunning: isRunning)
-                    )
-                    .id(entry.id)
-                    .logContextMenu(message: entry.message)
-                }
-
-                if let last = logs.last {
-                    EquatableView(content:
-                        LogEntryRow(entry: last, isLatest: true, isRunning: isRunning)
-                    )
-                    .id(last.id)
-                    .logContextMenu(message: last.message)
-                }
-
-                // 底部锚点：利用 LazyVStack 生命周期检测用户是否在底部
-                Color.clear
-                    .frame(height: 1)
-                    .id(bottomAnchorID)
-                    .onAppear {
-                        // 滚回底部 → 若是用户手动操作，则恢复自动滚动
-                        if programmaticScrollCount == 0 && !autoScroll {
-                            autoScroll = true
-                        }
-                    }
-                    .onDisappear {
-                        // 离开底部 → 若是用户手动操作，则暂停自动滚动
-                        if programmaticScrollCount == 0 && autoScroll {
-                            autoScroll = false
-                        }
-                    }
-            }
-            .padding(8)
-        }
-        // simultaneousGesture 不拦截 ScrollView 自身手势，只监听向上拖动
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 10)
-                .onChanged { value in
-                    // 向上拖动（负 translation）= 用户想看历史日志，暂停自动滚动
-                    if value.translation.height < -10 && autoScroll {
-                        autoScroll = false
-                    }
-                }
+        InteractiveLogConsoleView(
+            logs: logs,
+            isRunning: isRunning,
+            followEnabled: $followEnabled,
+            isAtBottom: $isAtBottom,
+            unreadCount: $unreadCount,
+            jumpToLatestToken: jumpToLatestToken
         )
+        .background(Color(NSColor.textBackgroundColor))
+    }
+}
+
+// MARK: - InteractiveLogConsoleView
+
+private struct InteractiveLogConsoleView: NSViewRepresentable {
+    let logs: [LogEntry]
+    let isRunning: Bool
+    @Binding var followEnabled: Bool
+    @Binding var isAtBottom: Bool
+    @Binding var unreadCount: Int
+    let jumpToLatestToken: Int
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
     }
 
-    private func requestScrollToBottom(proxy: ScrollViewProxy) {
-        guard autoScroll else { return }
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.contentView.postsBoundsChangedNotifications = true
 
-        scrollTask?.cancel()
+        let textView = NSTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.allowsUndo = false
+        textView.isRichText = true
+        textView.importsGraphics = false
+        textView.drawsBackground = true
+        textView.backgroundColor = ConsoleTheme.background
+        textView.textColor = .textColor
+        textView.font = ConsoleTheme.font
+        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.usesAdaptiveColorMappingForDarkAppearance = true
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.isGrammarCheckingEnabled = false
+        textView.usesFindBar = true
 
-        scrollTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(scrollThrottleInterval * 1_000_000_000))
-            guard !Task.isCancelled else { return }
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.containerSize = NSSize(
+            width: scrollView.contentSize.width,
+            height: .greatestFiniteMagnitude
+        )
 
-            programmaticScrollCount += 1
+        scrollView.documentView = textView
+        context.coordinator.attach(scrollView: scrollView, textView: textView)
+        return scrollView
+    }
 
-            // 修复 LazyVStack 懒加载导致的滚动失败：
-            // 第一步：不带动画先滚到最后一条日志 id，强制 LazyVStack 渲染底部区域
-            // 第二步：再滚到锚点，确保锚点已存在于视图树中
-            if let lastId = logs.last?.id {
-                proxy.scrollTo(lastId, anchor: .bottom)
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.update(logs: logs, isRunning: isRunning)
+    }
+
+    // MARK: - Coordinator
+
+    final class Coordinator: NSObject {
+        var parent: InteractiveLogConsoleView
+
+        private weak var scrollView: NSScrollView?
+        private weak var textView: NSTextView?
+        private var boundsObserver: NSObjectProtocol?
+
+        private var suppressViewportSync = false
+        private var lastRenderFingerprint: Int?
+        private var lastJumpToLatestToken: Int
+        private var lastFollowEnabled: Bool
+        private var previousLogIDs: [UUID] = []
+        private var unreadCountSnapshot: Int
+        private var isAtBottomSnapshot: Bool
+        private let bottomThreshold: CGFloat = 12
+
+        init(_ parent: InteractiveLogConsoleView) {
+            self.parent = parent
+            self.lastJumpToLatestToken = parent.jumpToLatestToken
+            self.lastFollowEnabled = parent.followEnabled
+            self.unreadCountSnapshot = parent.unreadCount
+            self.isAtBottomSnapshot = parent.isAtBottom
+            super.init()
+        }
+
+        deinit {
+            if let boundsObserver {
+                NotificationCenter.default.removeObserver(boundsObserver)
             }
-            withAnimation(.easeOut(duration: 0.1)) {
-                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+        }
+
+        func attach(scrollView: NSScrollView, textView: NSTextView) {
+            self.scrollView = scrollView
+            self.textView = textView
+
+            boundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.syncViewportState(userInitiated: true)
+            }
+        }
+
+        func update(logs: [LogEntry], isRunning: Bool) {
+            guard let scrollView, let textView else { return }
+
+            let currentFollowEnabled = parent.followEnabled
+            let followWasResumed = currentFollowEnabled && !lastFollowEnabled
+            let jumpRequested = parent.jumpToLatestToken != lastJumpToLatestToken
+            let currentLogIDs = logs.map(\.id)
+            let appendedCount = appendedEntryCount(from: previousLogIDs, to: currentLogIDs)
+            let renderFingerprint = ConsoleTextRenderer.fingerprint(for: logs, isRunning: isRunning)
+            let contentChanged = renderFingerprint != lastRenderFingerprint
+            let isInitialRender = lastRenderFingerprint == nil
+
+            if contentChanged {
+                let selectedRange = textView.selectedRange()
+                let visibleOrigin = scrollView.contentView.bounds.origin
+
+                suppressViewportSync = true
+                textView.textStorage?.setAttributedString(
+                    ConsoleTextRenderer.attributedString(for: logs, isRunning: isRunning)
+                )
+                textView.setSelectedRange(.clamped(selectedRange, maxUTF16Length: textView.string.utf16.count))
+
+                if currentFollowEnabled {
+                    scrollToBottom()
+                } else {
+                    restoreVisibleOrigin(visibleOrigin)
+                }
+
+                scheduleViewportSync()
+            } else if currentFollowEnabled && (followWasResumed || jumpRequested) {
+                suppressViewportSync = true
+                scrollToBottom()
+                scheduleViewportSync()
             }
 
-            // 等待动画完成后减计数，期间屏蔽 onDisappear 误判
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            programmaticScrollCount = max(0, programmaticScrollCount - 1)
+            if logs.isEmpty {
+                setUnreadCount(0)
+                setIsAtBottom(true)
+            } else if currentFollowEnabled {
+                setUnreadCount(0)
+            } else if !isInitialRender, let appendedCount, appendedCount > 0 {
+                setUnreadCount(unreadCountSnapshot + appendedCount)
+            } else if !isInitialRender, contentChanged, appendedCount == nil {
+                setUnreadCount(0)
+            }
+
+            previousLogIDs = currentLogIDs
+            lastRenderFingerprint = renderFingerprint
+            lastJumpToLatestToken = parent.jumpToLatestToken
+            lastFollowEnabled = currentFollowEnabled
+        }
+
+        private func scheduleViewportSync() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.suppressViewportSync = false
+                self.syncViewportState(userInitiated: false)
+            }
+        }
+
+        private func syncViewportState(userInitiated: Bool) {
+            guard !suppressViewportSync, let scrollView else { return }
+
+            let atBottom = isScrolledToBottom(scrollView)
+            setIsAtBottom(atBottom)
+
+            if atBottom {
+                setUnreadCount(0)
+                if userInitiated && !parent.followEnabled {
+                    setFollowEnabled(true)
+                }
+            } else if userInitiated && parent.followEnabled {
+                setFollowEnabled(false)
+            }
+        }
+
+        private func isScrolledToBottom(_ scrollView: NSScrollView) -> Bool {
+            let documentHeight = scrollView.documentView?.bounds.height ?? 0
+            let visibleMaxY = scrollView.contentView.bounds.maxY
+            return documentHeight - visibleMaxY <= bottomThreshold
+        }
+
+        private func scrollToBottom() {
+            guard let textView else { return }
+            let endRange = NSRange(location: textView.string.utf16.count, length: 0)
+            textView.scrollRangeToVisible(endRange)
+            setUnreadCount(0)
+        }
+
+        private func restoreVisibleOrigin(_ origin: NSPoint) {
+            guard let scrollView else { return }
+
+            let visibleHeight = scrollView.contentView.bounds.height
+            let documentHeight = scrollView.documentView?.bounds.height ?? 0
+            let maxY = max(0, documentHeight - visibleHeight)
+            let clampedOrigin = NSPoint(x: 0, y: min(max(origin.y, 0), maxY))
+
+            scrollView.contentView.scroll(to: clampedOrigin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+
+        private func appendedEntryCount(from oldIDs: [UUID], to newIDs: [UUID]) -> Int? {
+            guard newIDs.count >= oldIDs.count else { return nil }
+            guard Array(newIDs.prefix(oldIDs.count)) == oldIDs else { return nil }
+            return newIDs.count - oldIDs.count
+        }
+
+        private func setFollowEnabled(_ value: Bool) {
+            guard parent.followEnabled != value else { return }
+            lastFollowEnabled = value
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.followEnabled = value
+            }
+        }
+
+        private func setIsAtBottom(_ value: Bool) {
+            guard isAtBottomSnapshot != value else { return }
+            isAtBottomSnapshot = value
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.isAtBottom = value
+            }
+        }
+
+        private func setUnreadCount(_ value: Int) {
+            let sanitizedValue = max(0, value)
+            guard unreadCountSnapshot != sanitizedValue else { return }
+            unreadCountSnapshot = sanitizedValue
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.unreadCount = sanitizedValue
+            }
         }
     }
 }
 
-// MARK: - LogEntryRow
+// MARK: - ConsoleTextRenderer
 
-struct LogEntryRow: View, Equatable {
-    let entry: LogEntry
-    let isLatest: Bool
-    let isRunning: Bool
+private enum ConsoleTextRenderer {
+    static func fingerprint(for logs: [LogEntry], isRunning: Bool) -> Int {
+        var hasher = Hasher()
+        hasher.combine(isRunning)
+        hasher.combine(logs.count)
 
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.entry.id  == rhs.entry.id  &&
-        lhs.isLatest  == rhs.isLatest  &&
-        lhs.isRunning == rhs.isRunning
+        for entry in logs {
+            hasher.combine(entry.id)
+            hasher.combine(entry.level.rawValue)
+            hasher.combine(entry.message)
+            hasher.combine(entry.isStderr)
+            hasher.combine(entry.containsErrorKeyword)
+            hasher.combine(entry.formattedTimestamp)
+        }
+
+        return hasher.finalize()
     }
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 6) {
-            // 左侧级别色条
-            Rectangle()
-                .fill(levelColor)
-                .frame(width: 3)
-                .cornerRadius(1)
+    static func attributedString(for logs: [LogEntry], isRunning: Bool) -> NSAttributedString {
+        let result = NSMutableAttributedString()
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(entry.formattedTimestamp)
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundColor(.secondary.opacity(0.6))
+        for index in logs.indices {
+            let entry = logs[index]
+            let isLatest = index == logs.indices.last && isRunning
+            result.append(line(for: entry, highlightLatest: isLatest))
 
-                    Text(entry.level.displayName)
-                        .font(.system(.caption2, design: .monospaced))
-                        .fontWeight(entry.level == .error ? .semibold : .regular)
-                        .foregroundColor(levelColor)
-                        .frame(width: 36, alignment: .leading)
-                }
-
-                highlightedMessage
-                    .font(.system(.caption, design: .monospaced))
-                    .fontWeight(entry.level == .error ? .semibold : .regular)
-                    .textSelection(.enabled)
+            if index != logs.index(before: logs.endIndex) {
+                result.append(NSAttributedString(string: "\n"))
             }
         }
-        .padding(.vertical, entry.level == .error ? 4 : 1)
-        .padding(.trailing, 4)
-        .background(backgroundColor)
+
+        return result
     }
 
-    @ViewBuilder
-    private var highlightedMessage: some View {
-        if entry.containsErrorKeyword && entry.level != .error {
-            Text(entry.message).foregroundColor(.orange)
-        } else {
-            Text(entry.message).foregroundColor(messageColor)
+    private static func line(for entry: LogEntry, highlightLatest: Bool) -> NSAttributedString {
+        let line = NSMutableAttributedString()
+        let levelLabel = entry.level.displayName.padding(toLength: 7, withPad: " ", startingAt: 0)
+        let backgroundColor = backgroundColor(for: entry, highlightLatest: highlightLatest)
+
+        line.append(fragment(entry.formattedTimestamp, color: ConsoleTheme.timestamp, background: backgroundColor))
+        line.append(fragment(" ", color: nil, background: backgroundColor))
+        line.append(
+            fragment(
+                levelLabel,
+                color: levelColor(for: entry),
+                background: backgroundColor,
+                font: entry.level == .error ? ConsoleTheme.boldFont : ConsoleTheme.font
+            )
+        )
+        line.append(fragment(" ", color: nil, background: backgroundColor))
+        line.append(
+            fragment(
+                entry.message,
+                color: messageColor(for: entry),
+                background: backgroundColor,
+                font: entry.level == .error ? ConsoleTheme.boldFont : ConsoleTheme.font
+            )
+        )
+
+        return line
+    }
+
+    private static func fragment(
+        _ string: String,
+        color: NSColor?,
+        background: NSColor?,
+        font: NSFont = ConsoleTheme.font
+    ) -> NSAttributedString {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        paragraphStyle.lineSpacing = 1
+
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .paragraphStyle: paragraphStyle
+        ]
+
+        if let color {
+            attributes[.foregroundColor] = color
         }
+        if let background {
+            attributes[.backgroundColor] = background
+        }
+
+        return NSAttributedString(string: string, attributes: attributes)
     }
 
-    private var levelColor: Color {
+    private static func levelColor(for entry: LogEntry) -> NSColor {
         switch entry.level {
-        case .info:    return .blue.opacity(0.7)
-        case .warning: return .orange
-        case .error:   return .red
-        case .debug:   return .secondary.opacity(0.5)
+        case .info:
+            return ConsoleTheme.info
+        case .warning:
+            return ConsoleTheme.warning
+        case .error:
+            return ConsoleTheme.error
+        case .debug:
+            return ConsoleTheme.debug
         }
     }
 
-    private var messageColor: Color {
-        if entry.level == .error { return .red }
-        if entry.isStderr        { return Color.Console.stderrText }
+    private static func messageColor(for entry: LogEntry) -> NSColor {
+        if entry.level == .error {
+            return ConsoleTheme.error
+        }
+        if entry.containsErrorKeyword {
+            return ConsoleTheme.warning
+        }
+        if entry.isStderr {
+            return ConsoleTheme.stderr
+        }
         switch entry.level {
-        case .debug: return .secondary
-        default:     return .primary
+        case .debug:
+            return ConsoleTheme.debug
+        default:
+            return NSColor.textColor
         }
     }
 
-    private var backgroundColor: Color {
+    private static func backgroundColor(for entry: LogEntry, highlightLatest: Bool) -> NSColor? {
         if entry.level == .error || entry.containsErrorKeyword {
-            return Color.Console.errorBackground
+            return ConsoleTheme.errorBackground
         }
-        if isLatest && isRunning {
-            return Color.Console.activeHighlight
+        if highlightLatest {
+            return ConsoleTheme.activeBackground
         }
-        return .clear
+        return nil
     }
 }
 
@@ -511,31 +689,33 @@ struct ConsoleStatusBar: View {
                 Circle()
                     .fill(state.displayColor)
                     .frame(width: 6, height: 6)
+
                 Text(state.displayText)
                     .font(.caption2)
                     .fontWeight(.medium)
-                    .foregroundColor(state.displayColor)
+                    .foregroundStyle(state.displayColor)
             }
 
             Divider().frame(height: 12)
 
             Text("\(logCount) 条日志")
                 .font(.caption2)
-                .foregroundColor(.secondary)
+                .foregroundStyle(.secondary)
 
             Spacer()
 
             if let result = lastResult {
                 Text("耗时: \(result.formattedDuration)")
                     .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
 
-            if let version = ffmpegVersion {
+            if let ffmpegVersion {
                 Divider().frame(height: 12)
-                Text(version)
+
+                Text(ffmpegVersion)
                     .font(.caption2)
-                    .foregroundColor(.secondary.opacity(0.7))
+                    .foregroundStyle(.secondary.opacity(0.7))
             }
         }
         .padding(.horizontal)
@@ -544,14 +724,16 @@ struct ConsoleStatusBar: View {
     }
 }
 
-// MARK: - LogDocument（用于导出）
+// MARK: - LogDocument
 
 struct LogDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.plainText] }
 
     var content: String
 
-    init(content: String) { self.content = content }
+    init(content: String) {
+        self.content = content
+    }
 
     init(configuration: ReadConfiguration) throws {
         content = configuration.file.regularFileContents
@@ -568,16 +750,17 @@ struct LogDocument: FileDocument {
 #Preview {
     LogConsoleView()
         .environmentObject({
-            let vm = ExecutionViewModel()
-            vm.appendLog(LogEntry(timestamp: Date(), level: .info,    message: "开始执行命令..."))
-            vm.appendLog(LogEntry(timestamp: Date(), level: .debug,   message: "frame=  100 fps=30 size=1024kB time=00:00:03.33"))
-            vm.appendLog(LogEntry(timestamp: Date(), level: .debug,   message: "frame=  150 fps=30 size=1536kB time=00:00:05.00"))
-            vm.appendLog(LogEntry(timestamp: Date(), level: .info,    message: "正在处理视频流..."))
-            vm.appendLog(LogEntry(timestamp: Date(), level: .warning, message: "deprecated option used"))
-            vm.appendLog(LogEntry(timestamp: Date(), level: .debug,   message: "frame=  200 fps=29 size=2048kB time=00:00:06.67"))
-            vm.appendLog(LogEntry(timestamp: Date(), level: .error,   message: "Error opening file: Permission denied"))
-            vm.appendLog(LogEntry(timestamp: Date(), level: .info,    message: "尝试使用备用路径..."))
-            return vm
+            let viewModel = ExecutionViewModel()
+            viewModel.appendLog(LogEntry(timestamp: Date(), level: .info, message: "开始执行命令..."))
+            viewModel.appendLog(LogEntry(timestamp: Date(), level: .debug, message: "frame=  100 fps=30 size=1024kB time=00:00:03.33"))
+            viewModel.appendLog(LogEntry(timestamp: Date(), level: .debug, message: "frame=  150 fps=30 size=1536kB time=00:00:05.00"))
+            viewModel.appendLog(LogEntry(timestamp: Date(), level: .info, message: "正在处理视频流..."))
+            viewModel.appendLog(LogEntry(timestamp: Date(), level: .warning, message: "deprecated option used"))
+            viewModel.appendLog(LogEntry(timestamp: Date(), level: .debug, message: "frame=  200 fps=29 size=2048kB time=00:00:06.67"))
+            viewModel.appendLog(LogEntry(timestamp: Date(), level: .error, message: "Error opening file: Permission denied"))
+            viewModel.appendLog(LogEntry(timestamp: Date(), level: .error, message: "Conversion failed: invalid codec"))
+            viewModel.appendLog(LogEntry(timestamp: Date(), level: .info, message: "尝试使用备用路径..."))
+            return viewModel
         }())
-        .frame(width: 700, height: 350)
+        .frame(width: 700, height: 400)
 }
