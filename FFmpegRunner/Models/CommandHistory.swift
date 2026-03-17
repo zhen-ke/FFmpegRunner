@@ -174,13 +174,11 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
 
     private static func parse(command: String) -> (executable: CommandExecutable, arguments: [String]) {
         let tokens = (try? CommandRenderer.splitCommandStrict(command)) ?? CommandRenderer.splitCommand(command)
-        guard let first = tokens.first else {
+        guard !tokens.isEmpty else {
             return (.ffmpeg, [])
         }
 
-        let executable = CommandExecutable.from(token: first) ?? .ffmpeg
-        let arguments = CommandExecutable.from(token: first) == nil ? tokens : Array(tokens.dropFirst())
-        return (executable, arguments)
+        return CommandExecutable.stripExecutableIfPresent(from: tokens)
     }
 }
 

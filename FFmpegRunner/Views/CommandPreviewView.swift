@@ -367,11 +367,14 @@ struct MissingParametersView: View {
 
 // MARK: - Preview
 
-#Preview {
-    CommandPreviewView()
-        .environmentObject({
-            let detailViewModel = TemplateDetailViewModel(template: .example)
-            return CommandPreviewViewModel(detailViewModel: detailViewModel)
-        }())
-        .frame(width: 600, height: 200)
+private struct CommandPreviewView_Previews: PreviewProvider {
+    @MainActor
+    static var previews: some View {
+        CommandPreviewView()
+            .environmentObject({
+                let detailViewModel = TemplateDetailViewModel(template: .example)
+                return CommandPreviewViewModel(detailViewModel: detailViewModel)
+            }())
+            .frame(width: 600, height: 200)
+    }
 }

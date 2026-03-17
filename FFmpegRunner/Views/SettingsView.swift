@@ -20,17 +20,26 @@ struct SettingsView: View {
     @State private var systemFFmpegPath: String?
     @State private var isSystemAvailable = false
 
+    private var ffmpegSourceBinding: Binding<FFmpegSource> {
+        Binding(
+            get: { ffmpegService.ffmpegSource },
+            set: { ffmpegService.ffmpegSource = $0 }
+        )
+    }
+
+    private var customFFmpegPathBinding: Binding<String> {
+        Binding(
+            get: { ffmpegService.customFFmpegPath },
+            set: { ffmpegService.customFFmpegPath = $0 }
+        )
+    }
+
     var body: some View {
         Form {
             // FFmpeg 设置
             Section("FFmpeg 来源") {
                 // 来源选择器
-                Picker("FFmpeg 来源", selection: Binding(
-                    get: { ffmpegService.ffmpegSource },
-                    set: { newSource in
-                        ffmpegService.ffmpegSource = newSource
-                    }
-                )) {
+                Picker("FFmpeg 来源", selection: ffmpegSourceBinding) {
                     ForEach(FFmpegSource.allCases, id: \.self) { source in
                         HStack {
                             Text(source.displayName)
@@ -114,21 +123,15 @@ struct SettingsView: View {
                 // 自定义路径
                 if ffmpegService.ffmpegSource == .custom {
                     HStack {
-                        TextField("自定义 FFmpeg 路径", text: Binding(
-                            get: { ffmpegService.customFFmpegPath },
-                            set: { newPath in
-                                ffmpegService.customFFmpegPath = newPath
-                            }
-                        ))
+                        TextField("自定义 FFmpeg 路径", text: customFFmpegPathBinding)
                         .textFieldStyle(.roundedBorder)
 
                         Button("浏览...") {
-                            FilePicker.selectFile(types: nil) { url in
-                                if let url = url {
-                                    ffmpegService.customFFmpegPath = url.path
-                                }
+                            Task {
+                                await pickCustomFFmpegPath()
                             }
                         }
+
                         .onChange(of: ffmpegService.customFFmpegPath) { newValue in
                             checkCustomPath(newValue)
                         }
@@ -218,14 +221,15 @@ struct SettingsView: View {
             checkCustomPath(ffmpegService.customFFmpegPath)
             await refreshSystemPath()
         }
-        .onChange(of: ffmpegService.ffmpegSource) { _ in
+        .onChange(of: ffmpegService.ffmpegSource) { newValue in
             // 切换到系统来源时刷新
-            if ffmpegService.ffmpegSource == .system {
+            if newValue == .system {
                 Task {
                     await refreshSystemPath()
                 }
             }
         }
+
     }
 
     private func checkCustomPath(_ path: String) {
@@ -233,10 +237,29 @@ struct SettingsView: View {
         isCustomPathValid = isValid
     }
 
+    @MainActor
+    private func pickCustomFFmpegPath() async {
+        let selectedURL = await FilePicker.selectFile(
+            initialDirectory: customPathDirectoryURL,
+            prompt: "选择 FFmpeg 可执行文件"
+        )
+        guard let selectedURL else { return }
+        ffmpegService.customFFmpegPath = selectedURL.path
+    }
+
     private func refreshSystemPath() async {
         let path = await ffmpegService.findSystemFFmpeg()
         systemFFmpegPath = path
         isSystemAvailable = path != nil
+    }
+
+    private var customPathDirectoryURL: URL? {
+        let normalizedPath = ffmpegService.customFFmpegPath
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedPath.isEmpty else { return nil }
+
+        let expandedPath = (normalizedPath as NSString).expandingTildeInPath
+        return URL(fileURLWithPath: expandedPath).deletingLastPathComponent()
     }
 
     private func showBundledFFmpegHelp() {
@@ -265,7 +288,10 @@ struct SettingsView: View {
 
 // MARK: - Preview
 
-#Preview {
-    SettingsView()
-        .environmentObject(ExecutionViewModel())
+private struct SettingsView_Previews: PreviewProvider {
+    @MainActor
+    static var previews: some View {
+        SettingsView()
+            .environmentObject(ExecutionViewModel())
+    }
 }

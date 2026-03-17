@@ -135,16 +135,16 @@ final class CommandEditorViewModel: ObservableObject {
     // MARK: - Insertion from Panels
 
     func insertFile(isDirectory: Bool) {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection  = false
-        panel.canChooseDirectories     = isDirectory
-        panel.canChooseFiles           = !isDirectory
-        panel.canCreateDirectories     = false
-        panel.prompt = isDirectory ? "选择目录" : "选择文件"
+        Task { @MainActor [weak self] in
+            let selectedURL: URL?
+            if isDirectory {
+                selectedURL = await FilePicker.selectDirectory(prompt: "选择目录")
+            } else {
+                selectedURL = await FilePicker.selectFile(prompt: "选择文件")
+            }
 
-        panel.begin { [weak self] response in
-            if response == .OK, let url = panel.url {
-                self?.enqueueInsertion(url.path.shellQuotedPathForCommand)
+            if let selectedURL {
+                self?.enqueueInsertion(selectedURL.path.shellQuotedPathForCommand)
             }
         }
     }
@@ -222,6 +222,11 @@ final class CommandEditorViewModel: ObservableObject {
 
         let range   = completionRange(in: text, selection: selectionRange)
         let partial = substring(in: text, range: range)
+        let completionContext = CommandEditorAssistant.completionContext(
+            for: text,
+            selectedRange: selectionRange,
+            partialRange: range
+        )
         let suggestions = CommandEditorAssistant.completions(
             for: text,
             selectedRange: selectionRange,
@@ -237,7 +242,9 @@ final class CommandEditorViewModel: ObservableObject {
 
         let shouldShowInline: Bool
         if partial.isEmpty {
-            shouldShowInline = !force && isCursorAtTokenEnd
+            shouldShowInline = !force
+                && isCursorAtTokenEnd
+                && completionContext.allowsInlineSuggestionWhenPartialIsEmpty
         } else {
             shouldShowInline = !force
                 && isCursorAtTokenEnd
@@ -1070,11 +1077,13 @@ final class CommandNSTextView: NSTextView {
 
 // MARK: - Preview
 
-#Preview {
-    CommandTextView(
-        text: .constant("ffmpeg -i \"/Users/test/video.mp4\" -c:v libx264 output.mp4"),
-        placeholder: "输入 FFmpeg 命令..."
-    )
-    .frame(width: 500, height: 200)
-    .padding()
+private struct CommandTextView_Previews: PreviewProvider {
+    static var previews: some View {
+        CommandTextView(
+            text: .constant("ffmpeg -i \"/Users/test/video.mp4\" -c:v libx264 output.mp4"),
+            placeholder: "输入 FFmpeg 命令..."
+        )
+        .frame(width: 500, height: 200)
+        .padding()
+    }
 }

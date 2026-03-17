@@ -71,13 +71,16 @@ struct DetailContentView: View {
 
 // MARK: - Preview
 
-#Preview {
-    MainSplitView()
-        .environmentObject(TemplateListViewModel())
-        .environmentObject(TemplateDetailViewModel())
-        .environmentObject(CommandPreviewViewModel())
-        .environmentObject(ExecutionViewModel())
-        .environmentObject(TemplateHeaderViewModel())
-        .environmentObject(NavigationState())
-        .frame(width: 1200, height: 800)
+private struct MainSplitView_Previews: PreviewProvider {
+    @MainActor
+    static var previews: some View {
+        MainSplitView()
+            .environmentObject(TemplateListViewModel())
+            .environmentObject(TemplateDetailViewModel())
+            .environmentObject(CommandPreviewViewModel())
+            .environmentObject(ExecutionViewModel())
+            .environmentObject(TemplateHeaderViewModel())
+            .environmentObject(NavigationState())
+            .frame(width: 1200, height: 800)
+    }
 }

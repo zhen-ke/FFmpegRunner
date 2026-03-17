@@ -23,6 +23,14 @@ final class CommandEditorAssistantTests: XCTestCase {
         XCTAssertTrue(diagnostics.contains(where: { $0.message.contains("可能不一致") }))
     }
 
+    func testDiagnosticsRecoverWhenMissingValueIsFollowedByAnotherFlag() {
+        let diagnostics = CommandEditorAssistant.diagnostics(
+            for: "ffmpeg -c:v -vf scale=1280:-2 output.mp4"
+        )
+
+        XCTAssertTrue(diagnostics.contains(where: { $0.message.contains("参数 -c:v 缺少取值") }))
+    }
+
     func testExecutableCompletionAtStart() {
         let completions = CommandEditorAssistant.completions(
             for: "ffm",
@@ -44,6 +52,55 @@ final class CommandEditorAssistantTests: XCTestCase {
         XCTAssertTrue(completions.contains("-preset"))
     }
 
+    func testFlagCompletionPrioritizesInputFlagsAtStart() {
+        let command = "ffmpeg "
+        let cursor = command.utf16.count
+        let completions = CommandEditorAssistant.completions(
+            for: command,
+            selectedRange: NSRange(location: cursor, length: 0),
+            partialRange: NSRange(location: cursor, length: 0)
+        )
+
+        XCTAssertEqual(Array(completions.prefix(3)), ["-i", "-f", "-ss"])
+    }
+
+    func testFlagCompletionPrioritizesOutputShapingAfterInput() {
+        let command = "ffmpeg -i input.mp4 "
+        let cursor = command.utf16.count
+        let completions = CommandEditorAssistant.completions(
+            for: command,
+            selectedRange: NSRange(location: cursor, length: 0),
+            partialRange: NSRange(location: cursor, length: 0)
+        )
+
+        XCTAssertEqual(Array(completions.prefix(4)), ["-c:v", "-preset", "-crf", "-c:a"])
+    }
+
+    func testFlagCompletionSuggestsMovflagsForMP4Context() {
+        let command = "ffmpeg -i input.mov -f mp4 "
+        let cursor = command.utf16.count
+        let completions = CommandEditorAssistant.completions(
+            for: command,
+            selectedRange: NSRange(location: cursor, length: 0),
+            partialRange: NSRange(location: cursor, length: 0)
+        )
+
+        XCTAssertTrue(completions.prefix(12).contains("-movflags"))
+    }
+
+    func testFlagCompletionResetsFormatContextAfterOutputBoundary() {
+        let command = "ffmpeg -i input.mov output.mp4 "
+        let cursor = command.utf16.count
+        let completions = CommandEditorAssistant.completions(
+            for: command,
+            selectedRange: NSRange(location: cursor, length: 0),
+            partialRange: NSRange(location: cursor, length: 0)
+        )
+
+        XCTAssertEqual(Array(completions.prefix(4)), ["-map", "-c:v", "-c:a", "-f"])
+        XCTAssertFalse(completions.prefix(12).contains("-movflags"))
+    }
+
     func testValueCompletionForPreset() {
         let completions = CommandEditorAssistant.completions(
             for: "ffmpeg -preset v",
@@ -53,6 +110,75 @@ final class CommandEditorAssistantTests: XCTestCase {
 
         XCTAssertTrue(completions.contains("veryfast"))
         XCTAssertTrue(completions.contains("veryslow"))
+    }
+
+    func testDiagnosticsCanonicalizeMatroskaExtensionAlias() {
+        let diagnostics = CommandEditorAssistant.diagnostics(
+            for: "ffmpeg -i input.mov -f matroska output.mkv"
+        )
+
+        XCTAssertFalse(diagnostics.contains(where: { $0.message.contains("可能不一致") }))
+    }
+
+    func testCodecCompletionCanonicalizesFormatAlias() {
+        let command = "ffmpeg -i input.mov -f mkv -c:v "
+        let cursor = command.utf16.count
+        let completions = CommandEditorAssistant.completions(
+            for: command,
+            selectedRange: NSRange(location: cursor, length: 0),
+            partialRange: NSRange(location: cursor, length: 0)
+        )
+
+        XCTAssertTrue(completions.contains("libvpx-vp9"))
+        XCTAssertTrue(completions.contains("av1"))
+    }
+
+    func testFlagCompletionPrunesVideoFilterWhenVideoDisabled() {
+        let command = "ffmpeg -i input.mp4 -vn "
+        let cursor = command.utf16.count
+        let completions = CommandEditorAssistant.completions(
+            for: command,
+            selectedRange: NSRange(location: cursor, length: 0),
+            partialRange: NSRange(location: cursor, length: 0)
+        )
+
+        XCTAssertFalse(completions.contains("-vf"))
+        XCTAssertFalse(completions.contains("-c:v"))
+    }
+
+    func testFlagCompletionPrunesConflictsAfterCopyCodecSelection() {
+        let command = "ffmpeg -i input.mp4 -c:v copy "
+        let cursor = command.utf16.count
+        let completions = CommandEditorAssistant.completions(
+            for: command,
+            selectedRange: NSRange(location: cursor, length: 0),
+            partialRange: NSRange(location: cursor, length: 0)
+        )
+
+        XCTAssertFalse(completions.contains("-vf"))
+        XCTAssertFalse(completions.contains("-filter_complex"))
+    }
+
+    func testCompletionContextDoesNotAutoInlineForEmptyFlagSlot() {
+        let context = CommandEditorAssistant.completionContext(
+            for: "ffmpeg ",
+            selectedRange: NSRange(location: 7, length: 0),
+            partialRange: NSRange(location: 7, length: 0)
+        )
+
+        XCTAssertFalse(context.allowsInlineSuggestionWhenPartialIsEmpty)
+    }
+
+    func testCompletionContextAllowsAutoInlineForFlagValueSlot() {
+        let command = "ffmpeg -c:v "
+        let cursor = command.utf16.count
+        let context = CommandEditorAssistant.completionContext(
+            for: command,
+            selectedRange: NSRange(location: cursor, length: 0),
+            partialRange: NSRange(location: cursor, length: 0)
+        )
+
+        XCTAssertTrue(context.allowsInlineSuggestionWhenPartialIsEmpty)
     }
 
     // MARK: - Level 3: Completion Behavior Verification (End-to-End)

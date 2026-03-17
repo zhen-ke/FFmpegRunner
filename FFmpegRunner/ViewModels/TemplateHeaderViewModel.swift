@@ -65,16 +65,11 @@ class TemplateHeaderViewModel: ObservableObject {
 
     // MARK: - Initialization
 
-    init(templateRepository: TemplateRepository = .shared) {
-        self.templateRepository = templateRepository
+    init(templateRepository: TemplateRepository? = nil) {
+        self.templateRepository = templateRepository ?? .shared
     }
 
     // MARK: - Public Methods
-
-    /// 从参数数组中检测输出文件路径
-    func detectOutputPath(from arguments: [String]) -> String? {
-        CommandPathDetector.detectOutputPath(from: arguments)
-    }
 
     /// 统一处理执行请求（按钮 / 菜单 / 快捷键共用）
     func requestExecution(
@@ -209,13 +204,13 @@ class TemplateHeaderViewModel: ObservableObject {
     }
 
     private func outputConflictExists(for request: PendingExecutionRequest) -> Bool {
-        guard let outputPath = detectOutputPath(from: request.currentCommand.arguments),
+        guard let outputPath = request.currentCommand.outputPath,
               FileManager.default.fileExists(atPath: outputPath) else {
             existingOutputFile = ""
             return false
         }
 
-        existingOutputFile = (outputPath as NSString).lastPathComponent
+        existingOutputFile = request.currentCommand.outputFileName ?? (outputPath as NSString).lastPathComponent
         return true
     }
 
@@ -226,7 +221,7 @@ class TemplateHeaderViewModel: ObservableObject {
             ? String(request.currentCommand.displayString.prefix(160)) + "..."
             : request.currentCommand.displayString
 
-        if let outputPath = detectOutputPath(from: request.currentCommand.arguments), !outputPath.isEmpty {
+        if let outputPath = request.currentCommand.outputPath, !outputPath.isEmpty {
             runConfirmationMessage = """
             输出: \(outputPath)
 

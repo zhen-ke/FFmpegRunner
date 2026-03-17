@@ -972,11 +972,14 @@ struct NoResultsView: View {
 
 // MARK: - Preview
 
-#Preview {
-    TemplateListView()
-        .environmentObject(TemplateListViewModel())
-        .environmentObject(RecentCommandsViewModel())
-        .environmentObject(TemplateDetailViewModel())
-        .environmentObject(ExecutionViewModel())
-        .frame(width: 300, height: 600)
+private struct TemplateListView_Previews: PreviewProvider {
+    @MainActor
+    static var previews: some View {
+        TemplateListView()
+            .environmentObject(TemplateListViewModel())
+            .environmentObject(RecentCommandsViewModel())
+            .environmentObject(TemplateDetailViewModel())
+            .environmentObject(ExecutionViewModel())
+            .frame(width: 300, height: 600)
+    }
 }

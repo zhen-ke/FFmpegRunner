@@ -1,68 +1,49 @@
 //
 //  ExecutionPlan.swift
-//  FFmpegRunner
-//
-//  执行计划 - 语义闭环的核心结构
-//
-//  设计说明：
-//  - 统一 command vs arguments 分裂问题
-//  - 确保执行路径的单一入口
-//  - 携带足够的上下文供追溯和调试
 //
 
 import Foundation
 
-// MARK: - Command Executable
+// MARK: - CommandExecutable
 
-/// 允许执行的可执行文件类型
 enum CommandExecutable: String, Codable, CaseIterable, Sendable {
     case ffmpeg
     case ffprobe
 
-    /// 二进制文件名
     var binaryName: String { rawValue }
 
-    /// 从命令首 token 解析可执行文件类型（支持绝对路径）
     static func from(token: String) -> CommandExecutable? {
-        let executableName = (token as NSString).lastPathComponent.lowercased()
-        return CommandExecutable(rawValue: executableName)
+        let name = (token as NSString).lastPathComponent.lowercased()
+        return CommandExecutable(rawValue: name)
+    }
+
+    static func stripExecutableIfPresent(
+        from tokens: [String],
+        defaultExecutable: CommandExecutable = .ffmpeg
+    ) -> (executable: CommandExecutable, arguments: [String]) {
+        guard let first = tokens.first,
+              let executable = from(token: first) else {
+            return (defaultExecutable, tokens)
+        }
+
+        return (executable, Array(tokens.dropFirst()))
     }
 }
 
-// MARK: - Execution Plan
+// MARK: - ExecutionPlan
 
-/// 执行计划：将模板渲染结果封装为可执行的语义完整单元
-///
-/// 这是"语义闭环"的关键结构，解决了以下问题：
-/// - command vs arguments 分裂
-/// - validate vs render 分裂
-/// - history vs execution 分裂
-struct ExecutionPlan: Equatable {
+struct ExecutionPlan: Equatable, Sendable {
 
-    /// 目标可执行文件（ffmpeg / ffprobe）
     let executable: CommandExecutable
-
-    /// 执行参数数组（用于 Process.arguments，不包含 ffmpeg 本身）
     let arguments: [String]
-
-    /// 显示命令（用于 UI/日志/历史记录）
     let displayCommand: String
-
-    /// 来源模板 ID（可选，用于追溯）
     let templateId: String?
-
-    /// 来源模板名称（可选，用于显示）
     let templateName: String?
-
-    /// 已验证的参数绑定（可选，用于调试和审计）
     let validatedBindings: [ParameterBinding]?
-
-    /// 创建时间
     let createdAt: Date
 
-    // MARK: - Initialization
+    // MARK: - Init（模板路径）
 
-    /// 从参数数组创建（Template 路径）
     init(
         arguments: [String],
         displayCommand: String,
@@ -81,17 +62,20 @@ struct ExecutionPlan: Equatable {
         self.createdAt = createdAt
     }
 
-    /// 从原始命令字符串创建（手动输入路径）
-    /// - Parameters:
-    ///   - command: 完整的命令字符串（包含 ffmpeg / ffprobe）
-    ///   - executable: 可选兜底可执行文件类型（当首 token 无法识别时使用）
-    /// - Throws: CommandSplitError 当命令存在未闭合引号或悬空转义
-    init(command: String, executable fallbackExecutable: CommandExecutable? = nil) throws {
-        let args = try CommandRenderer.splitCommandStrict(command)
-        let detectedExecutable = args.first.flatMap(CommandExecutable.from(token:))
+    // MARK: - Init（原始命令字符串）
 
-        self.executable = detectedExecutable ?? fallbackExecutable ?? .ffmpeg
-        self.arguments = detectedExecutable == nil ? args : Array(args.dropFirst())
+    /// - Parameter command: 完整命令字符串，首 token 须为 ffmpeg/ffprobe（含绝对路径）
+    /// - Parameter fallbackExecutable: 当首 token 无法识别时使用；
+    ///   **注意**：若首 token 能被识别，此参数被忽略——这是预期行为。
+    ///   若需强制覆盖，请直接使用另一个 init。
+    init(command: String, fallbackExecutable: CommandExecutable = .ffmpeg) throws {
+        let tokens = try CommandRenderer.splitCommandStrict(command)
+        let normalized = CommandExecutable.stripExecutableIfPresent(
+            from: tokens,
+            defaultExecutable: fallbackExecutable
+        )
+        self.executable = normalized.executable
+        self.arguments = normalized.arguments
         self.displayCommand = command
         self.templateId = nil
         self.templateName = nil
@@ -99,21 +83,14 @@ struct ExecutionPlan: Equatable {
         self.createdAt = Date()
     }
 
-    // MARK: - Computed Properties
+    // MARK: - Computed
 
-    /// 是否来自模板
-    var isFromTemplate: Bool {
-        templateId != nil
-    }
+    var isFromTemplate: Bool { templateId != nil }
 
-    /// 是否有验证的绑定信息
     var hasValidatedBindings: Bool {
-        validatedBindings != nil && !(validatedBindings?.isEmpty ?? true)
+        !(validatedBindings?.isEmpty ?? true)   // ✅ Opt: 简化 nil + empty 的双重判断
     }
 
-    /// 完整的执行命令（包含可执行文件路径）
-    /// - Parameter executablePath: 可执行文件路径
-    /// - Returns: 完整的参数数组
     func fullArguments(executablePath: String) -> [String] {
         [executablePath] + arguments
     }
@@ -129,18 +106,13 @@ extension ExecutionPlan {
         lhs.templateId == rhs.templateId &&
         lhs.templateName == rhs.templateName &&
         lhs.validatedBindings == rhs.validatedBindings
+        // 注：刻意排除 createdAt，两个内容相同但创建时间不同的 plan 视为相等
     }
 }
 
-// MARK: - Factory Methods
+// MARK: - Factory
 
 extension ExecutionPlan {
-
-    /// 从模板绑定创建执行计划
-    /// - Parameters:
-    ///   - binding: 模板绑定（已验证）
-    ///   - renderedCommand: 渲染后的命令结构
-    /// - Returns: 执行计划
     static func from(
         binding: TemplateBinding,
         renderedCommand: RenderedCommand

@@ -41,10 +41,13 @@ struct StandardTemplateWorkspaceView: View {
     }
 }
 
-#Preview {
-    StandardTemplateWorkspaceView()
-        .environmentObject(TemplateDetailViewModel())
-        .environmentObject(CommandPreviewViewModel())
-        .environmentObject(ExecutionViewModel())
-        .frame(width: 1000, height: 700)
+private struct StandardTemplateWorkspaceView_Previews: PreviewProvider {
+    @MainActor
+    static var previews: some View {
+        StandardTemplateWorkspaceView()
+            .environmentObject(TemplateDetailViewModel())
+            .environmentObject(CommandPreviewViewModel())
+            .environmentObject(ExecutionViewModel())
+            .frame(width: 1000, height: 700)
+    }
 }

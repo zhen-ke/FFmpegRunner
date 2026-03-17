@@ -174,6 +174,18 @@ struct KnowledgeBase {
         ),
     ]
 
+    static let formatAliases: [String: String] = [
+        "m4a": "mp4",
+        "m4v": "mp4",
+        "qt": "mov",
+        "mka": "matroska",
+        "mk3d": "matroska",
+        "mkv": "matroska",
+        "m2ts": "mpegts",
+        "mts": "mpegts",
+        "ts": "mpegts"
+    ]
+
     // MARK: Fallback Codec Lists（无格式上下文时使用，不含 HW 加速器）
 
     static let baseVideoCodecs = [
@@ -206,6 +218,11 @@ struct KnowledgeBase {
 
     static let profilesH264 = ["baseline", "main", "high", "high10", "high422", "high444"]
     static let tuneValues    = ["film", "animation", "grain", "stillimage", "fastdecode", "zerolatency"]
+
+    static func canonicalFormatName(_ identifier: String?) -> String? {
+        guard let lowered = identifier?.lowercased().nonEmpty else { return nil }
+        return formatAliases[lowered] ?? lowered
+    }
 
     // MARK: Static Codec Lookup（不含 HW，供 HardwareAccelerationProbe 注入前使用）
 
@@ -275,6 +292,14 @@ struct ParsedCommand {
     let trailingFlagMissingValue: String?
     let presentFlags: Set<String>
 
+    var effectiveOutputFormat: String? {
+        if let lastExplicitFormat {
+            return lastExplicitFormat
+        }
+
+        return CommandEditorAssistant.normalizedFormatName(for: outputPath)
+    }
+
     func isCopy(flag: String) -> Bool {
         flagValues[flag]?.lowercased() == "copy"
     }
@@ -306,6 +331,19 @@ private struct CommandParser {
         }
     }
 
+    private static func consumeValue(
+        _ value: String,
+        for flagToken: Token,
+        flagValues: inout [String: String],
+        inputPaths: inout [String],
+        lastFormat: inout String?
+    ) {
+        let key = flagToken.rawText
+        flagValues[key] = value
+        if key == "-i" { inputPaths.append(value) }
+        if key == "-f" { lastFormat = KnowledgeBase.canonicalFormatName(value) }
+    }
+
     static func parse(_ lexedTokens: [Token]) -> ParsedCommand {
         guard !lexedTokens.isEmpty else {
             return ParsedCommand(
@@ -333,13 +371,35 @@ private struct CommandParser {
         for token in lexedTokens.dropFirst() {
             switch state {
             case .expectValue(let flagToken):
-                if case .word(let val) = token {
-                    let key = flagToken.rawText
-                    flagValues[key] = val
-                    if key == "-i" { inputPaths.append(val) }
-                    if key == "-f" { lastFormat = val.lowercased() }
+                switch token {
+                case .word(let val):
+                    consumeValue(
+                        val,
+                        for: flagToken,
+                        flagValues: &flagValues,
+                        inputPaths: &inputPaths,
+                        lastFormat: &lastFormat
+                    )
+                    state = .expectToken
+
+                case .flag, .streamSpecifier, .informational:
+                    trailingFlag = flagToken.rawText
+                    state = .expectToken
+
+                    switch token {
+                    case .informational:
+                        presentFlags.insert(token.rawText)
+                    case .flag, .streamSpecifier:
+                        presentFlags.insert(token.rawText)
+                        if requiresValue(token) { state = .expectValue(for: token) }
+                    default:
+                        break
+                    }
+
+                case .executable:
+                    trailingFlag = flagToken.rawText
+                    state = .expectToken
                 }
-                state = .expectToken
 
             case .expectToken:
                 switch token {
@@ -383,6 +443,172 @@ enum CompletionContext {
     case flagName(partial: String)
     case flagValue(flag: String, stream: String?, partial: String)
     case unknown
+
+    var allowsInlineSuggestionWhenPartialIsEmpty: Bool {
+        switch self {
+        case .flagValue:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+private enum CompletionCommandPhase {
+    case beforeFirstInput
+    case configuringOutput
+    case betweenOutputs
+}
+
+private struct CompletionPrefixState {
+    let phase: CompletionCommandPhase
+    let inputCount: Int
+    let completedOutputCount: Int
+    let currentOutputFlags: Set<String>
+    let currentOutputFlagValues: [String: String]
+    let currentOutputFormat: String?
+    let globalFlags: Set<String>
+
+    var hasActiveFilterGraph: Bool {
+        globalFlags.contains("-filter_complex")
+    }
+
+    func isCopy(flag: String) -> Bool {
+        currentOutputFlagValues[flag]?.lowercased() == "copy"
+    }
+}
+
+private struct CompletionPrefixParser {
+    private static let globalFlags: Set<String> = ["-filter_complex", "-y", "-n"]
+
+    static func parse(_ prefixTokens: [String]) -> CompletionPrefixState {
+        guard !prefixTokens.isEmpty else {
+            return CompletionPrefixState(
+                phase: .beforeFirstInput,
+                inputCount: 0,
+                completedOutputCount: 0,
+                currentOutputFlags: [],
+                currentOutputFlagValues: [:],
+                currentOutputFormat: nil,
+                globalFlags: []
+            )
+        }
+
+        let lexedTokens = Lexer.lex(prefixTokens)
+
+        var state: ParserState = .expectToken
+        var inputCount = 0
+        var completedOutputCount = 0
+        var currentOutputFlags: Set<String> = []
+        var currentOutputFlagValues: [String: String] = [:]
+        var currentOutputFormat: String?
+        var seenGlobalFlags: Set<String> = []
+        var justCompletedOutput = false
+
+        func resetCurrentOutput() {
+            currentOutputFlags.removeAll()
+            currentOutputFlagValues.removeAll()
+            currentOutputFormat = nil
+        }
+
+        func recordFlag(_ token: Token) {
+            let raw = token.rawText
+            if globalFlags.contains(raw) {
+                seenGlobalFlags.insert(raw)
+            } else if raw != "-i" {
+                currentOutputFlags.insert(raw)
+            }
+        }
+
+        func consumeValue(_ value: String, for flagToken: Token) {
+            let key = flagToken.rawText
+            if key == "-i" {
+                inputCount += 1
+            } else {
+                currentOutputFlagValues[key] = value
+                if key == "-f" {
+                    currentOutputFormat = KnowledgeBase.canonicalFormatName(value)
+                }
+            }
+            justCompletedOutput = false
+        }
+
+        func treatAsOutputBoundary() {
+            completedOutputCount += 1
+            resetCurrentOutput()
+            justCompletedOutput = true
+        }
+
+        func handleToken(_ token: Token) {
+            switch token {
+            case .informational:
+                justCompletedOutput = false
+
+            case .flag, .streamSpecifier:
+                recordFlag(token)
+                justCompletedOutput = false
+                if CommandParser.baseFlagsRequiringValue.contains(
+                    token.rawText.split(separator: ":").first.map(String.init) ?? token.rawText
+                ) {
+                    state = .expectValue(for: token)
+                }
+
+            case .word:
+                if inputCount > 0
+                    || completedOutputCount > 0
+                    || !currentOutputFlags.isEmpty
+                    || !currentOutputFlagValues.isEmpty
+                    || currentOutputFormat != nil {
+                    treatAsOutputBoundary()
+                } else {
+                    justCompletedOutput = false
+                }
+
+            case .executable:
+                break
+            }
+        }
+
+        for token in lexedTokens.dropFirst() {
+            switch state {
+            case .expectValue(let flagToken):
+                switch token {
+                case .word(let value):
+                    consumeValue(value, for: flagToken)
+                    state = .expectToken
+
+                case .flag, .streamSpecifier, .informational:
+                    state = .expectToken
+                    handleToken(token)
+
+                case .executable:
+                    state = .expectToken
+                }
+
+            case .expectToken:
+                handleToken(token)
+            }
+        }
+
+        let phase: CompletionCommandPhase
+        if inputCount == 0 {
+            phase = .beforeFirstInput
+        } else if justCompletedOutput {
+            phase = .betweenOutputs
+        } else {
+            phase = .configuringOutput
+        }
+
+        return CompletionPrefixState(
+            phase: phase,
+            inputCount: inputCount,
+            completedOutputCount: completedOutputCount,
+            currentOutputFlags: currentOutputFlags,
+            currentOutputFlagValues: currentOutputFlagValues,
+            currentOutputFormat: currentOutputFormat,
+            globalFlags: seenGlobalFlags
+        )
+    }
 }
 
 private struct CompletionContextResolver {
@@ -426,7 +652,7 @@ struct CommandEditorAssistant {
         case .malformedCommand(let message):
             return [CommandEditorDiagnostic(severity: .error, message: message)]
         case .notFFmpegCommand:
-            return [CommandEditorDiagnostic(severity: .error, message: "仅支持补全和执行 ffmpeg / ffprobe 命令")]
+            return [CommandEditorDiagnostic(severity: .error, message: "仅支持补全和执行 ffmpeg 命令")]
         case .valid:
             break
         }
@@ -478,19 +704,14 @@ struct CommandEditorAssistant {
         partialRange: NSRange
     ) -> [String] {
         let partial = utf16Substring(in: command, range: partialRange)
-        let prefixText = utf16Substring(
-            in: command,
-            range: NSRange(location: 0, length: max(0, partialRange.location))
+        let context = completionContext(
+            for: command,
+            selectedRange: selectedRange,
+            partialRange: partialRange
         )
-        let prefixTokens = (try? CommandRenderer.splitCommandStrict(prefixText)) ?? []
-
-        let prefixLexed  = Lexer.lex(prefixTokens.isEmpty ? ["_"] : prefixTokens)
-        let prefixParsed = CommandParser.parse(prefixLexed)
-        let activeFormat = prefixParsed.lastExplicitFormat
-
-        let context = CompletionContextResolver.resolve(
-            prefixTokens: prefixTokens,
-            partial: partial
+        let activeFormat = activeFormat(
+            for: command,
+            partialRange: partialRange
         )
 
         switch context {
@@ -498,18 +719,45 @@ struct CommandEditorAssistant {
             return filter(CommandExecutable.allCases.map(\.binaryName), matching: partial)
 
         case .flagName(let partial):
-            return filter(flagSuggestions, matching: partial)
+            return filter(suggestedFlags(for: command, partialRange: partialRange), matching: partial)
 
         case .flagValue(let flag, let stream, let partial):
             let suggestions = codecSuggestions(flag: flag, stream: stream, format: activeFormat)
-            #if DEBUG
-            print("[Completion] flag=\(flag) stream=\(stream ?? "nil") format=\(activeFormat ?? "nil") → \(suggestions.prefix(5))")
-            #endif
             return filter(suggestions, matching: partial)
 
         case .unknown:
             return []
         }
+    }
+
+    static func completionContext(
+        for command: String,
+        selectedRange: NSRange,
+        partialRange: NSRange
+    ) -> CompletionContext {
+        let partial = utf16Substring(in: command, range: partialRange)
+        let prefixText = utf16Substring(
+            in: command,
+            range: NSRange(location: 0, length: max(0, partialRange.location))
+        )
+        let prefixTokens = (try? CommandRenderer.splitCommandStrict(prefixText)) ?? []
+        return CompletionContextResolver.resolve(
+            prefixTokens: prefixTokens,
+            partial: partial
+        )
+    }
+
+    private static func activeFormat(
+        for command: String,
+        partialRange: NSRange
+    ) -> String? {
+        let prefixText = utf16Substring(
+            in: command,
+            range: NSRange(location: 0, length: max(0, partialRange.location))
+        )
+        let prefixTokens = (try? CommandRenderer.splitCommandStrict(prefixText)) ?? []
+        let prefixState = CompletionPrefixParser.parse(prefixTokens.isEmpty ? ["_"] : prefixTokens)
+        return prefixState.currentOutputFormat
     }
 }
 
@@ -517,10 +765,16 @@ struct CommandEditorAssistant {
 
 private extension CommandEditorAssistant {
 
+    static func normalizedFormatName(for path: String?) -> String? {
+        guard let path,
+              let ext = (path as NSString).pathExtension.lowercased().nonEmpty else { return nil }
+        return KnowledgeBase.canonicalFormatName(ext)
+    }
+
     static func outputFormatMismatch(_ parsed: ParsedCommand) -> String? {
         guard let output = parsed.outputPath,
               let format = parsed.lastExplicitFormat,
-              let ext    = (output as NSString).pathExtension.lowercased().nonEmpty,
+              let ext    = normalizedFormatName(for: output),
               format != ext else { return nil }
         return "输出格式 (-f \(format)) 与扩展名 (.\(ext)) 可能不一致"
     }
@@ -553,6 +807,148 @@ private extension CommandEditorAssistant {
         "-version", "-buildconf", "-formats", "-codecs",
         "-encoders", "-decoders", "-filters", "-pix_fmts", "-help"
     ]
+
+    static func suggestedFlags(for command: String, partialRange: NSRange) -> [String] {
+        let prefixText = utf16Substring(
+            in: command,
+            range: NSRange(location: 0, length: max(0, partialRange.location))
+        )
+        let prefixTokens = (try? CommandRenderer.splitCommandStrict(prefixText)) ?? []
+        let state = CompletionPrefixParser.parse(prefixTokens.isEmpty ? ["_"] : prefixTokens)
+
+        let orderedGroups: [[String]] = [
+            highPriorityFlags(for: state),
+            mediumPriorityFlags(for: state),
+            lowPriorityFlags(for: state),
+            informationalFlags(for: state)
+        ]
+
+        var seen = Set<String>()
+        let suggestions = orderedGroups
+            .flatMap { $0 }
+            .filter { seen.insert($0).inserted }
+
+        return pruneFlagSuggestions(suggestions, for: state)
+    }
+
+    private static func highPriorityFlags(for state: CompletionPrefixState) -> [String] {
+        switch state.phase {
+        case .beforeFirstInput:
+            return ["-i", "-f", "-ss", "-to", "-t", "-y"]
+
+        case .betweenOutputs:
+            if state.hasActiveFilterGraph {
+                return ["-map", "-c:v", "-c:a", "-shortest", "-i", "-y"]
+            }
+            return ["-map", "-c:v", "-c:a", "-f", "-i", "-y", "-preset", "-crf"]
+
+        case .configuringOutput:
+            if state.hasActiveFilterGraph {
+                return ["-map", "-c:v", "-c:a", "-shortest", "-y"]
+            }
+
+            return outputShapingFlags(for: state)
+        }
+    }
+
+    private static func mediumPriorityFlags(for state: CompletionPrefixState) -> [String] {
+        var suggestions: [String] = ["-vf", "-af", "-filter_complex", "-map", "-threads"]
+
+        if !state.currentOutputFlags.contains("-vn") {
+            suggestions.append(contentsOf: ["-c:v", "-preset", "-crf", "-pix_fmt", "-r", "-s", "-b:v"])
+        }
+
+        if !state.currentOutputFlags.contains("-an") {
+            suggestions.append(contentsOf: ["-c:a", "-b:a"])
+        }
+
+        suggestions.append(contentsOf: formatSpecificFlags(for: state))
+
+        return suggestions
+    }
+
+    private static func lowPriorityFlags(for state: CompletionPrefixState) -> [String] {
+        var suggestions = [
+            "-an", "-vn", "-shortest", "-n", "-pass", "-passlogfile",
+            "-aspect", "-bufsize", "-maxrate", "-minrate",
+            "-profile:v", "-tune", "-level"
+        ]
+
+        if state.inputCount == 0 {
+            suggestions.removeAll { $0 == "-shortest" || $0 == "-pass" || $0 == "-passlogfile" }
+        }
+
+        return suggestions
+    }
+
+    private static func informationalFlags(for state: CompletionPrefixState) -> [String] {
+        guard state.inputCount == 0, state.completedOutputCount == 0 else { return [] }
+        return ["-version", "-buildconf", "-formats", "-codecs", "-encoders", "-decoders", "-filters", "-pix_fmts", "-help"]
+    }
+
+    private static func outputShapingFlags(for state: CompletionPrefixState) -> [String] {
+        var suggestions: [String] = ["-c:v", "-preset", "-crf", "-c:a"]
+        suggestions.append(contentsOf: formatSpecificFlags(for: state))
+        suggestions.append(contentsOf: ["-b:a", "-f", "-map", "-y"])
+
+        if !state.currentOutputFlags.contains("-vn") {
+            suggestions.append(contentsOf: ["-vf", "-pix_fmt", "-r", "-s", "-b:v"])
+        }
+
+        if !state.currentOutputFlags.contains("-an") {
+            suggestions.append("-af")
+        }
+
+        return suggestions
+    }
+
+    private static func formatSpecificFlags(for state: CompletionPrefixState) -> [String] {
+        switch state.currentOutputFormat {
+        case "mp4", "mov":
+            return ["-movflags"]
+        default:
+            return []
+        }
+    }
+
+    private static func pruneFlagSuggestions(
+        _ suggestions: [String],
+        for state: CompletionPrefixState
+    ) -> [String] {
+        suggestions.filter { suggestion in
+            !shouldSuppressFlagSuggestion(suggestion, for: state)
+        }
+    }
+
+    private static func shouldSuppressFlagSuggestion(
+        _ suggestion: String,
+        for state: CompletionPrefixState
+    ) -> Bool {
+        if state.currentOutputFlags.contains("-vn") {
+            let videoFlags: Set<String> = [
+                "-c:v", "-preset", "-crf", "-pix_fmt", "-r", "-s", "-b:v", "-vf"
+            ]
+            if videoFlags.contains(suggestion) {
+                return true
+            }
+        }
+
+        if state.currentOutputFlags.contains("-an") {
+            let audioFlags: Set<String> = ["-c:a", "-b:a", "-af"]
+            if audioFlags.contains(suggestion) {
+                return true
+            }
+        }
+
+        if state.currentOutputFlags.contains("-c:v"), state.isCopy(flag: "-c:v") {
+            let filterFlags: Set<String> = ["-vf", "-filter_complex"]
+            if filterFlags.contains(suggestion) {
+                return true
+            }
+        }
+
+        return false
+    }
 
     /// 编解码器补全：静态知识库 + 运行时 HW 探测结果合并。
     ///

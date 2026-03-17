@@ -113,7 +113,7 @@ struct CommandPlanner {
 
         // 4. 创建执行计划（严格分词，不允许不确定输入）
         do {
-            return try ExecutionPlan(command: command, executable: executable)
+            return try ExecutionPlan(command: command, fallbackExecutable: executable)
         } catch {
             throw CommandPlannerError.validationFailed(error.localizedDescription)
         }

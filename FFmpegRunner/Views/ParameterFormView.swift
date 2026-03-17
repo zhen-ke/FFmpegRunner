@@ -764,46 +764,56 @@ struct FileField: View {
     }
 
     private func selectFile() {
-        let panel = isOutput ? NSSavePanel() : NSOpenPanel()
+        Task { @MainActor in
+            let initialDirectory = resolvedInitialDirectoryURL()
+            let selectedURL: URL?
 
-        if let openPanel = panel as? NSOpenPanel {
-            openPanel.allowsMultipleSelection = false
-            openPanel.canChooseDirectories = false
-            openPanel.canChooseFiles = true
+            if isOutput {
+                selectedURL = await FilePicker.saveFile(
+                    defaultName: resolvedSuggestedFileName(),
+                    types: fileTypes,
+                    initialDirectory: initialDirectory,
+                    prompt: "选择输出文件"
+                )
+            } else {
+                selectedURL = await FilePicker.selectFile(
+                    types: fileTypes,
+                    initialDirectory: initialDirectory,
+                    prompt: "选择文件"
+                )
+            }
+
+            if let selectedURL {
+                value = selectedURL.path
+            }
         }
+    }
 
+    private func resolvedInitialDirectoryURL() -> URL? {
         let normalizedValue = (value as NSString)
             .expandingTildeInPath
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if !normalizedValue.isEmpty {
-            let currentURL = URL(fileURLWithPath: normalizedValue)
-            panel.directoryURL = currentURL.deletingLastPathComponent()
-            if let savePanel = panel as? NSSavePanel {
-                savePanel.nameFieldStringValue = currentURL.lastPathComponent
-            }
-        } else {
-            let recentDirectory = isOutput
-                ? UserSettings.shared.lastOutputDirectory
-                : UserSettings.shared.lastInputDirectory
-            let normalizedDirectory = (recentDirectory as NSString)
-                .expandingTildeInPath
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !normalizedDirectory.isEmpty {
-                panel.directoryURL = URL(fileURLWithPath: normalizedDirectory)
-            }
+            return URL(fileURLWithPath: normalizedValue).deletingLastPathComponent()
         }
 
-        if let fileTypes = fileTypes, !fileTypes.isEmpty {
-            panel.allowedContentTypes = fileTypes.compactMap { ext in
-                UTType(filenameExtension: ext)
-            }
-        }
+        let recentDirectory = isOutput
+            ? UserSettings.shared.lastOutputDirectory
+            : UserSettings.shared.lastInputDirectory
+        let normalizedDirectory = (recentDirectory as NSString)
+            .expandingTildeInPath
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        panel.begin { response in
-            if response == .OK, let url = panel.url {
-                value = url.path
-            }
-        }
+        guard !normalizedDirectory.isEmpty else { return nil }
+        return URL(fileURLWithPath: normalizedDirectory)
+    }
+
+    private func resolvedSuggestedFileName() -> String {
+        let normalizedValue = (value as NSString)
+            .expandingTildeInPath
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedValue.isEmpty else { return "" }
+        return URL(fileURLWithPath: normalizedValue).lastPathComponent
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -854,11 +864,14 @@ import UniformTypeIdentifiers
 
 // MARK: - Preview
 
-#Preview {
-    ScrollView {
-        ParameterFormView()
-            .environmentObject(TemplateDetailViewModel(template: .example))
-            .padding()
+private struct ParameterFormView_Previews: PreviewProvider {
+    @MainActor
+    static var previews: some View {
+        ScrollView {
+            ParameterFormView()
+                .environmentObject(TemplateDetailViewModel(template: .example))
+                .padding()
+        }
+        .frame(width: 400, height: 600)
     }
-    .frame(width: 400, height: 600)
 }

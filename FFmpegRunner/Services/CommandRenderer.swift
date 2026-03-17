@@ -374,7 +374,7 @@ struct CommandRenderer {
         }
         flushBuffer()
 
-        let normalized = stripExecutableIfNeeded(from: args)
+        let normalized = CommandExecutable.stripExecutableIfPresent(from: args)
 
         return RenderedCommand(
             executable: normalized.executable,
@@ -452,19 +452,6 @@ struct CommandRenderer {
     /// 从模板参数中收集 ArgumentMode
     private static func collectArgumentModes(from parameters: [TemplateParameter]) -> [String: ArgumentMode] {
         Dictionary(uniqueKeysWithValues: parameters.map { ($0.key, $0.argumentMode) })
-    }
-
-    /// 从参数数组中提取可执行文件并返回纯 arguments
-    private static func stripExecutableIfNeeded(
-        from args: [String],
-        defaultExecutable: CommandExecutable = .ffmpeg
-    ) -> (executable: CommandExecutable, arguments: [String]) {
-        guard let first = args.first,
-              let executable = CommandExecutable.from(token: first) else {
-            return (defaultExecutable, args)
-        }
-
-        return (executable, Array(args.dropFirst()))
     }
 
     // MARK: - Validation

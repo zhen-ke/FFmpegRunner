@@ -65,16 +65,19 @@ struct RawCommandWorkspaceView: View {
     }
 }
 
-#Preview {
-    RawCommandWorkspaceView()
-        .environmentObject(TemplateDetailViewModel(template: Template.makeRawCommandTemplate(
-            name: "自定义命令",
-            description: "直接输入并执行完整 FFmpeg 命令",
-            defaultCommand: "ffmpeg -i input.mp4 -c:v libx264 output.mp4",
-            placeholder: "在此输入完整命令...",
-            category: "高级",
-            icon: "terminal.fill"
-        )))
-        .environmentObject(ExecutionViewModel())
-        .frame(width: 1000, height: 700)
+private struct RawCommandWorkspaceView_Previews: PreviewProvider {
+    @MainActor
+    static var previews: some View {
+        RawCommandWorkspaceView()
+            .environmentObject(TemplateDetailViewModel(template: Template.makeRawCommandTemplate(
+                name: "自定义命令",
+                description: "直接输入并执行完整 FFmpeg 命令",
+                defaultCommand: "ffmpeg -i input.mp4 -c:v libx264 output.mp4",
+                placeholder: "在此输入完整命令...",
+                category: "高级",
+                icon: "terminal.fill"
+            )))
+            .environmentObject(ExecutionViewModel())
+            .frame(width: 1000, height: 700)
+    }
 }

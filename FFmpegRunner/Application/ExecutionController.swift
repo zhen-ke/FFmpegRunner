@@ -359,9 +359,8 @@ final class ExecutionController: ObservableObject {
 
     private func notifyCompletion(success: Bool, plan: ExecutionPlan, message: String) {
         Task {
-            let outputPath: String? = success
-                ? CommandPathDetector.detectOutputDirectory(from: plan.arguments)?.path
-                : nil
+            let outputPath = success ? plan.outputDirectoryPath : nil
+
             await NotificationService.shared.sendExecutionNotification(
                 success: success,
                 message: message,
