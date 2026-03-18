@@ -176,9 +176,7 @@ final class CommandEditorViewModel: ObservableObject {
         let caretOffset = min(max(selectionRange.location, 0), text.utf16.count)
         let caretIndex  = stringIndexForUTF16Offset(caretOffset, in: text)
         let prefix      = text[..<caretIndex].trimmingCharacters(in: .whitespacesAndNewlines)
-        withAnimation(.easeInOut(duration: 0.2)) {
-            shouldHighlightMenu = prefix.hasSuffix("-i")
-        }
+        shouldHighlightMenu = prefix.hasSuffix("-i")
     }
 
     // MARK: - ② Completion Refresh (单一调度，消除同帧双次计算)
@@ -351,7 +349,6 @@ struct CommandTextView: View {
                         insertDirectory: { viewModel.insertFile(isDirectory: true) }
                     )
                     .padding(8)
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
             }
             .background(Color(NSColor.textBackgroundColor))
@@ -363,11 +360,8 @@ struct CommandTextView: View {
                         lineWidth: viewModel.isDragging ? 2 : 1
                     )
             )
-            .animation(.easeInOut(duration: 0.15), value: viewModel.isDragging)
             .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    viewModel.isHovering = hovering
-                }
+                viewModel.isHovering = hovering
             }
 
             if !viewModel.diagnostics.isEmpty {
