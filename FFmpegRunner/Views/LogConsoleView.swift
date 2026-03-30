@@ -95,7 +95,8 @@ struct LogConsoleView: View {
                 logCount: viewModel.visibleLogs.count,
                 lastResult: viewModel.lastResult,
                 ffmpegVersion: viewModel.ffmpegVersionShort,
-                state: viewModel.state
+                state: viewModel.state,
+                progress: viewModel.progress
             )
         }
         .fileExporter(
@@ -1053,43 +1054,152 @@ struct ConsoleStatusBar: View {
     let lastResult: ExecutionResult?
     let ffmpegVersion: String?
     let state: ExecutionState
+    var progress: FFmpegProgress? = nil
 
     var body: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(state.displayColor)
-                    .frame(width: 6, height: 6)
-                Text(state.displayText)
-                    .font(.caption2)
-                    .fontWeight(.medium)
-                    .foregroundColor(state.displayColor)
+        VStack(spacing: 0) {
+            // 进度条（仅执行中且有进度数据时显示）
+            if state.isRunning, let progress {
+                TranscodeProgressBar(progress: progress)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            Divider().frame(height: 12)
+            // 状态栏
+            HStack(spacing: 12) {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(state.displayColor)
+                        .frame(width: 6, height: 6)
+                    Text(state.displayText)
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundColor(state.displayColor)
+                }
 
-            Text("\(logCount) 条日志")
-                .font(.caption2)
-                .foregroundColor(.secondary)
+                Divider().frame(height: 12)
 
-            Spacer()
-
-            if let result = lastResult {
-                Text("耗时: \(result.formattedDuration)")
+                Text("\(logCount) 条日志")
                     .font(.caption2)
                     .foregroundColor(.secondary)
+
+                Spacer()
+
+                if let result = lastResult, !state.isRunning {
+                    Text("耗时: \(result.formattedDuration)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+
+                if let version = ffmpegVersion {
+                    Divider().frame(height: 12)
+                    Text(version)
+                        .font(.caption2)
+                        .foregroundColor(.secondary.opacity(0.7))
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 4)
+        }
+        .background(Color(NSColor.controlBackgroundColor))
+        .animation(.easeInOut(duration: 0.25), value: progress != nil)
+    }
+}
+
+// MARK: - TranscodeProgressBar
+
+/// HIG-compliant 转码进度条
+///
+/// 设计原则（遵循 macOS Human Interface Guidelines）：
+/// - 已知总时长时使用确定性进度条（determinate），显示百分比
+/// - 未知总时长时使用不确定进度条（indeterminate），仅显示已处理信息
+/// - 进度条高度使用系统标准尺寸（.regular controlSize）
+/// - 信息文本使用 .secondary 颜色，不喧宾夺主
+/// - 进度条颜色使用 .accentColor，与系统设置一致
+struct TranscodeProgressBar: View {
+    let progress: FFmpegProgress
+
+    var body: some View {
+        VStack(spacing: 4) {
+            // 进度条
+            if let fraction = progress.fractionCompleted {
+                // 确定性进度条
+                ProgressView(value: fraction)
+                    .progressViewStyle(.linear)
+            } else {
+                // 不确定进度条（无总时长）
+                ProgressView()
+                    .progressViewStyle(.linear)
             }
 
-            if let version = ffmpegVersion {
-                Divider().frame(height: 12)
-                Text(version)
+            // 进度信息
+            HStack(spacing: 0) {
+                // 左侧：核心进度信息
+                progressSummary
                     .font(.caption2)
-                    .foregroundColor(.secondary.opacity(0.7))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                // 右侧：技术细节
+                technicalDetails
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.horizontal)
-        .padding(.vertical, 4)
-        .background(Color(NSColor.controlBackgroundColor))
+        .padding(.top, 6)
+        .padding(.bottom, 2)
+    }
+
+    // MARK: - 左侧摘要
+
+    @ViewBuilder
+    private var progressSummary: some View {
+        HStack(spacing: 8) {
+            // 百分比（如果可用）
+            if let fraction = progress.fractionCompleted {
+                Text("\(Int(fraction * 100))%")
+                    .fontWeight(.medium)
+                    .monospacedDigit()
+            }
+
+            // 时间进度
+            if let totalFormatted = progress.formattedTotalDuration {
+                Text("\(progress.formattedTime) / \(totalFormatted)")
+                    .monospacedDigit()
+            } else {
+                Text(progress.formattedTime)
+                    .monospacedDigit()
+            }
+
+            // ETA
+            if let eta = progress.formattedETA {
+                Text("剩余 \(eta)")
+                    .monospacedDigit()
+            }
+        }
+    }
+
+    // MARK: - 右侧技术细节
+
+    @ViewBuilder
+    private var technicalDetails: some View {
+        HStack(spacing: 8) {
+            if progress.fps > 0 {
+                Text("\(Int(progress.fps)) fps")
+                    .monospacedDigit()
+            }
+
+            if let speed = progress.formattedSpeed {
+                Text(speed)
+                    .monospacedDigit()
+            }
+
+            if progress.sizeBytes > 0 {
+                Text(progress.formattedSize)
+                    .monospacedDigit()
+            }
+        }
     }
 }
 

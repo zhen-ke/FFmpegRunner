@@ -47,6 +47,9 @@ class ExecutionViewModel: ObservableObject {
     /// 最近的执行结果
     @Published private(set) var lastResult: ExecutionResult?
 
+    /// 当前转码进度（仅执行期间有值）
+    @Published private(set) var progress: FFmpegProgress?
+
     /// FFmpeg 版本信息（从 Controller 同步）
     @Published private(set) var ffmpegVersion: String?
 
@@ -129,6 +132,10 @@ class ExecutionViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newState in
                 self?.state = newState
+                // 执行结束后清除进度（保留最终快照一小段时间供 UI 过渡）
+                if newState.isTerminal {
+                    self?.progress = nil
+                }
             }
             .store(in: &cancellables)
 
@@ -151,6 +158,11 @@ class ExecutionViewModel: ObservableObject {
         // 设置日志回调
         controller.onLogOutput = { [weak self] entry in
             self?.appendLog(entry)
+        }
+
+        // 订阅进度更新（通过 Controller → FFmpegService → ProgressTracker）
+        controller.onProgressUpdate = { [weak self] progressInfo in
+            self?.progress = progressInfo
         }
 
         // 监听 logs、filter、searchText 变化，使用 throttle 防抖处理
@@ -308,6 +320,7 @@ class ExecutionViewModel: ObservableObject {
         visibleLogs = []
         searchText = ""
         lastProgressLogTime = nil
+        progress = nil
     }
 
     /// 添加日志条目

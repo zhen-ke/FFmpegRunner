@@ -81,6 +81,12 @@ class FFmpegService: ObservableObject {
     /// 日志回调
     var onLogOutput: ((LogEntry) -> Void)?
 
+    /// 进度回调（每次进度更新时在主线程调用）
+    var onProgressUpdate: ((FFmpegProgress) -> Void)?
+
+    /// 进度追踪器（每次执行时创建新实例）
+    private var progressTracker: FFmpegProgressTracker?
+
     /// 当前使用的 FFmpeg 路径
     @Published private(set) var ffmpegPath: String = ""
 
@@ -422,10 +428,18 @@ class FFmpegService: ObservableObject {
             AppLogger.debug(AppLogger.ffmpeg, "  [\(i)] = \(arg)")
         }
 
+        // 创建进度追踪器（每次执行独立实例）
+        let tracker = FFmpegProgressTracker()
+        tracker.onProgress = { [weak self] progress in
+            self?.onProgressUpdate?(progress)
+        }
+        self.progressTracker = tracker
+
         let session = ProcessExecutionSession(
             executablePath: executablePath,
             arguments: arguments,
             displayCommand: displayCommand,
+            progressTracker: tracker,
             onLog: { [weak self] entry in
                 Task { @MainActor in
                     self?.onLogOutput?(entry)
@@ -584,6 +598,7 @@ private final class ProcessExecutionSession {
     private let dataCollector = OutputDataCollector()
     private let displayCommand: String
     private let onLog: (LogEntry) -> Void
+    private let progressTracker: FFmpegProgressTracker?
 
     /// 防止 cleanup() 与 cancel() 并发执行时重复关闭管道
     private var isCleaned = false
@@ -592,10 +607,12 @@ private final class ProcessExecutionSession {
         executablePath: String,
         arguments: [String],
         displayCommand: String,
+        progressTracker: FFmpegProgressTracker? = nil,
         onLog: @escaping (LogEntry) -> Void
     ) {
         self.displayCommand = displayCommand
         self.onLog = onLog
+        self.progressTracker = progressTracker
         self.process = Process()
 
         process.executableURL = URL(fileURLWithPath: executablePath)
@@ -604,8 +621,15 @@ private final class ProcessExecutionSession {
         process.standardError = stderrPipe
         process.standardInput = stdinPipe
 
-        stdoutLogger.onLog = onLog
-        stderrLogger.onLog = onLog
+        // 日志回调 + 进度追踪
+        let tracker = progressTracker
+        let wrappedLog: (LogEntry) -> Void = { entry in
+            onLog(entry)
+            // 进度行和 Duration 行都送给 tracker 解析
+            tracker?.processLine(entry.message)
+        }
+        stdoutLogger.onLog = wrappedLog
+        stderrLogger.onLog = wrappedLog
 
         startStreaming()
     }

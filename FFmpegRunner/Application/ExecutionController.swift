@@ -89,6 +89,9 @@ final class ExecutionController: ObservableObject {
     /// 日志输出回调
     var onLogOutput: ((LogEntry) -> Void)?
 
+    /// 进度更新回调
+    var onProgressUpdate: ((FFmpegProgress) -> Void)?
+
     /// 最近使用变更回调
     var onRecentCommandsChanged: (() -> Void)?
 
@@ -105,6 +108,13 @@ final class ExecutionController: ObservableObject {
         self.ffmpegService.onLogOutput = { [weak self] entry in
             Task { @MainActor in
                 self?.onLogOutput?(entry)
+            }
+        }
+
+        // 设置进度回调转发
+        self.ffmpegService.onProgressUpdate = { [weak self] progress in
+            Task { @MainActor in
+                self?.onProgressUpdate?(progress)
             }
         }
 

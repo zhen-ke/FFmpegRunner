@@ -70,6 +70,7 @@
 		001A0039 /* EmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0039 /* EmptyStateView.swift */; };
 		001A0040 /* ExecutionAlerts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0040 /* ExecutionAlerts.swift */; };
 		001A0041 /* UndoManagerInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0041 /* UndoManagerInstaller.swift */; };
+		001A0060 /* FFmpegProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0060 /* FFmpegProgress.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -138,6 +139,7 @@
 		001B0039 /* EmptyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyStateView.swift; sourceTree = "<group>"; };
 		001B0040 /* ExecutionAlerts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutionAlerts.swift; sourceTree = "<group>"; };
 		001B0041 /* UndoManagerInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UndoManagerInstaller.swift; sourceTree = "<group>"; };
+		001B0060 /* FFmpegProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFmpegProgress.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -208,6 +210,7 @@
 				001B0030 /* ExecutionPlan.swift */,
 				001B0024 /* CommandHistory.swift */,
 				001B0036 /* LogFilter.swift */,
+				001B0060 /* FFmpegProgress.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -498,6 +501,7 @@
 				001A0039 /* EmptyStateView.swift in Sources */,
 				001A0040 /* ExecutionAlerts.swift in Sources */,
 				001A0041 /* UndoManagerInstaller.swift in Sources */,
+				001A0060 /* FFmpegProgress.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
