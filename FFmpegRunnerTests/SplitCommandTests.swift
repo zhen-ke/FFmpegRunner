@@ -613,6 +613,152 @@ final class SplitCommandTests: XCTestCase {
         XCTAssertEqual(recentCommands.first?.wasSuccessful, false)
     }
 
+    func testRecentCommandsServiceFavoritesStayPinnedAboveNewerEntries() async throws {
+        let sandbox = FileManager.default.temporaryDirectory.appendingPathComponent("recent-commands-\(UUID().uuidString)", isDirectory: true)
+        let service = RecentCommandsService(
+            recentCommandsDirectory: sandbox,
+            legacyHistoryDirectory: sandbox.appendingPathComponent("legacy", isDirectory: true)
+        )
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        try await service.recordUsage(
+            RecentCommandUsage(
+                executable: .ffmpeg,
+                arguments: ["-version"],
+                displayCommand: "ffmpeg -version",
+                usedAt: Date().addingTimeInterval(-120),
+                wasSuccessful: true
+            )
+        )
+
+        try await service.recordUsage(
+            RecentCommandUsage(
+                executable: .ffmpeg,
+                arguments: ["-formats"],
+                displayCommand: "ffmpeg -formats",
+                usedAt: Date(),
+                wasSuccessful: true
+            )
+        )
+
+        let firstLoad = await service.loadRecentCommands()
+        let olderEntry = try XCTUnwrap(firstLoad.first(where: { $0.displayCommand == "ffmpeg -version" }))
+        try await service.updateFavoriteState(olderEntry.id, isFavorite: true)
+
+        let sorted = await service.loadRecentCommands()
+        XCTAssertEqual(sorted.first?.displayCommand, "ffmpeg -version")
+        XCTAssertTrue(sorted.first?.isFavorite == true)
+        XCTAssertEqual(sorted.dropFirst().first?.displayCommand, "ffmpeg -formats")
+    }
+
+    func testRecentCommandDecodesMissingFavoriteFlagAsFalse() throws {
+        let data = """
+        {
+          "id": "D46A54E8-3D9F-46E6-A0EE-B3D5287E7C8A",
+          "executable": "ffmpeg",
+          "arguments": ["-version"],
+          "displayCommand": "ffmpeg -version",
+          "lastUsedAt": "2026-03-31T00:00:00Z",
+          "wasSuccessful": true,
+          "useCount": 1,
+          "displayName": null,
+          "templateSnapshot": null
+        }
+        """.data(using: .utf8)!
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let command = try decoder.decode(RecentCommand.self, from: data)
+
+        XCTAssertFalse(command.isFavorite)
+    }
+
+    func testHistoryTimeFilterMatchesExpectedRanges() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+
+        let referenceDate = ISO8601DateFormatter().date(from: "2026-03-31T12:00:00Z")!
+        let sameDay = ISO8601DateFormatter().date(from: "2026-03-31T01:00:00Z")!
+        let sameWeek = ISO8601DateFormatter().date(from: "2026-03-30T08:00:00Z")!
+        let sameMonth = ISO8601DateFormatter().date(from: "2026-03-02T08:00:00Z")!
+        let previousMonth = ISO8601DateFormatter().date(from: "2026-02-28T23:00:00Z")!
+
+        XCTAssertTrue(HistoryTimeFilter.today.includes(sameDay, referenceDate: referenceDate, calendar: calendar))
+        XCTAssertFalse(HistoryTimeFilter.today.includes(sameWeek, referenceDate: referenceDate, calendar: calendar))
+
+        XCTAssertTrue(HistoryTimeFilter.thisWeek.includes(sameWeek, referenceDate: referenceDate, calendar: calendar))
+        XCTAssertFalse(HistoryTimeFilter.thisWeek.includes(previousMonth, referenceDate: referenceDate, calendar: calendar))
+
+        XCTAssertTrue(HistoryTimeFilter.thisMonth.includes(sameMonth, referenceDate: referenceDate, calendar: calendar))
+        XCTAssertFalse(HistoryTimeFilter.thisMonth.includes(previousMonth, referenceDate: referenceDate, calendar: calendar))
+    }
+
+    @MainActor
+    func testRecentCommandsViewModelAppliesSearchAndTimeFilterTogether() {
+        let recent = RecentCommand(
+            displayCommand: "ffmpeg -i today.mov today.mp4",
+            lastUsedAt: ISO8601DateFormatter().date(from: "2026-03-31T09:00:00Z")!,
+            wasSuccessful: true,
+            displayName: "今天转码"
+        )
+        let older = RecentCommand(
+            displayCommand: "ffmpeg -i month.mov month.mp4",
+            lastUsedAt: ISO8601DateFormatter().date(from: "2026-03-10T09:00:00Z")!,
+            wasSuccessful: true,
+            displayName: "本月旧任务"
+        )
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+
+        let filtered = RecentCommandsViewModel.filterCommands(
+            [recent, older],
+            searchText: "今天",
+            timeFilter: .today,
+            referenceDate: ISO8601DateFormatter().date(from: "2026-03-31T12:00:00Z")!,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(filtered.map(\.displayCommand), ["ffmpeg -i today.mov today.mp4"])
+    }
+
+    @MainActor
+    func testExecutionViewModelRegexSearchFiltersLogsByPattern() {
+        let logs = [
+            LogEntry(timestamp: Date(), level: .info, message: "frame=10 fps=24.0"),
+            LogEntry(timestamp: Date(), level: .error, message: "Error opening input"),
+            LogEntry(timestamp: Date(), level: .info, message: "muxing overhead: 1.2%")
+        ]
+
+        let result = ExecutionViewModel.filterLogs(
+            logs,
+            filter: .all,
+            searchText: #"frame=\d+"#,
+            isRegexSearchEnabled: true
+        )
+
+        XCTAssertNil(result.errorMessage)
+        XCTAssertEqual(result.logs.map(\.message), ["frame=10 fps=24.0"])
+    }
+
+    @MainActor
+    func testExecutionViewModelRegexSearchFallsBackGracefullyForInvalidPattern() {
+        let logs = [
+            LogEntry(timestamp: Date(), level: .info, message: "frame=10 fps=24.0"),
+            LogEntry(timestamp: Date(), level: .error, message: "Error opening input")
+        ]
+
+        let result = ExecutionViewModel.filterLogs(
+            logs,
+            filter: .important,
+            searchText: "[unclosed",
+            isRegexSearchEnabled: true
+        )
+
+        XCTAssertEqual(result.logs.map(\.message), ["Error opening input"])
+        XCTAssertNotNil(result.errorMessage)
+    }
+
     @MainActor
     func testExecutionControllerPersistsRecentCommandBeforeReturning() async throws {
         let truePath = "/usr/bin/true"

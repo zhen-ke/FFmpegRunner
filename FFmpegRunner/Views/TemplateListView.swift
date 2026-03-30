@@ -281,6 +281,7 @@ struct HistorySheetView: View {
     @State private var renameText = ""
     @State private var selectedEntry: CommandHistory?
     @State private var showClearConfirm = false
+    @State private var timeFilter: HistoryTimeFilter = .all
 
     var body: some View {
         VStack(spacing: 0) {
@@ -288,7 +289,7 @@ struct HistorySheetView: View {
 
             Divider()
 
-            HistorySearchBar(text: $searchText)
+            HistorySearchBar(text: $searchText, timeFilter: $timeFilter)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
 
@@ -414,6 +415,15 @@ struct HistorySheetView: View {
                                 Label("保存为模板…", systemImage: "square.and.arrow.down")
                             }
 
+                            Button {
+                                recentCommandsViewModel.toggleFavorite(entry)
+                            } label: {
+                                Label(
+                                    entry.isFavorite ? "取消收藏" : "收藏并置顶",
+                                    systemImage: entry.isFavorite ? "star.slash" : "star"
+                                )
+                            }
+
                             Divider()
 
                             Button(role: .destructive) {
@@ -436,6 +446,7 @@ struct HistorySheetView: View {
                 entry: entry,
                 onRestore: { restore(entry) },
                 onCopy: { copyCommand(entry.command) },
+                onToggleFavorite: { recentCommandsViewModel.toggleFavorite(entry) },
                 onRename: {
                     renameText = entry.displayName ?? ""
                     showRenameSheet = true
@@ -449,13 +460,10 @@ struct HistorySheetView: View {
     }
 
     private var filteredHistory: [CommandHistory] {
-        if searchText.isEmpty {
-            return recentCommandsViewModel.recentCommands
-        }
-        return recentCommandsViewModel.recentCommands.filter {
-            $0.title.localizedCaseInsensitiveContains(searchText) ||
-            $0.command.localizedCaseInsensitiveContains(searchText)
-        }
+        recentCommandsViewModel.filteredCommands(
+            searchText: searchText,
+            timeFilter: timeFilter
+        )
     }
 
     private func saveAsTemplate(_ entry: CommandHistory) {
@@ -584,22 +592,32 @@ struct HistoryActionButton: View {
 
 struct HistorySearchBar: View {
     @Binding var text: String
+    @Binding var timeFilter: HistoryTimeFilter
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.secondary)
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
 
-            TextField("搜索最近使用...", text: $text)
-                .textFieldStyle(.plain)
+                TextField("搜索最近使用...", text: $text)
+                    .textFieldStyle(.plain)
 
-            if !text.isEmpty {
-                Button(action: { text = "" }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
+                if !text.isEmpty {
+                    Button(action: { text = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
+
+            Picker("时间范围", selection: $timeFilter) {
+                ForEach(HistoryTimeFilter.allCases, id: \.self) { filter in
+                    Text(filter.rawValue).tag(filter)
+                }
+            }
+            .pickerStyle(.segmented)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -647,9 +665,17 @@ struct HistoryListRow: View {
                 .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(entry.title)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if entry.isFavorite {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(.yellow)
+                    }
+
+                    Text(entry.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                }
 
                 Text(entry.relativeDate)
                     .font(.system(size: 10))
@@ -666,6 +692,7 @@ struct HistoryDetailView: View {
     let entry: CommandHistory
     let onRestore: () -> Void
     let onCopy: () -> Void
+    let onToggleFavorite: () -> Void
     let onRename: () -> Void
     let onSaveTemplate: () -> Void
     let onDelete: () -> Void
@@ -678,8 +705,15 @@ struct HistoryDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(entry.title)
-                        .font(.system(size: 18, weight: .semibold))
+                    HStack(spacing: 8) {
+                        if entry.isFavorite {
+                            Image(systemName: "star.fill")
+                                .foregroundColor(.yellow)
+                        }
+
+                        Text(entry.title)
+                            .font(.system(size: 18, weight: .semibold))
+                    }
 
                     Spacer()
 
@@ -711,6 +745,9 @@ struct HistoryDetailView: View {
                         .buttonStyle(.borderedProminent)
 
                     Button("复制命令", action: onCopy)
+                        .buttonStyle(.bordered)
+
+                    Button(entry.isFavorite ? "取消收藏" : "收藏置顶", action: onToggleFavorite)
                         .buttonStyle(.bordered)
 
                     Button("重命名", action: onRename)
@@ -781,10 +818,18 @@ struct HistoryRowView: View {
 
             // 内容
             VStack(alignment: .leading, spacing: 4) {
-                Text(entry.title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if entry.isFavorite {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(.yellow)
+                    }
+
+                    Text(entry.title)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                }
 
                 HStack(spacing: 6) {
                     // 时间标签

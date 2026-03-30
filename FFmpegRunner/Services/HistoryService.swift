@@ -158,6 +158,7 @@ actor RecentCommandsService {
                 lastUsedAt: usage.usedAt,
                 wasSuccessful: usage.wasSuccessful,
                 useCount: existing.useCount + 1,
+                isFavorite: existing.isFavorite,
                 displayName: existing.displayName,
                 templateSnapshot: usage.templateSnapshot ?? existing.templateSnapshot
             )
@@ -176,12 +177,7 @@ actor RecentCommandsService {
         }
 
         // 统一排序：与 loadCurrentFile() 语义一致
-        recentCommands.sort { lhs, rhs in
-            if lhs.lastUsedAt != rhs.lastUsedAt {
-                return lhs.lastUsedAt > rhs.lastUsedAt
-            }
-            return lhs.useCount > rhs.useCount
-        }
+        recentCommands = sortRecentCommands(recentCommands)
 
         if recentCommands.count > maxRecentCommandCount {
             recentCommands.removeLast(recentCommands.count - maxRecentCommandCount)
@@ -204,7 +200,18 @@ actor RecentCommandsService {
             var entry = recentCommands[index]
             entry.displayName = displayName
             recentCommands[index] = entry
-            try await saveRecentCommands(recentCommands)
+            try await saveRecentCommands(sortRecentCommands(recentCommands))
+        }
+    }
+
+    /// 更新收藏状态
+    func updateFavoriteState(_ entryId: UUID, isFavorite: Bool) async throws {
+        var recentCommands = await loadRecentCommands()
+        if let index = recentCommands.firstIndex(where: { $0.id == entryId }) {
+            var entry = recentCommands[index]
+            entry.isFavorite = isFavorite
+            recentCommands[index] = entry
+            try await saveRecentCommands(sortRecentCommands(recentCommands))
         }
     }
 
@@ -285,12 +292,7 @@ actor RecentCommandsService {
     private func loadCurrentFile() throws -> [RecentCommand] {
         let data = try Data(contentsOf: recentCommandsFile)
         let recentCommands = try decoder.decode([RecentCommand].self, from: data)
-        let sorted = recentCommands.sorted { lhs, rhs in
-            if lhs.lastUsedAt != rhs.lastUsedAt {
-                return lhs.lastUsedAt > rhs.lastUsedAt
-            }
-            return lhs.useCount > rhs.useCount
-        }
+        let sorted = sortRecentCommands(recentCommands)
         recentCommandsCache = sorted
         lastFileModificationDate = fileModificationDate(for: recentCommandsFile)
         return sorted
@@ -310,7 +312,24 @@ actor RecentCommandsService {
                     displayName: $0.displayName
                 )
             }
-            .sorted { $0.lastUsedAt > $1.lastUsedAt }
+            .sorted { lhs, rhs in
+                if lhs.isFavorite != rhs.isFavorite {
+                    return lhs.isFavorite && !rhs.isFavorite
+                }
+                return lhs.lastUsedAt > rhs.lastUsedAt
+            }
+    }
+
+    private func sortRecentCommands(_ recentCommands: [RecentCommand]) -> [RecentCommand] {
+        recentCommands.sorted { lhs, rhs in
+            if lhs.isFavorite != rhs.isFavorite {
+                return lhs.isFavorite && !rhs.isFavorite
+            }
+            if lhs.lastUsedAt != rhs.lastUsedAt {
+                return lhs.lastUsedAt > rhs.lastUsedAt
+            }
+            return lhs.useCount > rhs.useCount
+        }
     }
 
     private func fileModificationDate(for url: URL) -> Date? {

@@ -8,6 +8,26 @@
 import Foundation
 import Combine
 
+enum HistoryTimeFilter: String, CaseIterable {
+    case all = "全部"
+    case today = "今天"
+    case thisWeek = "本周"
+    case thisMonth = "本月"
+
+    func includes(_ date: Date, referenceDate: Date = Date(), calendar: Calendar = .current) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .today:
+            return calendar.isDate(date, inSameDayAs: referenceDate)
+        case .thisWeek:
+            return calendar.isDate(date, equalTo: referenceDate, toGranularity: .weekOfYear)
+        case .thisMonth:
+            return calendar.isDate(date, equalTo: referenceDate, toGranularity: .month)
+        }
+    }
+}
+
 /// 最近使用 ViewModel
 @MainActor
 class RecentCommandsViewModel: ObservableObject {
@@ -107,6 +127,18 @@ class RecentCommandsViewModel: ObservableObject {
         }
     }
 
+    /// 切换收藏状态
+    func toggleFavorite(_ entry: RecentCommand) {
+        Task {
+            do {
+                try await recentCommandsService.updateFavoriteState(entry.id, isFavorite: !entry.isFavorite)
+                loadRecentCommands()
+            } catch {
+                self.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     /// 清空所有最近使用
     func clearAll() {
         Task {
@@ -147,6 +179,42 @@ class RecentCommandsViewModel: ObservableObject {
     /// 最近一次失败的命令数
     var failureCount: Int {
         recentCommands.filter { !$0.wasSuccessful }.count
+    }
+
+    func filteredCommands(
+        searchText: String,
+        timeFilter: HistoryTimeFilter,
+        referenceDate: Date = Date(),
+        calendar: Calendar = .current
+    ) -> [RecentCommand] {
+        Self.filterCommands(
+            recentCommands,
+            searchText: searchText,
+            timeFilter: timeFilter,
+            referenceDate: referenceDate,
+            calendar: calendar
+        )
+    }
+
+    static func filterCommands(
+        _ commands: [RecentCommand],
+        searchText: String,
+        timeFilter: HistoryTimeFilter,
+        referenceDate: Date = Date(),
+        calendar: Calendar = .current
+    ) -> [RecentCommand] {
+        let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return commands.filter { entry in
+            guard timeFilter.includes(entry.lastUsedAt, referenceDate: referenceDate, calendar: calendar) else {
+                return false
+            }
+
+            guard !trimmedSearch.isEmpty else { return true }
+
+            return entry.title.localizedCaseInsensitiveContains(trimmedSearch) ||
+                entry.command.localizedCaseInsensitiveContains(trimmedSearch)
+        }
     }
 
     private func makeTemplateForSaving(_ entry: RecentCommand, name: String, category: String?) async -> Template {

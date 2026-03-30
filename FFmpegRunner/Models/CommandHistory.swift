@@ -41,6 +41,9 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
     /// 被使用的次数
     let useCount: Int
 
+    /// 是否已收藏/置顶
+    var isFavorite: Bool
+
     /// 用户自定义名称（可选）
     var displayName: String?
 
@@ -123,6 +126,7 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
         lastUsedAt: Date = Date(),
         wasSuccessful: Bool,
         useCount: Int = 1,
+        isFavorite: Bool = false,
         displayName: String? = nil,
         templateSnapshot: RecentCommandTemplateSnapshot? = nil
     ) {
@@ -133,6 +137,7 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
         self.lastUsedAt = lastUsedAt
         self.wasSuccessful = wasSuccessful
         self.useCount = useCount
+        self.isFavorite = isFavorite
         self.displayName = displayName
         self.templateSnapshot = templateSnapshot
     }
@@ -144,6 +149,7 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
         wasSuccessful: Bool,
         displayName: String? = nil,
         useCount: Int = 1,
+        isFavorite: Bool = false,
         templateSnapshot: RecentCommandTemplateSnapshot? = nil
     ) {
         let parsed = Self.parse(command: command)
@@ -155,9 +161,51 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
             lastUsedAt: executedAt,
             wasSuccessful: wasSuccessful,
             useCount: useCount,
+            isFavorite: isFavorite,
             displayName: displayName,
             templateSnapshot: templateSnapshot
         )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case executable
+        case arguments
+        case displayCommand
+        case lastUsedAt
+        case wasSuccessful
+        case useCount
+        case isFavorite
+        case displayName
+        case templateSnapshot
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        executable = try container.decode(CommandExecutable.self, forKey: .executable)
+        arguments = try container.decode([String].self, forKey: .arguments)
+        displayCommand = try container.decode(String.self, forKey: .displayCommand)
+        lastUsedAt = try container.decode(Date.self, forKey: .lastUsedAt)
+        wasSuccessful = try container.decode(Bool.self, forKey: .wasSuccessful)
+        useCount = try container.decode(Int.self, forKey: .useCount)
+        isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+        templateSnapshot = try container.decodeIfPresent(RecentCommandTemplateSnapshot.self, forKey: .templateSnapshot)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(executable, forKey: .executable)
+        try container.encode(arguments, forKey: .arguments)
+        try container.encode(displayCommand, forKey: .displayCommand)
+        try container.encode(lastUsedAt, forKey: .lastUsedAt)
+        try container.encode(wasSuccessful, forKey: .wasSuccessful)
+        try container.encode(useCount, forKey: .useCount)
+        try container.encode(isFavorite, forKey: .isFavorite)
+        try container.encodeIfPresent(displayName, forKey: .displayName)
+        try container.encodeIfPresent(templateSnapshot, forKey: .templateSnapshot)
     }
 
     // MARK: - Hashable
@@ -208,6 +256,7 @@ extension RecentCommand {
             lastUsedAt: Date().addingTimeInterval(-3600),
             wasSuccessful: true,
             useCount: 3,
+            isFavorite: true,
             displayName: "HEVC 转码"
         ),
         RecentCommand(

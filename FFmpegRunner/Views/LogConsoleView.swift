@@ -76,11 +76,13 @@ struct LogConsoleView: View {
                 autoScroll: $viewModel.autoScroll,
                 logFilter: $viewModel.logFilter,
                 searchText: $viewModel.searchText,
+                isRegexSearchEnabled: $viewModel.isRegexSearchEnabled,
                 onClear: viewModel.clearLogs,
                 onExport: { showExportSheet = true },
                 state: viewModel.state,
                 isFFmpegAvailable: viewModel.isFFmpegAvailable,
-                matchCount: viewModel.searchText.isEmpty ? nil : viewModel.visibleLogs.count
+                matchCount: viewModel.searchText.isEmpty ? nil : viewModel.visibleLogs.count,
+                regexSearchError: viewModel.regexSearchError
             )
 
             Divider()
@@ -114,11 +116,13 @@ struct ConsoleHeaderView: View {
     @Binding var autoScroll: Bool
     @Binding var logFilter: LogFilter
     @Binding var searchText: String
+    @Binding var isRegexSearchEnabled: Bool
     let onClear: () -> Void
     let onExport: () -> Void
     let state: ExecutionState
     let isFFmpegAvailable: Bool
     let matchCount: Int?
+    let regexSearchError: String?
 
     @State private var showClearConfirm = false
     @State private var showSearch = false
@@ -224,36 +228,56 @@ struct ConsoleHeaderView: View {
             .padding(.vertical, 8)
 
             if showSearch {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                        .font(.caption)
-
-                    TextField("搜索日志...", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .font(.system(.caption, design: .monospaced))
-                        .focused($isSearchFocused)
-                        .onExitCommand {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                showSearch = false
-                                searchText = ""
-                            }
-                        }
-
-                    if let count = matchCount {
-                        Text("\(count) 条匹配")
-                            .font(.caption2)
+                VStack(spacing: 6) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
                             .foregroundColor(.secondary)
-                    }
+                            .font(.caption)
 
-                    if !searchText.isEmpty {
-                        Button {
-                            searchText = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
+                        TextField(isRegexSearchEnabled ? "输入正则表达式..." : "搜索日志...", text: $searchText)
+                            .textFieldStyle(.plain)
+                            .font(.system(.caption, design: .monospaced))
+                            .focused($isSearchFocused)
+                            .onExitCommand {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    showSearch = false
+                                    searchText = ""
+                                }
+                            }
+
+                        Toggle(isOn: $isRegexSearchEnabled) {
+                            Text(".*")
+                                .font(.system(.caption, design: .monospaced))
+                        }
+                        .toggleStyle(.button)
+                        .help("切换为正则搜索")
+
+                        if let count = matchCount {
+                            Text("\(count) 条匹配")
+                                .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
-                        .buttonStyle(.plain)
+
+                        if !searchText.isEmpty {
+                            Button {
+                                searchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    if let regexSearchError {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption2)
+                            Text(regexSearchError)
+                                .font(.caption2)
+                        }
+                        .foregroundColor(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding(.horizontal)

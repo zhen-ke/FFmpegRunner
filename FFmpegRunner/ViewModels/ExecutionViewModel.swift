@@ -41,8 +41,14 @@ class ExecutionViewModel: ObservableObject {
     /// 日志搜索关键字
     @Published var searchText: String = ""
 
+    /// 是否启用正则搜索
+    @Published var isRegexSearchEnabled = false
+
     /// 过滤后的日志（缓存结果，避免每次 body 刷新都重新过滤）
     @Published private(set) var visibleLogs: [LogEntry] = []
+
+    /// 当前正则搜索错误
+    @Published private(set) var regexSearchError: String?
 
     /// 最近的执行结果
     @Published private(set) var lastResult: ExecutionResult?
@@ -192,27 +198,19 @@ class ExecutionViewModel: ObservableObject {
 
         // 监听 logs、filter、searchText 变化，使用 throttle 防抖处理
         // 避免每次 body 刷新都重新过滤整个日志数组
-        Publishers.CombineLatest3($logs, $logFilter, $searchText)
+        Publishers.CombineLatest4($logs, $logFilter, $searchText, $isRegexSearchEnabled)
             .throttle(for: .milliseconds(100), scheduler: RunLoop.main, latest: true)
-            .map { logs, filter, search -> [LogEntry] in
-                var result: [LogEntry]
-                switch filter {
-                case .all:
-                    result = logs
-                case .important:
-                    result = logs.filter { $0.level == .error || $0.level == .warning }
-                case .noDebug:
-                    result = logs.filter { $0.level != .debug }
-                }
-                // 应用文本搜索
-                if !search.isEmpty {
-                    result = result.filter {
-                        $0.message.localizedCaseInsensitiveContains(search)
-                    }
-                }
-                return result
+            .sink { [weak self] logs, filter, search, isRegexSearchEnabled in
+                let result = Self.filterLogs(
+                    logs,
+                    filter: filter,
+                    searchText: search,
+                    isRegexSearchEnabled: isRegexSearchEnabled
+                )
+                self?.visibleLogs = result.logs
+                self?.regexSearchError = result.errorMessage
             }
-            .assign(to: &$visibleLogs)
+            .store(in: &cancellables)
     }
 
     // MARK: - Public Methods (Delegate to Controller)
@@ -356,10 +354,51 @@ class ExecutionViewModel: ObservableObject {
         logs = []
         visibleLogs = []
         searchText = ""
+        regexSearchError = nil
         lastProgressLogTime = nil
         lastPersistedProgressLogTime = nil
         progress = nil
         persistedLogs = []
+    }
+
+    static func filterLogs(
+        _ logs: [LogEntry],
+        filter: LogFilter,
+        searchText: String,
+        isRegexSearchEnabled: Bool
+    ) -> (logs: [LogEntry], errorMessage: String?) {
+        let levelFiltered: [LogEntry]
+        switch filter {
+        case .all:
+            levelFiltered = logs
+        case .important:
+            levelFiltered = logs.filter { $0.level == .error || $0.level == .warning }
+        case .noDebug:
+            levelFiltered = logs.filter { $0.level != .debug }
+        }
+
+        let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSearch.isEmpty else {
+            return (levelFiltered, nil)
+        }
+
+        guard isRegexSearchEnabled else {
+            return (
+                levelFiltered.filter { $0.message.localizedCaseInsensitiveContains(trimmedSearch) },
+                nil
+            )
+        }
+
+        do {
+            let regex = try NSRegularExpression(pattern: trimmedSearch, options: [.caseInsensitive])
+            let matched = levelFiltered.filter { entry in
+                let range = NSRange(entry.message.startIndex..<entry.message.endIndex, in: entry.message)
+                return regex.firstMatch(in: entry.message, options: [], range: range) != nil
+            }
+            return (matched, nil)
+        } catch {
+            return (levelFiltered, "正则无效: \(error.localizedDescription)")
+        }
     }
 
     /// 添加日志条目
