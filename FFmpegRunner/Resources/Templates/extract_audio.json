@@ -4,7 +4,7 @@
   "description": "从视频中提取音频流，支持 MP3/AAC/FLAC/WAV",
   "category": "音频处理",
   "icon": "speaker.wave.2.fill",
-  "commandTemplate": "ffmpeg -i {{input}} -vn -c:a {{codec}} -b:a {{bitrate}} -ac 2 -y {{output}}",
+  "commandTemplate": "ffmpeg -i {{input}} -vn -c:a {{codec}} {{bitrateArg}} -ac 2 -y {{output}}",
   "parameters": [
     {
       "key": "input",
@@ -36,21 +36,39 @@
           "aac",
           "flac",
           "pcm_s16le"
+        ],
+        "optionLabels": [
+          "MP3",
+          "AAC",
+          "FLAC (无损)",
+          "WAV (无损)"
         ]
       }
     },
     {
-      "key": "bitrate",
-      "label": "比特率 (仅有损格式有效)",
+      "key": "bitrateArg",
+      "label": "比特率",
       "type": "select",
-      "defaultValue": "192k",
+      "defaultValue": "-b:a 192k",
       "isRequired": true,
       "constraints": {
         "options": [
-          "128k",
-          "192k",
-          "320k"
+          "-b:a 128k",
+          "-b:a 192k",
+          "-b:a 320k"
+        ],
+        "optionLabels": [
+          "128 kbps",
+          "192 kbps",
+          "320 kbps"
         ]
+      },
+      "uiHint": {
+        "visibleWhen": {
+          "key": "codec",
+          "operator": "in",
+          "values": ["libmp3lame", "aac"]
+        }
       }
     },
     {

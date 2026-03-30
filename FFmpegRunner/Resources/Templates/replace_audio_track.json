@@ -4,7 +4,7 @@
   "description": "为视频替换新的音轨，保持画面不变",
   "category": "音频处理",
   "icon": "waveform",
-  "commandTemplate": "ffmpeg -i {{video}} -i {{audio}} -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a {{audioBitrate}} -shortest -movflags +faststart -y {{output}}",
+  "commandTemplate": "ffmpeg -i {{video}} -i {{audio}} -map 0:v:0 -map 1:a:0 -c:v copy -c:a {{audioCodec}} {{audioBitrateArg}} -shortest -movflags +faststart -y {{output}}",
   "parameters": [
     {
       "key": "video",
@@ -46,20 +46,50 @@
       }
     },
     {
-      "key": "audioBitrate",
-      "label": "音频码率",
+      "key": "audioCodec",
+      "label": "音频编码",
       "type": "select",
-      "defaultValue": "192k",
-      "placeholder": null,
+      "defaultValue": "aac",
       "isRequired": true,
       "constraints": {
         "options": [
-          "96k",
-          "128k",
-          "192k",
-          "256k",
-          "320k"
+          "aac",
+          "copy"
+        ],
+        "optionLabels": [
+          "AAC (重新编码)",
+          "直接复制 (不转码)"
         ]
+      }
+    },
+    {
+      "key": "audioBitrateArg",
+      "label": "音频码率",
+      "type": "select",
+      "defaultValue": "-b:a 192k",
+      "isRequired": true,
+      "constraints": {
+        "options": [
+          "-b:a 96k",
+          "-b:a 128k",
+          "-b:a 192k",
+          "-b:a 256k",
+          "-b:a 320k"
+        ],
+        "optionLabels": [
+          "96 kbps",
+          "128 kbps",
+          "192 kbps",
+          "256 kbps",
+          "320 kbps"
+        ]
+      },
+      "uiHint": {
+        "visibleWhen": {
+          "key": "audioCodec",
+          "operator": "notEquals",
+          "values": ["copy"]
+        }
       }
     },
     {
