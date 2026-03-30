@@ -56,6 +56,11 @@ protocol RenderContext {
     /// - Parameter key: 参数键名
     /// - Returns: 拼接模式（token/inline）
     func argumentMode(forKey key: String) -> ArgumentMode
+
+    /// 判断指定 key 是否应从缺失占位符检查中排除
+    /// - Parameter key: 参数键名
+    /// - Returns: true 表示空值是预期行为
+    func shouldIgnoreMissingPlaceholder(forKey key: String) -> Bool
 }
 
 // MARK: - Context Implementations
@@ -81,6 +86,10 @@ struct TemplateValueContext: RenderContext {
 
     func argumentMode(forKey key: String) -> ArgumentMode {
         argumentModes[key] ?? .token // 默认是 token 模式
+    }
+
+    func shouldIgnoreMissingPlaceholder(forKey key: String) -> Bool {
+        false
     }
 }
 
@@ -123,6 +132,10 @@ struct ParameterBindingContext: RenderContext {
     func argumentMode(forKey key: String) -> ArgumentMode {
         bindingDict[key]?.parameter.argumentMode ?? .token // 默认是 token 模式
     }
+
+    func shouldIgnoreMissingPlaceholder(forKey key: String) -> Bool {
+        conditionallyHiddenKeys.contains(key)
+    }
 }
 
 /// 基于简单字典的渲染上下文
@@ -143,6 +156,10 @@ struct SimpleValueContext: RenderContext {
 
     func argumentMode(forKey key: String) -> ArgumentMode {
         .token // 简单字典默认为 token 模式
+    }
+
+    func shouldIgnoreMissingPlaceholder(forKey key: String) -> Bool {
+        false
     }
 }
 
@@ -342,14 +359,19 @@ struct CommandRenderer {
             }
 
             // ③ Missing 检查（去重）
-            if seenKeys.insert(key).inserted && isEmpty {
+            if seenKeys.insert(key).inserted &&
+                isEmpty &&
+                !context.shouldIgnoreMissingPlaceholder(forKey: key) {
                 missing.append(key)
             }
 
             // ④ Display 路径：处理占位符值
             if isEmpty {
-                // 空值保留原始占位符，与执行语义对齐
-                display.append("{{\(key)}}")
+                // 条件隐藏的参数在预览中直接省略，避免误导用户
+                if !context.shouldIgnoreMissingPlaceholder(forKey: key) {
+                    // 其他空值保留原始占位符，明确提示仍有参数未填写
+                    display.append("{{\(key)}}")
+                }
             } else if !context.shouldSkipEscape(forKey: key) {
                 display.append(escapeForDisplay(value))
             } else {

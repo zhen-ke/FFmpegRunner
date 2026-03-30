@@ -66,6 +66,8 @@
       "key": "audioBitrateArg",
       "label": "音频码率",
       "type": "select",
+      "role": "raw",
+      "escapeStrategy": "raw",
       "defaultValue": "-b:a 192k",
       "isRequired": true,
       "constraints": {

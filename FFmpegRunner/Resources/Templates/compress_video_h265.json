@@ -4,7 +4,7 @@
   "description": "使用 H.265/HEVC 编码压缩视频，体积更小，兼容性优化",
   "category": "视频处理",
   "icon": "video.fill",
-  "commandTemplate": "ffmpeg -i {{input}} -c:v libx265 -crf {{crf}} -preset {{preset}} -tag:v hvc1 -pix_fmt yuv420p -movflags +faststart -c:a {{audioMode}} {{audioBitrateArg}} -ac 2 -y {{output}}",
+  "commandTemplate": "ffmpeg -i {{input}} -c:v libx265 -crf {{crf}} -preset {{preset}} -tag:v hvc1 -pix_fmt yuv420p -movflags +faststart -c:a {{audioMode}} {{audioBitrateArg}} -y {{output}}",
   "parameters": [
     {
       "key": "input",
@@ -80,6 +80,8 @@
       "key": "audioBitrateArg",
       "label": "音频码率",
       "type": "select",
+      "role": "raw",
+      "escapeStrategy": "raw",
       "defaultValue": "-b:a 128k",
       "isRequired": true,
       "constraints": {

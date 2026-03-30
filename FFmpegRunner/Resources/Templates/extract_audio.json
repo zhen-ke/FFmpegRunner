@@ -49,6 +49,8 @@
       "key": "bitrateArg",
       "label": "比特率",
       "type": "select",
+      "role": "raw",
+      "escapeStrategy": "raw",
       "defaultValue": "-b:a 192k",
       "isRequired": true,
       "constraints": {

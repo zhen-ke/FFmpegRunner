@@ -417,6 +417,66 @@ final class SplitCommandTests: XCTestCase {
         XCTAssertEqual(plan.arguments, ["-v", "error", "-show_streams", "input.mp4"])
     }
 
+    func testRenderToCommandSplitsRawSelectOptionIntoSeparateArguments() {
+        let template = Template(
+            id: "t-audio-mode",
+            name: "Audio Mode",
+            description: "Audio encoding template",
+            commandTemplate: "ffmpeg -i {{input}} -c:a {{audioMode}} {{audioBitrateArg}} {{output}}",
+            parameters: [
+                TemplateParameter(
+                    key: "input",
+                    label: "Input",
+                    type: .string,
+                    isRequired: true
+                ),
+                TemplateParameter(
+                    key: "audioMode",
+                    label: "Audio Mode",
+                    type: .select,
+                    defaultValue: "aac",
+                    isRequired: true,
+                    constraints: TemplateParameter.Constraints(options: ["aac", "copy"])
+                ),
+                TemplateParameter(
+                    key: "audioBitrateArg",
+                    label: "Audio Bitrate",
+                    type: .select,
+                    defaultValue: "-b:a 128k",
+                    isRequired: true,
+                    constraints: TemplateParameter.Constraints(options: ["-b:a 128k"]),
+                    role: .raw,
+                    escapeStrategy: .raw
+                ),
+                TemplateParameter(
+                    key: "output",
+                    label: "Output",
+                    type: .string,
+                    defaultValue: "out.mp4",
+                    isRequired: true
+                )
+            ],
+            category: nil,
+            icon: nil
+        )
+
+        let rendered = CommandRenderer.renderToCommand(
+            template: template,
+            values: [
+                TemplateValue(key: "input", rawValue: "clip.mov"),
+                TemplateValue(key: "audioMode", rawValue: "aac"),
+                TemplateValue(key: "audioBitrateArg", rawValue: "-b:a 128k"),
+                TemplateValue(key: "output", rawValue: "clip.mp4")
+            ]
+        )
+
+        XCTAssertEqual(
+            rendered.arguments,
+            ["-i", "clip.mov", "-c:a", "aac", "-b:a", "128k", "clip.mp4"]
+        )
+        XCTAssertTrue(rendered.isComplete)
+    }
+
     func testCommandPlannerRejectsMalformedRawCommand() {
         XCTAssertThrowsError(try CommandPlanner.prepare(command: "ffmpeg -i \"input.mp4")) { error in
             guard case CommandPlannerError.validationFailed = error else {
@@ -761,6 +821,29 @@ final class CommandPreviewViewModelTests: XCTestCase {
         XCTAssertEqual(previewViewModel.highlightedCommand, AttributedString(""))
     }
 
+    func testPreviewTreatsConditionallyHiddenParametersAsComplete() async {
+        let detailViewModel = TemplateDetailViewModel(template: makeConditionalAudioTemplate())
+        let previewViewModel = CommandPreviewViewModel(detailViewModel: detailViewModel)
+
+        detailViewModel.updateValue(key: "input", value: "clip.mov")
+        detailViewModel.updateValue(key: "output", value: "clip.mp4")
+        detailViewModel.updateValue(key: "audioMode", value: "copy")
+        await settlePreviewPipeline()
+
+        XCTAssertTrue(detailViewModel.canExecute)
+        XCTAssertTrue(previewViewModel.isComplete)
+        XCTAssertEqual(previewViewModel.missingPlaceholders, [])
+        XCTAssertEqual(
+            previewViewModel.renderedCommand,
+            "ffmpeg -i clip.mov -c:a copy  clip.mp4"
+        )
+        XCTAssertFalse(previewViewModel.renderedCommand.contains("{{audioBitrateArg}}"))
+        XCTAssertEqual(
+            previewViewModel.currentCommand?.arguments,
+            ["-i", "clip.mov", "-c:a", "copy", "clip.mp4"]
+        )
+    }
+
     private func makeEncodeTemplate() -> Template {
         Template(
             id: "encode",
@@ -779,6 +862,56 @@ final class CommandPreviewViewModelTests: XCTestCase {
                     label: "Output",
                     type: .string,
                     defaultValue: "out.mp4",
+                    isRequired: true
+                )
+            ],
+            category: nil,
+            icon: nil
+        )
+    }
+
+    private func makeConditionalAudioTemplate() -> Template {
+        Template(
+            id: "conditional-audio",
+            name: "Conditional Audio",
+            description: "Conditional audio bitrate template",
+            commandTemplate: "ffmpeg -i {{input}} -c:a {{audioMode}} {{audioBitrateArg}} {{output}}",
+            parameters: [
+                TemplateParameter(
+                    key: "input",
+                    label: "Input",
+                    type: .string,
+                    isRequired: true
+                ),
+                TemplateParameter(
+                    key: "audioMode",
+                    label: "Audio Mode",
+                    type: .select,
+                    defaultValue: "aac",
+                    isRequired: true,
+                    constraints: TemplateParameter.Constraints(options: ["aac", "copy"])
+                ),
+                TemplateParameter(
+                    key: "audioBitrateArg",
+                    label: "Audio Bitrate",
+                    type: .select,
+                    defaultValue: "-b:a 128k",
+                    isRequired: true,
+                    constraints: TemplateParameter.Constraints(options: ["-b:a 128k"]),
+                    role: .raw,
+                    escapeStrategy: .raw,
+                    uiHint: ParameterUIHint(
+                        visibleWhen: ParameterVisibility(
+                            key: "audioMode",
+                            operator: .notEquals,
+                            values: ["copy"]
+                        )
+                    )
+                ),
+                TemplateParameter(
+                    key: "output",
+                    label: "Output",
+                    type: .string,
                     isRequired: true
                 )
             ],
