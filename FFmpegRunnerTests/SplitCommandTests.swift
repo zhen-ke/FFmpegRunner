@@ -748,12 +748,133 @@ final class SplitCommandTests: XCTestCase {
         )
     }
 
+    func testLogPersistenceServiceCreatesUniqueFilenamesForSameTimestamp() async throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("log-persistence-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let service = LogPersistenceService(logDirectoryURL: sandbox)
+        let fixedDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let logs = [LogEntry(timestamp: fixedDate, level: .info, message: "hello")]
+
+        try await service.saveLogs(logs, command: "ffmpeg -version", templateName: "测试模板", exitCode: 0, date: fixedDate)
+        try await service.saveLogs(logs, command: "ffmpeg -version", templateName: "测试模板", exitCode: 0, date: fixedDate)
+
+        let savedLogs = try await service.listSavedLogs()
+        XCTAssertEqual(savedLogs.count, 2)
+        XCTAssertEqual(Set(savedLogs.map(\.fileName)).count, 2)
+    }
+
+    @MainActor
+    func testExecutionViewModelAutoSavePersistsCurrentCommandAndUntrimmedLogs() async throws {
+        let scriptPath = try makeExecutableScript(body: """
+        #!/bin/sh
+        echo "stdout line"
+        echo "stderr line" 1>&2
+        echo "stdout tail"
+        exit 0
+        """)
+        defer { try? FileManager.default.removeItem(atPath: scriptPath) }
+
+        let logDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("execution-log-persistence-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: logDirectory) }
+
+        let originalSource = UserSettings.shared.ffmpegSource
+        let originalCustomPath = UserSettings.shared.customFFmpegPath
+        let originalAutoSaveLog = UserSettings.shared.autoSaveLog
+        let originalMaxSavedLogs = UserSettings.shared.maxSavedLogs
+        let originalMaxLogEntries = UserSettings.shared.maxLogEntries
+        defer {
+            UserSettings.shared.ffmpegSource = originalSource
+            UserSettings.shared.customFFmpegPath = originalCustomPath
+            UserSettings.shared.autoSaveLog = originalAutoSaveLog
+            UserSettings.shared.maxSavedLogs = originalMaxSavedLogs
+            UserSettings.shared.maxLogEntries = originalMaxLogEntries
+        }
+
+        UserSettings.shared.autoSaveLog = true
+        UserSettings.shared.maxSavedLogs = 20
+        UserSettings.shared.maxLogEntries = 1
+
+        let resolver = MockControllerPathResolver(
+            bundledPath: nil,
+            systemPathValue: nil
+        )
+        let ffmpegService = FFmpegService.makeForTesting(pathResolver: resolver)
+        ffmpegService.setSource(.custom, customPath: scriptPath)
+
+        let readyDeadline = Date().addingTimeInterval(1.0)
+        while Date() < readyDeadline, ffmpegService.ffmpegPath != scriptPath {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(ffmpegService.ffmpegPath, scriptPath)
+
+        let controller = ExecutionController(ffmpegService: ffmpegService)
+        let logService = LogPersistenceService(logDirectoryURL: logDirectory)
+        let viewModel = ExecutionViewModel(
+            controller: controller,
+            logPersistenceService: logService
+        )
+
+        let template = Template(
+            id: "persist-template",
+            name: "Persist Template",
+            description: "Persist logs",
+            commandTemplate: "ffmpeg -i {{input}} {{output}}",
+            parameters: [
+                TemplateParameter(key: "input", label: "Input", type: .string, isRequired: true),
+                TemplateParameter(key: "output", label: "Output", type: .string, isRequired: true)
+            ],
+            category: nil,
+            icon: nil
+        )
+        let binding = TemplateBinding.bind(
+            template: template,
+            values: [
+                TemplateValue(key: "input", rawValue: "clip.mov"),
+                TemplateValue(key: "output", rawValue: "clip.mp4")
+            ]
+        )
+
+        await viewModel.execute(binding: binding)
+
+        let savedLogs = try await waitForSavedLogs(service: logService, expectedCount: 1)
+        let savedLog = try XCTUnwrap(savedLogs.first)
+        let content = try await logService.loadLog(at: savedLog.id)
+        let exported = viewModel.exportLogs()
+
+        XCTAssertTrue(content.contains("命令: ffmpeg -i clip.mov clip.mp4"))
+        XCTAssertTrue(content.contains("stdout line"))
+        XCTAssertTrue(content.contains("stderr line"))
+        XCTAssertTrue(content.contains("stdout tail"))
+        XCTAssertTrue(exported.contains("stdout line"))
+        XCTAssertTrue(exported.contains("stderr line"))
+        XCTAssertTrue(exported.contains("stdout tail"))
+    }
+
     private func makeExecutableScript(body: String) throws -> String {
         let name = "split-command-controller-\(UUID().uuidString).sh"
         let path = FileManager.default.temporaryDirectory.appendingPathComponent(name).path
         try body.write(toFile: path, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
         return path
+    }
+
+    private func waitForSavedLogs(
+        service: LogPersistenceService,
+        expectedCount: Int
+    ) async throws -> [SavedLogInfo] {
+        let deadline = Date().addingTimeInterval(2.0)
+        while Date() < deadline {
+            let savedLogs = try await service.listSavedLogs()
+            if savedLogs.count >= expectedCount {
+                return savedLogs
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        return try await service.listSavedLogs()
     }
 }
 

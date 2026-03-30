@@ -122,6 +122,7 @@ struct ConsoleHeaderView: View {
 
     @State private var showClearConfirm = false
     @State private var showSearch = false
+    @State private var showLogHistory = false
     @FocusState private var isSearchFocused: Bool
 
     var body: some View {
@@ -191,6 +192,17 @@ struct ConsoleHeaderView: View {
                 }
                 .buttonStyle(.bordered)
                 .help("导出日志")
+
+                Button {
+                    showLogHistory.toggle()
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
+                .buttonStyle(.bordered)
+                .help("历史日志")
+                .popover(isPresented: $showLogHistory, arrowEdge: .bottom) {
+                    LogHistoryPopover()
+                }
 
                 Button {
                     showClearConfirm = true
@@ -1219,6 +1231,186 @@ struct LogDocument: FileDocument {
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         FileWrapper(regularFileWithContents: content.data(using: .utf8) ?? Data())
+    }
+}
+
+// MARK: - LogHistoryPopover
+
+struct LogHistoryPopover: View {
+    @State private var savedLogs: [SavedLogInfo] = []
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // 标题栏
+            HStack {
+                Label("历史日志", systemImage: "clock.arrow.circlepath")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    Task {
+                        await loadSavedLogs()
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("刷新列表")
+
+                Button {
+                    let url = LogPersistenceService.shared.logDirectoryURL
+                    try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                    NSWorkspace.shared.open(url)
+                } label: {
+                    Image(systemName: "folder")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("在 Finder 中打开日志目录")
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            // 内容
+            if isLoading {
+                VStack {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("加载中...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error = errorMessage {
+                VStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if savedLogs.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    Text("暂无已保存的日志")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("执行命令后会自动保存日志")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 1) {
+                        ForEach(savedLogs) { logInfo in
+                            LogHistoryRow(info: logInfo) {
+                                await delete(logInfo)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .frame(width: 360, height: 400)
+        .task {
+            await loadSavedLogs()
+        }
+    }
+
+    @MainActor
+    private func loadSavedLogs() async {
+        isLoading = true
+        errorMessage = nil
+        do {
+            savedLogs = try await LogPersistenceService.shared.listSavedLogs()
+        } catch {
+            errorMessage = "加载失败: \(error.localizedDescription)"
+        }
+        isLoading = false
+    }
+
+    @MainActor
+    private func delete(_ logInfo: SavedLogInfo) async {
+        do {
+            try await LogPersistenceService.shared.deleteLog(at: logInfo.id)
+            savedLogs.removeAll { $0.id == logInfo.id }
+        } catch {
+            errorMessage = "删除失败: \(error.localizedDescription)"
+        }
+    }
+}
+
+// MARK: - LogHistoryRow
+
+private struct LogHistoryRow: View {
+    let info: SavedLogInfo
+    let onDelete: @Sendable () async -> Void
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MM-dd HH:mm"
+        return f
+    }()
+
+    private static let byteCountFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        return f
+    }()
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(info.templateName ?? "自由命令")
+                    .font(.system(.body, design: .default))
+                    .lineLimit(1)
+
+                HStack(spacing: 8) {
+                    Text(Self.dateFormatter.string(from: info.date))
+                    Text(Self.byteCountFormatter.string(fromByteCount: info.fileSize))
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                NSWorkspace.shared.activateFileViewerSelecting([info.id])
+            } label: {
+                Image(systemName: "arrow.right.circle")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("在 Finder 中显示")
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("在 Finder 中显示") {
+                NSWorkspace.shared.activateFileViewerSelecting([info.id])
+            }
+            Button("用默认编辑器打开") {
+                NSWorkspace.shared.open(info.id)
+            }
+            Divider()
+            Button("删除", role: .destructive) {
+                Task {
+                    await onDelete()
+                }
+            }
+        }
     }
 }
 

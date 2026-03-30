@@ -105,6 +105,9 @@ class ExecutionViewModel: ObservableObject {
     /// 执行控制器 (Application Layer)
     private let controller: ExecutionController
 
+    /// 日志持久化服务
+    private let logPersistenceService: LogPersistenceService
+
     /// Combine 订阅
     private var cancellables = Set<AnyCancellable>()
 
@@ -118,10 +121,26 @@ class ExecutionViewModel: ObservableObject {
     /// 上次进度日志更新时间
     private var lastProgressLogTime: Date?
 
+    /// 持久化/导出日志的进度合并时间
+    private var lastPersistedProgressLogTime: Date?
+
+    /// 当前执行的模板名称（用于日志持久化文件名）
+    private var currentTemplateName: String?
+
+    /// 当前执行的命令字符串（用于日志持久化）
+    private var currentCommand: String?
+
+    /// 用于日志持久化的完整日志快照，不受控制台裁剪影响
+    private var persistedLogs: [LogEntry] = []
+
     // MARK: - Initialization
 
-    init(controller: ExecutionController? = nil) {
+    init(
+        controller: ExecutionController? = nil,
+        logPersistenceService: LogPersistenceService = .shared
+    ) {
         self.controller = controller ?? ExecutionController()
+        self.logPersistenceService = logPersistenceService
 
         setupBindings()
     }
@@ -131,10 +150,16 @@ class ExecutionViewModel: ObservableObject {
         controller.$state
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newState in
-                self?.state = newState
+                guard let self else { return }
+                let previousState = self.state
+                self.state = newState
                 // 执行结束后清除进度（保留最终快照一小段时间供 UI 过渡）
                 if newState.isTerminal {
-                    self?.progress = nil
+                    self.progress = nil
+                }
+                // 执行结束时自动保存日志（从运行状态 → 终态，排除 idle → idle）
+                if newState.isTerminal && previousState.isRunning {
+                    self.autoSaveLogsIfNeeded(state: newState)
                 }
             }
             .store(in: &cancellables)
@@ -207,6 +232,8 @@ class ExecutionViewModel: ObservableObject {
         guard !isRunning else { return }
 
         clearLogs()
+        currentTemplateName = nil
+        currentCommand = command
 
         do {
             let result = try await controller.execute(command: command)
@@ -226,6 +253,7 @@ class ExecutionViewModel: ObservableObject {
         values: [TemplateValue],
         forceOverwrite: Bool = false
     ) async {
+        currentTemplateName = template.name
         let binding = TemplateBinding.bind(template: template, values: values)
         await execute(binding: binding, forceOverwrite: forceOverwrite)
     }
@@ -238,6 +266,8 @@ class ExecutionViewModel: ObservableObject {
         guard !isRunning else { return }
 
         clearLogs()
+        currentTemplateName = binding.template.name
+        currentCommand = CommandPlanner.preview(binding: binding).displayString
 
         do {
             let result = try await controller.execute(
@@ -268,6 +298,8 @@ class ExecutionViewModel: ObservableObject {
         guard !isRunning else { return }
 
         clearLogs()
+        currentTemplateName = nil
+        currentCommand = displayCommand
 
         do {
             let result = try await controller.execute(
@@ -300,6 +332,11 @@ class ExecutionViewModel: ObservableObject {
     func reset() {
         controller.reset()
         lastResult = nil
+        currentTemplateName = nil
+        currentCommand = nil
+        persistedLogs = []
+        lastProgressLogTime = nil
+        lastPersistedProgressLogTime = nil
     }
 
     /// 设置 FFmpeg 来源
@@ -320,26 +357,40 @@ class ExecutionViewModel: ObservableObject {
         visibleLogs = []
         searchText = ""
         lastProgressLogTime = nil
+        lastPersistedProgressLogTime = nil
         progress = nil
+        persistedLogs = []
     }
 
     /// 添加日志条目
     func appendLog(_ entry: LogEntry) {
-        if entry.isProgress, shouldCoalesceProgressLogs {
-            let now = entry.timestamp
-            if let lastIndex = logs.indices.last,
-               logs[lastIndex].isProgress,
-               let lastTime = lastProgressLogTime,
-               now.timeIntervalSince(lastTime) < progressCoalesceInterval {
-                logs[lastIndex] = entry.withId(logs[lastIndex].id)
-                lastProgressLogTime = now
-                return
-            }
-            lastProgressLogTime = now
+        append(entry, to: &persistedLogs, lastProgressTime: &lastPersistedProgressLogTime)
+        append(entry, to: &logs, lastProgressTime: &lastProgressLogTime)
+        trimLogsIfNeeded()
+    }
+
+    private func append(
+        _ entry: LogEntry,
+        to storage: inout [LogEntry],
+        lastProgressTime: inout Date?
+    ) {
+        guard entry.isProgress, shouldCoalesceProgressLogs else {
+            storage.append(entry)
+            return
         }
 
-        logs.append(entry)
-        trimLogsIfNeeded()
+        let now = entry.timestamp
+        if let lastIndex = storage.indices.last,
+           storage[lastIndex].isProgress,
+           let lastTime = lastProgressTime,
+           now.timeIntervalSince(lastTime) < progressCoalesceInterval {
+            storage[lastIndex] = entry.withId(storage[lastIndex].id)
+            lastProgressTime = now
+            return
+        }
+
+        lastProgressTime = now
+        storage.append(entry)
     }
 
     private func trimLogsIfNeeded() {
@@ -371,7 +422,55 @@ class ExecutionViewModel: ObservableObject {
 
     /// 导出日志
     func exportLogs() -> String {
-        logs.map { (entry: LogEntry) -> String in entry.displayString }.joined(separator: "\n")
+        persistedLogs.map { (entry: LogEntry) -> String in entry.displayString }.joined(separator: "\n")
+    }
+
+    // MARK: - Log Persistence (Auto-Save)
+
+    /// 自动保存日志到磁盘
+    private func autoSaveLogsIfNeeded(state: ExecutionState) {
+        guard UserSettings.shared.autoSaveLog else { return }
+        guard !logs.isEmpty else { return }
+
+        // 提取执行结果信息
+        let exitCode: Int32?
+        switch state {
+        case .completed(let result):
+            exitCode = result.exitCode
+        case .cancelled:
+            exitCode = nil
+        case .error:
+            exitCode = nil
+        default:
+            return  // 非终态不保存
+        }
+
+        let command: String
+        switch state {
+        case .completed(let result):
+            command = result.command
+        default:
+            command = currentCommand ?? lastResult?.command ?? "未知命令"
+        }
+        let templateName = currentTemplateName
+        let logsSnapshot = persistedLogs.filter { !$0.isProgress }
+        let maxSaved = max(UserSettings.shared.maxSavedLogs, 1)
+        let service = logPersistenceService
+
+        Task.detached {
+            do {
+                try await service.saveLogs(
+                    logsSnapshot,
+                    command: command,
+                    templateName: templateName,
+                    exitCode: exitCode
+                )
+                // 清理超出上限的旧日志
+                try await service.cleanupOldLogs(keeping: maxSaved)
+            } catch {
+                AppLogger.notice(AppLogger.general, "日志自动保存失败: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - Backward Compatibility

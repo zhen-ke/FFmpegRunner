@@ -75,6 +75,14 @@ class UserSettings: ObservableObject {
     /// 最近使用的输出目录
     @AppStorage("lastOutputDirectory") var lastOutputDirectory: String = ""
 
+    // MARK: - 日志持久化设置
+
+    /// 自动保存执行日志
+    @AppStorage("autoSaveLog") var autoSaveLog: Bool = true
+
+    /// 最大保存日志文件数
+    @AppStorage("maxSavedLogs") var maxSavedLogs: Int = 50
+
     // MARK: - 安全沙箱设置
 
     /// 是否已确认首次运行安全警告
@@ -106,6 +114,8 @@ class UserSettings: ObservableObject {
         lastTemplateId = ""
         lastInputDirectory = ""
         lastOutputDirectory = ""
+        autoSaveLog = true
+        maxSavedLogs = 50
         hasAcknowledgedSafetyWarning = false
         showCommandPreviewBeforeRun = true
     }

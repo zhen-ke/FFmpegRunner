@@ -34,8 +34,11 @@ struct SettingsView: View {
     @AppStorage("lastInputDirectory") private var lastInputDirectory = ""
     @AppStorage("lastOutputDirectory") private var lastOutputDirectory = ""
     @AppStorage("hasAcknowledgedSafetyWarning") private var hasAcknowledgedSafetyWarning = false
+    @AppStorage("autoSaveLog") private var autoSaveLog = true
+    @AppStorage("maxSavedLogs") private var maxSavedLogs = 50
 
     @State private var isCustomPathValid = false
+    @State private var showClearAllLogsConfirm = false
     @State private var isFFprobePathValid = true
     @State private var systemFFmpegPath: String?
     @State private var isSystemAvailable = false
@@ -359,6 +362,76 @@ struct SettingsView: View {
                         .labelsHidden()
                 }
             }
+
+            Divider()
+                .padding(.vertical, 4)
+
+            Text("日志持久化")
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundStyle(.secondary)
+
+            SettingsBlock {
+                SettingsToggleRow(
+                    title: "自动保存执行日志",
+                    subtitle: "每次命令执行完成后自动保存日志到磁盘。",
+                    isOn: $autoSaveLog
+                )
+            }
+
+            SettingsBlock {
+                SettingsStepperRow(
+                    title: "最大保存数量",
+                    subtitle: "超过上限时自动删除最旧的日志文件。",
+                    value: "\(maxSavedLogs) 份",
+                    isDisabled: !autoSaveLog
+                ) {
+                    Stepper("", value: $maxSavedLogs, in: 10...500, step: 10)
+                        .labelsHidden()
+                }
+            }
+
+            SettingsBlock {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("日志存储位置")
+                            .font(.body)
+                        Text("~/Library/Application Support/FFmpegRunner/Logs/")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("在 Finder 中显示") {
+                        openLogDirectory()
+                    }
+                }
+            }
+
+            SettingsBlock {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("清空已保存的日志")
+                            .font(.body)
+                        Text("删除所有已保存的日志文件，此操作不可撤销。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("清空所有日志", role: .destructive) {
+                        showClearAllLogsConfirm = true
+                    }
+                }
+                .confirmationDialog(
+                    "确定要删除所有已保存的日志文件吗？",
+                    isPresented: $showClearAllLogsConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("删除所有日志", role: .destructive) {
+                        deleteAllSavedLogs()
+                    }
+                    Button("取消", role: .cancel) { }
+                }
+            }
         }
     }
 
@@ -638,6 +711,28 @@ struct SettingsView: View {
 
         let expandedPath = (normalizedPath as NSString).expandingTildeInPath
         return URL(fileURLWithPath: expandedPath).deletingLastPathComponent()
+    }
+
+    private func openLogDirectory() {
+        let url = LogPersistenceService.shared.logDirectoryURL
+        // 确保目录存在
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(url)
+    }
+
+    private func deleteAllSavedLogs() {
+        Task {
+            do {
+                try await LogPersistenceService.shared.deleteAllLogs()
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "清空日志失败"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "好的")
+                alert.runModal()
+            }
+        }
     }
 
     private func showBundledFFmpegHelp() {
