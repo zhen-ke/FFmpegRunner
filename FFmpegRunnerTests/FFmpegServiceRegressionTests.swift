@@ -318,20 +318,115 @@ final class FFmpegServiceRegressionTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testExecutionControllerCancelsProcessWhenGlobalTimeoutIsReached() async throws {
+        let settings = snapshotSettings()
+        defer { restoreSettings(settings) }
+
+        let slowScript = try makeExecutableScript(body: """
+        #!/bin/sh
+        sleep 3
+        exit 0
+        """)
+        defer { try? FileManager.default.removeItem(atPath: slowScript) }
+
+        UserSettings.shared.executionTimeoutEnabled = true
+        UserSettings.shared.executionTimeoutSeconds = 1
+
+        let resolver = MockPathResolver(
+            bundledPath: nil,
+            systemPathValue: nil
+        )
+        let service = FFmpegService.makeForTesting(pathResolver: resolver)
+        let controller = ExecutionController(ffmpegService: service)
+
+        service.setSource(.custom, customPath: slowScript)
+        try await waitForCondition {
+            service.ffmpegPath == slowScript
+        }
+
+        do {
+            _ = try await controller.execute(arguments: [], displayCommand: slowScript)
+            XCTFail("Expected timeout error")
+        } catch let error as ExecutionError {
+            guard case .timedOut(let timeout) = error else {
+                XCTFail("Expected timedOut, got \(error)")
+                return
+            }
+            XCTAssertEqual(timeout, 1, accuracy: 0.1)
+        }
+
+        XCTAssertFalse(service.isRunning)
+
+        guard case .error(let message) = controller.state else {
+            XCTFail("Expected controller state to be error after timeout")
+            return
+        }
+        XCTAssertTrue(message.contains("执行超时"))
+    }
+
+    @MainActor
+    func testExecutionControllerLeavesLongTasksAloneWhenTimeoutDisabled() async throws {
+        let settings = snapshotSettings()
+        defer { restoreSettings(settings) }
+
+        let shortScript = try makeExecutableScript(body: """
+        #!/bin/sh
+        sleep 1
+        exit 0
+        """)
+        defer { try? FileManager.default.removeItem(atPath: shortScript) }
+
+        UserSettings.shared.executionTimeoutEnabled = false
+        UserSettings.shared.executionTimeoutSeconds = 1
+
+        let resolver = MockPathResolver(
+            bundledPath: nil,
+            systemPathValue: nil
+        )
+        let service = FFmpegService.makeForTesting(pathResolver: resolver)
+        let controller = ExecutionController(ffmpegService: service)
+
+        service.setSource(.custom, customPath: shortScript)
+        try await waitForCondition {
+            service.ffmpegPath == shortScript
+        }
+
+        let result = try await controller.execute(arguments: [], displayCommand: shortScript)
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertFalse(service.isRunning)
+    }
+
     // MARK: - Helpers
 
-    private func snapshotSettings() -> (source: FFmpegSource, customPath: String, ffprobePath: String) {
+    private func snapshotSettings() -> (
+        source: FFmpegSource,
+        customPath: String,
+        ffprobePath: String,
+        executionTimeoutEnabled: Bool,
+        executionTimeoutSeconds: Int
+    ) {
         (
             UserSettings.shared.ffmpegSource,
             UserSettings.shared.customFFmpegPath,
-            UserSettings.shared.ffprobePath
+            UserSettings.shared.ffprobePath,
+            UserSettings.shared.executionTimeoutEnabled,
+            UserSettings.shared.executionTimeoutSeconds
         )
     }
 
-    private func restoreSettings(_ snapshot: (source: FFmpegSource, customPath: String, ffprobePath: String)) {
+    private func restoreSettings(_ snapshot: (
+        source: FFmpegSource,
+        customPath: String,
+        ffprobePath: String,
+        executionTimeoutEnabled: Bool,
+        executionTimeoutSeconds: Int
+    )) {
         UserSettings.shared.ffmpegSource = snapshot.source
         UserSettings.shared.customFFmpegPath = snapshot.customPath
         UserSettings.shared.ffprobePath = snapshot.ffprobePath
+        UserSettings.shared.executionTimeoutEnabled = snapshot.executionTimeoutEnabled
+        UserSettings.shared.executionTimeoutSeconds = snapshot.executionTimeoutSeconds
     }
 
     private func waitForCondition(

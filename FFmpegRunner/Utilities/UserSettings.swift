@@ -64,6 +64,12 @@ class UserSettings: ObservableObject {
     /// 覆盖输出文件前确认
     @AppStorage("confirmOverwrite") var confirmOverwrite: Bool = true
 
+    /// 是否启用全局执行超时
+    @AppStorage("executionTimeoutEnabled") var executionTimeoutEnabled: Bool = false
+
+    /// 全局执行超时时间（秒）
+    @AppStorage("executionTimeoutSeconds") var executionTimeoutSeconds: Int = 1800
+
     // MARK: - 最近使用
 
     /// 最近使用的模板 ID
@@ -95,6 +101,12 @@ class UserSettings: ObservableObject {
 
     private init() {}
 
+    /// 当前生效的全局执行超时时间；未启用时返回 nil
+    var maximumExecutionTime: TimeInterval? {
+        guard executionTimeoutEnabled else { return nil }
+        return TimeInterval(max(executionTimeoutSeconds, 1))
+    }
+
     // MARK: - Methods
 
     /// 重置所有设置
@@ -111,6 +123,8 @@ class UserSettings: ObservableObject {
         confirmBeforeRun = false
         notifyOnComplete = true
         confirmOverwrite = true
+        executionTimeoutEnabled = false
+        executionTimeoutSeconds = 1800
         lastTemplateId = ""
         lastInputDirectory = ""
         lastOutputDirectory = ""

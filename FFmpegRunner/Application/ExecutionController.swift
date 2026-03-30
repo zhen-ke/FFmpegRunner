@@ -32,6 +32,7 @@ enum ExecutionError: LocalizedError {
     case ffmpegNotAvailable
     case planningFailed(String)
     case executionFailed(String)
+    case timedOut(TimeInterval)
     case cancelled
     case alreadyRunning
 
@@ -43,11 +44,32 @@ enum ExecutionError: LocalizedError {
             return "规划失败: \(message)"
         case .executionFailed(let message):
             return "执行失败: \(message)"
+        case .timedOut(let timeout):
+            return "执行超时（\(Self.formattedTimeout(timeout))）"
         case .cancelled:
             return "执行已取消"
         case .alreadyRunning:
             return "已有任务正在执行"
         }
+    }
+
+    static func formattedTimeout(_ timeout: TimeInterval) -> String {
+        let totalSeconds = max(Int(timeout.rounded()), 1)
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+
+        if hours > 0 {
+            return seconds == 0
+                ? "\(hours) 小时 \(minutes) 分钟"
+                : "\(hours) 小时 \(minutes) 分钟 \(seconds) 秒"
+        }
+
+        if minutes > 0 {
+            return seconds == 0 ? "\(minutes) 分钟" : "\(minutes) 分钟 \(seconds) 秒"
+        }
+
+        return "\(seconds) 秒"
     }
 }
 
@@ -164,11 +186,7 @@ final class ExecutionController: ObservableObject {
         state = .running
 
         do {
-            let result = try await ffmpegService.execute(
-                arguments: plan.arguments,
-                displayCommand: plan.displayCommand,
-                executable: plan.executable
-            )
+            let result = try await executePlanWithTimeoutIfNeeded(plan)
 
             // ✅ 兼容外部取消（未显式调用 cancel）
             if Task.isCancelled || state.isCancelling {
@@ -195,6 +213,36 @@ final class ExecutionController: ObservableObject {
 
             return result
 
+        } catch let error as ExecutionError {
+            switch error {
+            case .cancelled:
+                state = .cancelled
+                throw error
+            case .timedOut:
+                state = .error(error.localizedDescription)
+
+                await recordRecentCommand(for: plan, wasSuccessful: false)
+
+                notifyCompletion(
+                    success: false,
+                    plan: plan,
+                    message: error.localizedDescription
+                )
+
+                throw error
+            default:
+                state = .error(error.localizedDescription)
+
+                await recordRecentCommand(for: plan, wasSuccessful: false)
+
+                notifyCompletion(
+                    success: false,
+                    plan: plan,
+                    message: "执行失败，请查看日志"
+                )
+
+                throw error
+            }
         } catch is CancellationError {
             state = .cancelled
             throw ExecutionError.cancelled
@@ -396,6 +444,80 @@ final class ExecutionController: ObservableObject {
         )
     }
 
+    private func executePlanWithTimeoutIfNeeded(_ plan: ExecutionPlan) async throws -> ExecutionResult {
+        guard let timeout = UserSettings.shared.maximumExecutionTime else {
+            return try await ffmpegService.execute(
+                arguments: plan.arguments,
+                displayCommand: plan.displayCommand,
+                executable: plan.executable
+            )
+        }
+
+        let ffmpegService = self.ffmpegService
+        let onLogOutput = self.onLogOutput
+        let timeoutState = ExecutionTimeoutState()
+
+        return try await withThrowingTaskGroup(of: ExecutionResult.self) { group in
+            group.addTask { [ffmpegService] in
+                try await ffmpegService.execute(
+                    arguments: plan.arguments,
+                    displayCommand: plan.displayCommand,
+                    executable: plan.executable
+                )
+            }
+
+            group.addTask { [weak self] in
+                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                guard !Task.isCancelled else {
+                    throw CancellationError()
+                }
+
+                await timeoutState.markTriggered()
+
+                await MainActor.run {
+                    onLogOutput?(LogEntry(
+                        timestamp: Date(),
+                        level: .warning,
+                        message: "已达到全局超时 \(ExecutionError.formattedTimeout(timeout))，正在停止任务"
+                    ))
+                    ffmpegService.cancel()
+                }
+
+                try await Self.waitUntilExecutionStops(ffmpegService: ffmpegService)
+                throw ExecutionError.timedOut(timeout)
+            }
+
+            do {
+                guard let result = try await group.next() else {
+                    throw ExecutionError.executionFailed("执行结果缺失")
+                }
+
+                if await timeoutState.isTriggered {
+                    group.cancelAll()
+                    throw ExecutionError.timedOut(timeout)
+                }
+
+                group.cancelAll()
+                return result
+            } catch {
+                group.cancelAll()
+                throw error
+            }
+        }
+    }
+
+    private static func waitUntilExecutionStops(ffmpegService: FFmpegService?) async throws {
+        guard let ffmpegService else { return }
+
+        let deadline = Date().addingTimeInterval(10)
+        while await MainActor.run(body: { ffmpegService.isRunning }) {
+            if Date() >= deadline {
+                break
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
     private func refreshFFmpegState() {
         isFFmpegAvailable = ffmpegService.isFFmpegAvailable()
 
@@ -426,5 +548,13 @@ final class ExecutionController: ObservableObject {
     var onHistoryChanged: (() -> Void)? {
         get { onRecentCommandsChanged }
         set { onRecentCommandsChanged = newValue }
+    }
+}
+
+private actor ExecutionTimeoutState {
+    private(set) var isTriggered = false
+
+    func markTriggered() {
+        isTriggered = true
     }
 }

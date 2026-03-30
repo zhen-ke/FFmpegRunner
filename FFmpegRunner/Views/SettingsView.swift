@@ -27,6 +27,8 @@ struct SettingsView: View {
     @AppStorage("confirmBeforeRun") private var confirmBeforeRun = false
     @AppStorage("notifyOnComplete") private var notifyOnComplete = true
     @AppStorage("confirmOverwrite") private var confirmOverwrite = true
+    @AppStorage("executionTimeoutEnabled") private var executionTimeoutEnabled = false
+    @AppStorage("executionTimeoutSeconds") private var executionTimeoutSeconds = 1800
     @AppStorage("showCommandPreviewBeforeRun") private var showCommandPreviewBeforeRun = true
     @AppStorage("ffprobePath") private var ffprobePath = ""
     @AppStorage("sidebarWidth") private var sidebarWidth = 250.0
@@ -94,6 +96,11 @@ struct SettingsView: View {
         .onChange(of: ffprobePath) { newValue in
             checkFFprobePath(newValue)
             ffmpegService.setFFprobePathOverride(newValue)
+        }
+        .onChange(of: executionTimeoutEnabled) { enabled in
+            if enabled && executionTimeoutSeconds < 10 {
+                executionTimeoutSeconds = 300
+            }
         }
     }
 
@@ -291,6 +298,31 @@ struct SettingsView: View {
                     subtitle: "长任务完成或失败时发送系统通知，可直接打开输出目录。",
                     isOn: $notifyOnComplete
                 )
+            }
+
+            SettingsBlock {
+                SettingsToggleRow(
+                    title: "启用全局超时",
+                    subtitle: "超过设定时长后自动停止当前任务，避免异常卡住太久。",
+                    isOn: $executionTimeoutEnabled
+                )
+            }
+
+            SettingsBlock {
+                SettingsStepperRow(
+                    title: "最长执行时间",
+                    subtitle: "给整次任务设一个上限。关闭全局超时时，这里会保留你上次设置的时长。",
+                    value: formattedExecutionTimeout(executionTimeoutSeconds),
+                    isDisabled: !executionTimeoutEnabled
+                ) {
+                    Stepper(
+                        "",
+                        value: $executionTimeoutSeconds,
+                        in: 10...86_400,
+                        step: stepSize(for: executionTimeoutSeconds)
+                    )
+                    .labelsHidden()
+                }
             }
 
             SettingsBlock {
@@ -756,6 +788,31 @@ struct SettingsView: View {
         alert.alertStyle = .informational
         alert.addButton(withTitle: "好的")
         alert.runModal()
+    }
+
+    private func formattedExecutionTimeout(_ totalSeconds: Int) -> String {
+        let seconds = max(totalSeconds, 1)
+        let hours = seconds / 3600
+        let minutes = (seconds % 3600) / 60
+        let remainingSeconds = seconds % 60
+
+        if hours > 0 {
+            return remainingSeconds == 0
+                ? "\(hours) 小时 \(minutes) 分钟"
+                : "\(hours) 小时 \(minutes) 分钟 \(remainingSeconds) 秒"
+        }
+
+        if minutes > 0 {
+            return remainingSeconds == 0
+                ? "\(minutes) 分钟"
+                : "\(minutes) 分钟 \(remainingSeconds) 秒"
+        }
+
+        return "\(remainingSeconds) 秒"
+    }
+
+    private func stepSize(for currentValue: Int) -> Int {
+        currentValue < 300 ? 10 : 60
     }
 }
 
