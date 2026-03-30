@@ -39,6 +39,61 @@ struct TemplateValidator {
             }
         }
 
+        // 检查条件可见性规则
+        warnings.append(contentsOf: validateVisibilityConditions(template))
+
+        return warnings
+    }
+
+    // MARK: - Visibility Validation
+
+    /// 验证条件可见性规则的一致性
+    private func validateVisibilityConditions(_ template: Template) -> [TemplateValidationWarning] {
+        var warnings: [TemplateValidationWarning] = []
+        let knownKeys = Set(template.parameters.map(\.key))
+
+        // key → 依赖的 key（visibleWhen.key）
+        var dependencyGraph: [String: String] = [:]
+
+        for param in template.parameters {
+            guard let condition = param.uiHint?.visibleWhen else { continue }
+
+            // 检查引用的 key 是否存在
+            if !knownKeys.contains(condition.key) {
+                warnings.append(.visibilityReferencesUnknownKey(
+                    parameterKey: param.key,
+                    referencedKey: condition.key
+                ))
+            }
+
+            // 检查 values 是否为空
+            if condition.values.isEmpty {
+                warnings.append(.visibilityEmptyValues(parameterKey: param.key))
+            }
+
+            dependencyGraph[param.key] = condition.key
+        }
+
+        // 检查循环依赖（A → B → A）
+        for startKey in dependencyGraph.keys {
+            var visited = Set<String>()
+            var current = startKey
+            var path = [startKey]
+
+            while let next = dependencyGraph[current] {
+                if next == startKey {
+                    // 发现循环
+                    path.append(next)
+                    warnings.append(.visibilityCyclicDependency(parameterKeys: path))
+                    break
+                }
+                if visited.contains(next) { break }
+                visited.insert(current)
+                current = next
+                path.append(current)
+            }
+        }
+
         return warnings
     }
 

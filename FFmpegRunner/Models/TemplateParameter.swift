@@ -65,6 +65,60 @@ enum ArgumentMode: String, Codable {
     case inline
 }
 
+// MARK: - Parameter Visibility Condition
+
+/// 条件参数的比较运算符
+enum VisibilityOperator: String, Codable, Hashable {
+    /// 等于指定值
+    case equals
+    /// 不等于指定值
+    case notEquals
+    /// 值在指定列表中
+    case `in`
+    /// 值不在指定列表中
+    case notIn
+}
+
+/// 参数可见性条件
+/// 定义参数何时显示在表单中
+///
+/// JSON 示例：
+/// ```json
+/// { "key": "codec", "operator": "in", "values": ["libmp3lame", "aac"] }
+/// ```
+///
+/// 对 boolean 参数，使用 "true"/"false" 字符串：
+/// ```json
+/// { "key": "enableHWAccel", "operator": "equals", "values": ["true"] }
+/// ```
+struct ParameterVisibility: Codable, Hashable {
+    /// 要观察的参数 key
+    let key: String
+
+    /// 比较运算符
+    let `operator`: VisibilityOperator
+
+    /// 比较值列表
+    let values: [String]
+
+    /// 求值：根据当前参数值判断是否可见
+    /// - Parameter currentValue: 被观察参数的当前值
+    /// - Returns: 是否可见
+    func evaluate(currentValue: String) -> Bool {
+        let trimmedValue = currentValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch `operator` {
+        case .equals:
+            return values.contains(trimmedValue)
+        case .notEquals:
+            return !values.contains(trimmedValue)
+        case .in:
+            return values.contains(trimmedValue)
+        case .notIn:
+            return !values.contains(trimmedValue)
+        }
+    }
+}
+
 // MARK: - UI Hint
 
 /// 参数 UI 显示提示
@@ -89,13 +143,18 @@ struct ParameterUIHint: Codable, Hashable {
     /// 是否隐藏（被复合控件代理的参数标记为 true）
     var hidden: Bool = false
 
+    /// 条件可见性规则（当条件不满足时，参数自动隐藏）
+    /// 为 nil 表示无条件显示
+    var visibleWhen: ParameterVisibility? = nil
+
     init(
         multiline: Bool = false,
         monospace: Bool = false,
         placeholder: String? = nil,
         compositeType: String? = nil,
         compositeGroup: String? = nil,
-        hidden: Bool = false
+        hidden: Bool = false,
+        visibleWhen: ParameterVisibility? = nil
     ) {
         self.multiline = multiline
         self.monospace = monospace
@@ -103,6 +162,7 @@ struct ParameterUIHint: Codable, Hashable {
         self.compositeType = compositeType
         self.compositeGroup = compositeGroup
         self.hidden = hidden
+        self.visibleWhen = visibleWhen
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -112,6 +172,7 @@ struct ParameterUIHint: Codable, Hashable {
         case compositeType
         case compositeGroup
         case hidden
+        case visibleWhen
     }
 
     init(from decoder: Decoder) throws {
@@ -122,6 +183,7 @@ struct ParameterUIHint: Codable, Hashable {
         compositeType = try container.decodeIfPresent(String.self, forKey: .compositeType)
         compositeGroup = try container.decodeIfPresent(String.self, forKey: .compositeGroup)
         hidden = try container.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        visibleWhen = try container.decodeIfPresent(ParameterVisibility.self, forKey: .visibleWhen)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -132,6 +194,7 @@ struct ParameterUIHint: Codable, Hashable {
         try container.encodeIfPresent(compositeType, forKey: .compositeType)
         try container.encodeIfPresent(compositeGroup, forKey: .compositeGroup)
         if hidden { try container.encode(hidden, forKey: .hidden) }
+        try container.encodeIfPresent(visibleWhen, forKey: .visibleWhen)
     }
 }
 
@@ -305,8 +368,14 @@ struct TemplateParameter: Codable, Identifiable, Hashable {
         /// 数字最大值
         let max: Double?
 
-        /// 选项列表（用于 select 类型）
+        /// 选项列表（用于 select 类型，实际值）
         let options: [String]?
+
+        /// 选项显示标签（与 options 一一对应，用于 UI 展示）
+        /// 当 options 中的值对用户不友好时（如包含 CLI flag），
+        /// 用 optionLabels 提供友好名称。
+        /// 示例：options = ["-b:a 128k", "-b:a 192k"]，optionLabels = ["128k", "192k"]
+        let optionLabels: [String]?
 
         /// 允许的文件类型（用于 file 类型）
         let fileTypes: [String]?
@@ -327,6 +396,7 @@ struct TemplateParameter: Codable, Identifiable, Hashable {
             min: Double? = nil,
             max: Double? = nil,
             options: [String]? = nil,
+            optionLabels: [String]? = nil,
             fileTypes: [String]? = nil,
             isOutputFile: Bool? = nil,
             outputSourceKey: String? = nil,
@@ -336,11 +406,24 @@ struct TemplateParameter: Codable, Identifiable, Hashable {
             self.min = min
             self.max = max
             self.options = options
+            self.optionLabels = optionLabels
             self.fileTypes = fileTypes
             self.isOutputFile = isOutputFile
             self.outputSourceKey = outputSourceKey
             self.outputExtensionFromKey = outputExtensionFromKey
             self.outputExtensionByValue = outputExtensionByValue
+        }
+
+        /// 根据 option value 获取显示标签
+        func displayLabel(for option: String) -> String {
+            guard let options = options,
+                  let labels = optionLabels,
+                  labels.count == options.count,
+                  let index = options.firstIndex(of: option)
+            else {
+                return option
+            }
+            return labels[index]
         }
     }
 }

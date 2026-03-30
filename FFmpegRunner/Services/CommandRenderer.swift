@@ -89,16 +89,27 @@ struct ParameterBindingContext: RenderContext {
     let bindingDict: [String: ParameterBinding]
     let skipEscapeKeys: Set<String>
     let rawCommandKeys: Set<String>
+    let conditionallyHiddenKeys: Set<String>
 
-    init(bindings: [ParameterBinding], skipEscapeKeys: Set<String>, rawCommandKeys: Set<String>) {
+    init(
+        bindings: [ParameterBinding],
+        skipEscapeKeys: Set<String>,
+        rawCommandKeys: Set<String>,
+        conditionallyHiddenKeys: Set<String> = []
+    ) {
         self.bindingDict = Dictionary(uniqueKeysWithValues: bindings.map { ($0.key, $0) })
         self.skipEscapeKeys = skipEscapeKeys
         self.rawCommandKeys = rawCommandKeys
+        self.conditionallyHiddenKeys = conditionallyHiddenKeys
     }
 
     func value(forKey key: String) -> String? {
+        // 被条件隐藏的参数返回空字符串，使其不出现在渲染结果中
+        if conditionallyHiddenKeys.contains(key) {
+            return ""
+        }
         // 优先使用 renderValue（来自 ParsedValue）
-        bindingDict[key]?.renderValue
+        return bindingDict[key]?.renderValue
     }
 
     func shouldSkipEscape(forKey key: String) -> Bool {
@@ -234,7 +245,8 @@ struct CommandRenderer {
         let context = ParameterBindingContext(
             bindings: binding.bindings,
             skipEscapeKeys: skipEscapeKeys,
-            rawCommandKeys: rawCommandKeys
+            rawCommandKeys: rawCommandKeys,
+            conditionallyHiddenKeys: binding.conditionallyHiddenKeys
         )
 
         // ✅ 单次正则匹配，同时生成 arguments、displayString、missingPlaceholders

@@ -13,12 +13,19 @@ struct TemplateDetailState {
     let values: [TemplateValue]
     let templateBinding: TemplateBinding?
 
-    static let empty = TemplateDetailState(template: nil, values: [], templateBinding: nil)
+    /// 被条件规则隐藏的参数 key 集合
+    let conditionallyHiddenKeys: Set<String>
+
+    static let empty = TemplateDetailState(
+        template: nil, values: [], templateBinding: nil, conditionallyHiddenKeys: []
+    )
 
     var validationErrors: [String: String] {
         Dictionary(
             uniqueKeysWithValues: values.compactMap { value in
-                guard let message = value.errorMessage else { return nil }
+                // 被条件隐藏的参数不显示验证错误
+                guard !conditionallyHiddenKeys.contains(value.key),
+                      let message = value.errorMessage else { return nil }
                 return (value.key, message)
             }
         )
@@ -30,6 +37,11 @@ struct TemplateDetailState {
 
     var canExecute: Bool {
         template != nil && isValid
+    }
+
+    /// 判断参数是否因条件规则被隐藏
+    func isConditionallyHidden(_ key: String) -> Bool {
+        conditionallyHiddenKeys.contains(key)
     }
 }
 
@@ -77,6 +89,16 @@ final class TemplateDetailViewModel: ObservableObject {
     /// 是否可以执行
     var canExecute: Bool {
         state.canExecute
+    }
+
+    /// 被条件规则隐藏的参数 key 集合
+    var conditionallyHiddenKeys: Set<String> {
+        state.conditionallyHiddenKeys
+    }
+
+    /// 判断参数是否因条件规则被隐藏
+    func isConditionallyHidden(_ key: String) -> Bool {
+        state.isConditionallyHidden(key)
     }
 
     // MARK: - Private Properties
@@ -213,13 +235,53 @@ extension TemplateDetailViewModel {
 
 private extension TemplateDetailViewModel {
     func buildState(template: Template, values: [TemplateValue]) -> TemplateDetailState {
-        let binding = TemplateBinding.bind(template: template, values: values)
+        // 1. 计算条件可见性
+        let hiddenKeys = Self.computeConditionallyHiddenKeys(
+            parameters: template.parameters,
+            values: values
+        )
+
+        // 2. 绑定并验证（隐藏参数跳过验证，命令渲染时由 CommandRenderer 处理）
+        let binding = TemplateBinding.bind(
+            template: template,
+            values: values,
+            conditionallyHiddenKeys: hiddenKeys
+        )
         let validatedValues = binding.bindings.map(\.value)
+
         return TemplateDetailState(
             template: template,
             values: validatedValues,
-            templateBinding: binding
+            templateBinding: binding,
+            conditionallyHiddenKeys: hiddenKeys
         )
+    }
+
+    /// 根据当前参数值计算哪些参数被条件规则隐藏
+    /// - 安全处理：引用不存在的 key 时视为条件不满足（隐藏）
+    static func computeConditionallyHiddenKeys(
+        parameters: [TemplateParameter],
+        values: [TemplateValue]
+    ) -> Set<String> {
+        let valueByKey = Dictionary(uniqueKeysWithValues: values.map { ($0.key, $0.rawValue) })
+        var hiddenKeys = Set<String>()
+
+        for parameter in parameters {
+            guard let condition = parameter.uiHint?.visibleWhen else { continue }
+
+            // 获取被观察参数的当前值
+            guard let observedValue = valueByKey[condition.key] else {
+                // 引用的 key 不存在 → 条件无法满足 → 隐藏
+                hiddenKeys.insert(parameter.key)
+                continue
+            }
+
+            if !condition.evaluate(currentValue: observedValue) {
+                hiddenKeys.insert(parameter.key)
+            }
+        }
+
+        return hiddenKeys
     }
 
     func clearState() {

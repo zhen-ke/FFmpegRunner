@@ -21,6 +21,15 @@ enum TemplateValidationWarning: Equatable, CustomStringConvertible {
     /// 未使用的参数（在 commandTemplate 中没有对应占位符）
     case unusedParameter(String)
 
+    /// visibleWhen 引用了不存在的参数 key
+    case visibilityReferencesUnknownKey(parameterKey: String, referencedKey: String)
+
+    /// visibleWhen 的 values 列表为空
+    case visibilityEmptyValues(parameterKey: String)
+
+    /// visibleWhen 形成循环依赖（A 依赖 B，B 又依赖 A）
+    case visibilityCyclicDependency(parameterKeys: [String])
+
     var description: String {
         switch self {
         case .missingId:
@@ -31,6 +40,12 @@ enum TemplateValidationWarning: Equatable, CustomStringConvertible {
             return "命令模板为空"
         case .unusedParameter(let key):
             return "参数 '\(key)' 未在命令模板中使用"
+        case .visibilityReferencesUnknownKey(let paramKey, let refKey):
+            return "参数 '\(paramKey)' 的 visibleWhen 引用了不存在的参数 '\(refKey)'"
+        case .visibilityEmptyValues(let paramKey):
+            return "参数 '\(paramKey)' 的 visibleWhen.values 为空"
+        case .visibilityCyclicDependency(let keys):
+            return "条件可见性存在循环依赖: \(keys.joined(separator: " → "))"
         }
     }
 
@@ -39,7 +54,8 @@ enum TemplateValidationWarning: Equatable, CustomStringConvertible {
         switch self {
         case .missingId, .emptyName, .emptyCommandTemplate:
             return true
-        case .unusedParameter:
+        case .unusedParameter, .visibilityReferencesUnknownKey,
+             .visibilityEmptyValues, .visibilityCyclicDependency:
             return false
         }
     }

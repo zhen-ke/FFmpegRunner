@@ -98,9 +98,12 @@ struct TemplateBinding {
 
     // MARK: - Computed Properties
 
-    /// 所有绑定是否有效
+    /// 被条件规则隐藏的参数 key 集合
+    let conditionallyHiddenKeys: Set<String>
+
+    /// 所有可见绑定是否有效（被条件隐藏的参数跳过验证）
     var isValid: Bool {
-        bindings.allSatisfy { $0.isValid }
+        bindings.allSatisfy { conditionallyHiddenKeys.contains($0.key) || $0.isValid }
     }
 
     /// 获取所有错误消息
@@ -126,20 +129,33 @@ extension TemplateBinding {
     /// - Parameters:
     ///   - template: 模板定义
     ///   - values: 运行时值数组
+    ///   - conditionallyHiddenKeys: 被条件规则隐藏的参数 key 集合
     /// - Returns: 模板绑定（所有值已验证并解析）
-    static func bind(template: Template, values: [TemplateValue]) -> TemplateBinding {
+    static func bind(
+        template: Template,
+        values: [TemplateValue],
+        conditionallyHiddenKeys: Set<String> = []
+    ) -> TemplateBinding {
         let valueDict = values.asDictionary
 
         let bindings = template.parameters.map { param -> ParameterBinding in
             // 获取对应的值，如果没有则使用默认值
             var value = valueDict[param.key] ?? TemplateValue(key: param.key, rawValue: param.defaultValue)
 
-            // 验证并解析
-            value = value.validated(with: param)
+            // 被条件隐藏的参数跳过验证（避免隐藏参数的验证错误阻止执行）
+            if conditionallyHiddenKeys.contains(param.key) {
+                value = value.parsed(with: param)
+            } else {
+                value = value.validated(with: param)
+            }
 
             return ParameterBinding(parameter: param, value: value)
         }
 
-        return TemplateBinding(template: template, bindings: bindings)
+        return TemplateBinding(
+            template: template,
+            bindings: bindings,
+            conditionallyHiddenKeys: conditionallyHiddenKeys
+        )
     }
 }

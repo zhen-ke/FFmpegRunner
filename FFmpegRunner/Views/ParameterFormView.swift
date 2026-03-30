@@ -20,11 +20,21 @@ struct ParameterFormView: View {
         VStack(alignment: .leading, spacing: 16) {
             if let template = viewModel.template {
                 ForEach(template.parameters) { parameter in
-                    if parameter.uiHint?.compositeType == "gifFilter" {
+                    // 静态隐藏（compositeType 代理）
+                    if parameter.uiHint?.hidden == true {
+                        EmptyView()
+                    }
+                    // 条件隐藏（visibleWhen 规则不满足）
+                    else if viewModel.isConditionallyHidden(parameter.key) {
+                        EmptyView()
+                    }
+                    // 复合控件路由
+                    else if parameter.uiHint?.compositeType == "gifFilter" {
                         GifFpsWidthField(
                             filterValue: viewModel.binding(for: parameter.key),
                             validationError: viewModel.validationErrors[parameter.key]
                         )
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                     } else if parameter.uiHint?.compositeType == "timeRange" {
                         let groupKey = parameter.uiHint?.compositeGroup ?? "duration"
                         FastCutTimeRangeField(
@@ -32,14 +42,16 @@ struct ParameterFormView: View {
                             duration: viewModel.binding(for: groupKey),
                             startValidationError: viewModel.validationErrors[parameter.key]
                         )
-                    } else if parameter.uiHint?.hidden == true {
-                        EmptyView()
-                    } else {
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                    // 普通参数
+                    else {
                         ParameterFieldView(
                             parameter: parameter,
                             value: viewModel.binding(for: parameter.key),
                             error: viewModel.validationErrors[parameter.key]
                         )
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                 }
             } else {
@@ -47,6 +59,7 @@ struct ParameterFormView: View {
                     .foregroundColor(.secondary)
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: viewModel.conditionallyHiddenKeys)
     }
 }
 
@@ -122,7 +135,8 @@ struct ParameterFieldView: View {
         case .select:
             SelectField(
                 value: $value,
-                options: parameter.constraints?.options ?? []
+                options: parameter.constraints?.options ?? [],
+                optionLabels: parameter.constraints?.optionLabels
             )
         }
     }
@@ -837,6 +851,7 @@ struct FileField: View {
 struct SelectField: View {
     @Binding var value: String
     let options: [String]
+    var optionLabels: [String]? = nil
 
     var body: some View {
         Picker("", selection: $value) {
@@ -844,7 +859,7 @@ struct SelectField: View {
                 Text("请选择...").tag("")
             }
             ForEach(options, id: \.self) { option in
-                Text(option).tag(option)
+                Text(displayLabel(for: option)).tag(option)
             }
         }
         .pickerStyle(.menu)
@@ -855,6 +870,16 @@ struct SelectField: View {
                 value = options[0]
             }
         }
+    }
+
+    private func displayLabel(for option: String) -> String {
+        guard let labels = optionLabels,
+              labels.count == options.count,
+              let index = options.firstIndex(of: option)
+        else {
+            return option
+        }
+        return labels[index]
     }
 }
 
