@@ -22,6 +22,7 @@ struct SettingsView: View {
     @AppStorage("executionTimeoutEnabled")      private var executionTimeoutEnabled = false
     @AppStorage("executionTimeoutSeconds")      private var executionTimeoutSeconds = 1800
     @AppStorage("showCommandPreviewBeforeRun")  private var showCommandPreviewBeforeRun = true
+    @AppStorage("useCustomFFprobe")             private var useCustomFFprobe = false
     @AppStorage("ffprobePath")                  private var ffprobePath = ""
     @AppStorage("sidebarWidth")                 private var sidebarWidth = 250.0
     @AppStorage("lastTemplateId")               private var lastTemplateId = ""
@@ -74,7 +75,12 @@ struct SettingsView: View {
         .onChange(of: ffmpegService.customFFmpegPath) { checkCustomPath($0) }
         .onChange(of: ffprobePath) { newValue in
             checkFFprobePath(newValue)
-            ffmpegService.setFFprobePathOverride(newValue)
+            if useCustomFFprobe {
+                ffmpegService.setFFprobePathOverride(newValue)
+            }
+        }
+        .onChange(of: useCustomFFprobe) { isCustom in
+            ffmpegService.setFFprobePathOverride(isCustom ? ffprobePath : "")
         }
         .onChange(of: executionTimeoutEnabled) { enabled in
             if enabled && executionTimeoutSeconds < 10 { executionTimeoutSeconds = 300 }
@@ -124,17 +130,34 @@ struct SettingsView: View {
                                 emptyFallback: "未解析到可用的 ffprobe")
             }
 
-            Section("FFprobe 覆写") {
-                customPathField(
-                    label: "自定义路径",
-                    text: $ffprobePath,
-                    isValid: isFFprobePathValid,
-                    placeholder: "留空时自动推断",
-                    emptyHint: "留空时优先同级目录，再回退系统路径",
-                    validHint: "覆写路径有效",
-                    invalidHint: "路径无效，将继续回退自动推断",
-                    showsClearButton: true
-                ) { await pickFFprobePath() } onClear: { ffprobePath = "" }
+            Section("FFprobe 解析") {
+                LabeledContent("解析策略") {
+                    Picker("", selection: $useCustomFFprobe) {
+                        Text("自动推断").tag(false)
+                        Text("独立指定").tag(true)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 200)
+                }
+
+                if useCustomFFprobe {
+                    customPathField(
+                        label: "可执行文件",
+                        text: $ffprobePath,
+                        isValid: isFFprobePathValid,
+                        placeholder: "例如: /usr/local/bin/ffprobe",
+                        emptyHint: "请选择 ffprobe 可执行文件",
+                        validHint: "此路径有效",
+                        invalidHint: "路径无效，将导致解析失败",
+                        showsClearButton: true
+                    ) { await pickFFprobePath() } onClear: { ffprobePath = "" }
+                } else {
+                    Text("自动推断会优先寻找 FFmpeg 同级目录下的二进制文件，若未找到则回退尝试读取系统环境变量路径。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
+                }
             }
 
             if let version = executionViewModel.ffmpegVersion, !version.isEmpty {
@@ -464,9 +487,12 @@ struct SettingsView: View {
     }
 
     private func refreshDiagnostics() async {
+        if !ffprobePath.isEmpty && !useCustomFFprobe {
+            useCustomFFprobe = true
+        }
         checkCustomPath(ffmpegService.customFFmpegPath)
         checkFFprobePath(ffprobePath)
-        ffmpegService.setFFprobePathOverride(ffprobePath)
+        ffmpegService.setFFprobePathOverride(useCustomFFprobe ? ffprobePath : "")
         await refreshSystemPath()
     }
 
@@ -478,6 +504,7 @@ struct SettingsView: View {
 
     private func resetAllSettings() async {
         UserSettings.shared.resetAll()
+        useCustomFFprobe = false
         executionViewModel.autoScroll = UserSettings.shared.autoScrollLog
         let discovered = await ffmpegService.findSystemFFmpeg()
         let preferred: FFmpegSource = ffmpegService.isBundledFFmpegAvailable
