@@ -1,133 +1,196 @@
 # FFmpegRunner
 
-一个基于 Swift + SwiftUI 开发的 macOS 原生模板驱动型 FFmpeg GUI 应用程序。通过声明式的 JSON 模板，将晦涩复杂的 FFmpeg 命令行参数转化为直观、现代的用户界面，让视频处理和自定义脚本转码变得前所未有的连贯与简单。
+一个基于 Swift + SwiftUI 开发的 macOS 原生 FFmpeg GUI。它用 JSON 模板描述参数和界面，把常见的 FFmpeg 工作流变成可视化表单，同时保留“自定义命令”模式，兼顾日常使用和高级场景。
 
-## 📸 界面预览
+## 界面预览
 
 | 自定义命令 | 主工作区 |
 | :---: | :---: |
 | ![Main UI](https://cdn.statically.io/gh/zhen-ke/img@main/202603/IMG_2026-04-01-19-22-30-1.webp) | ![Settings UI](https://cdn.statically.io/gh/zhen-ke/img@main/202603/IMG_2026-04-01-19-22-07-1.webp) |
 
-## ✨ 核心特性
+## 核心功能
 
-- 🎯 **模板驱动 (Template-Driven)**
-  通过修改 JSON 配置文件即可定义命令逻辑与交互界面，真正意义上的零代码扩展能力。灵活支持复杂的参数联动、动态显隐和特定参数默认值配置。
+- 模板驱动：用 JSON 定义命令模板、参数类型、默认值和条件显示规则，不需要写 Swift 代码就能扩展常用流程。
+- 原生动态表单：根据模板自动生成文件选择、文本输入、数字输入、布尔开关、下拉选择等控件。
+- 即时命令预览：修改任意参数后，命令预览会立即更新，方便确认最终会执行什么。
+- 安全执行：底层使用参数数组直接调用 `Process`，避免传统字符串拼接带来的注入和转义问题。
+- 自定义命令模式：可以直接输入完整的 `ffmpeg` 或 `ffprobe` 命令，适合临时任务和高级调试。
+- 最近使用恢复：可从最近使用列表快速回填参数，也可以把最近一次成功执行保存成模板。
+- 模板管理：支持导入、导出、复制、重命名、删除用户模板。
+- 顺序队列：可将多个任务加入队列，按顺序逐个执行，并支持中途停止。
+- 日志与历史：支持实时日志、自动保存执行日志、查看历史日志文件。
+- 执行保护：支持首次执行提醒、输出覆盖确认、超时保护和完成通知。
 
-- 🎨 **原生动态 UI (SwiftUI)**
-  充分利用 SwiftUI 深度构建。无需手动编写视图，系统可根据模板内的控件类型（输入输出目录、文件选择器、布尔拨动开关、数字步进器、选择列表等）动态映射、自适应渲染出符合 macOS HIG 规范的原生交互表单。
+## FFmpeg 来源
 
-- 🛡️ **安全至上的执行架构 (Arguments-First)**
-  重构了传统的 shell 命令运行方式，摒弃高风险的字符串拼接手段。底层采取“参数数组” (`[String]`) 直接对接 `Process`，彻底杜绝命令注入漏洞以及由空格、特殊转义字符引发的执行崩溃。
+FFmpegRunner 支持三种可执行文件来源：
 
-- 👀 **即时参数与命令预览**
-  拥有超强反馈：调节任何一个参数改变，下方的“命令预览区”都会即时变动，以开发者所见即所得的形式呈现最终交至核心 `ffmpeg` 程序的真实调用链路。
+1. 内置二进制：把 `ffmpeg` / `ffprobe` 放进应用资源中，适合开箱即用分发。
+2. 系统环境：自动探测系统中的 FFmpeg，例如通过 Homebrew 安装的版本。
+3. 自定义路径：在设置页手动指定任意 `ffmpeg` / `ffprobe` 可执行文件。
 
-- 📊 **智能日志与进阶调优**
-  - **进度节流 (Coalescing Progress Layer)**：智能合并高频流式的 FFmpeg 帧步输出，保护 UI 线程免受性能损耗乃至卡顿，兼顾极客信息流与丝滑体验。
-  - **持久化记录 (Log Persistence)**：可开启历史回放视角，自执行任务自动分片并转存历史执行日志，助力开发复盘。
-
-- ⚙️ **无缝工具链集成 (Smart Toolchain)**
-  支持热切换的 3 层优先级 FFmpeg 二进制路径解析策略：
-  1. 📦 **内置优先**：支持打包静态库至 `Resources` 达成“开箱即用”极客级免环境分发（免配置）。
-  2. 🌐 **系统环境探测**：自动嗅探系统中通过 Homebrew (`brew install ffmpeg`) 安装的路径。
-  3. 🛠️ **自选外挂 (Custom Injection)**：满足最严苛的场景验证要求，可随意在设置面板挂载任意位置的单一 `ffmpeg`/`ffprobe` 可执行文件。
-
-- 🔒 **全天候任务沙盒与保护**
-  - 触发执行前支持安全二次确认弹窗、覆写警告保护。
-  - **防死锁/僵尸任务防线**：引入全局执行超时防护 (`Timeout Prevention Engine`)。
-  - 原生系统级集成通知：在后台挂机转码完成后，下发轻量级 macOS 发送横幅提醒。
-
----
-
-## 🏗️ 系统架构解析
-
-项目严格采用 **MVVM** 设计模式并隔离 **Application Service (服务层)**，从文件 I/O 到数据结构再到视觉状态进行三段式剥离。
+## 项目结构
 
 ```text
 FFmpegRunner/
-├── App/                    # WindowGroup 及全局 Application Delegate 挂载
-├── Application/            # 核心控制中枢 (CommandPlanner, ExecutionController)
-├── Models/                 # 核心数据流模版 (Template, ExecutionPlan, FFmpegProgress)
-├── Services/               # 基础单例支撑系统 (工具链解析 FFmpegService, 日志系统)
-├── ViewModels/             # 发布订阅中继、双向数据流转视图模型状态
-├── Views/                  # 可复用的纯展示 SwiftUI 分支结构树
-├── Resources/              # JSON 预设数据池以及可选的二进制核心环境区
-└── Utilities/              # 功能性沙箱（Sandbox）及工具类扩展层
+├── App/                    # 应用入口与全局环境
+├── Application/            # 执行编排与命令规划
+├── Models/                 # 模板、执行计划、进度等核心模型
+├── Services/               # 模板仓库、FFmpeg 服务、历史与日志
+├── ViewModels/             # 界面状态与交互逻辑
+├── Views/                  # SwiftUI 视图
+├── Resources/              # 内置模板与可选二进制资源
+└── Utilities/              # 设置、日志、文件工具等
 ```
 
----
+## 模板系统
 
-## 🛠️ 三分钟添加您的专属套件
+### 内置模板和用户模板
 
-本项目的高阶玩法即：您可以根据不同的生产任务流，随时捏合自己的执行参数集。只需在 `Resources/Templates/` 目录下添加或修改 JSON 数据模版。
+- 内置模板位于 `FFmpegRunner/Resources/Templates/`，适合开发时随项目一起维护。
+- 用户模板默认保存在 `~/Library/Application Support/FFmpegRunner/Templates/`。
+- 在应用内可以直接导入、导出、复制、重命名和删除用户模板，不一定需要手动改文件。
 
-### 📄 标准 JSON 示范结构：
+### 最小可用模板示例
+
+下面是一份和当前项目格式一致的模板示例：
+
 ```json
 {
-  "id": "video_watermark_compress",
-  "name": "极速压缩预设",
-  "commandTemplate": "ffmpeg -i {{input_file}} {{video_codec}} -crf 23 {{output_path}}",
+  "id": "compress_video",
+  "name": "视频压缩 (H.264)",
+  "description": "使用 H.264 编码压缩视频",
+  "category": "视频处理",
+  "icon": "video.fill",
+  "commandTemplate": "ffmpeg -i {{input}} -c:v libx264 -crf {{crf}} -preset {{preset}} -y {{output}}",
   "parameters": [
     {
-      "key": "input_file",
-      "label": "源视步文件",
+      "key": "input",
+      "label": "输入文件",
       "type": "file",
+      "defaultValue": "",
+      "placeholder": "选择视频文件",
       "isRequired": true
     },
     {
-      "key": "video_codec",
-      "label": "选择视步编码方案",
-      "type": "choice",
-      "options": [
-        { "label": "无损转录 (Copy)", "value": "-c:v copy" },
-        { "label": "H.264 基准", "value": "-c:v libx264" },
-        { "label": "高效 HEVC", "value": "-c:v libx265" }
-      ],
-      "defaultValue": "-c:v libx264"
+      "key": "crf",
+      "label": "质量 (CRF)",
+      "type": "number",
+      "defaultValue": "23",
+      "isRequired": true,
+      "constraints": {
+        "min": 0,
+        "max": 51
+      }
     },
     {
-      "key": "output_path",
-      "label": "转储目标",
-      "type": "output",
-      "isRequired": true
+      "key": "preset",
+      "label": "编码速度",
+      "type": "select",
+      "defaultValue": "medium",
+      "isRequired": true,
+      "constraints": {
+        "options": ["ultrafast", "veryfast", "medium", "slow", "veryslow"]
+      }
+    },
+    {
+      "key": "output",
+      "label": "输出文件",
+      "type": "file",
+      "defaultValue": "",
+      "placeholder": "选择保存位置",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": ["mp4"],
+        "isOutputFile": true
+      }
     }
   ]
 }
 ```
 
----
+### 当前支持的参数类型
 
-## 🚀 起跑线 (构建与部署)
+- `string`
+- `number`
+- `boolean`
+- `file`
+- `select`
 
-### 系统支持底座
-- **OS**: macOS 13.0 (Ventura) 及以上版本
-- **IDE**: Xcode 15.0 及以上版本
-- （纯正的 Swift 独立仓库，暂未搭载第三方重依赖架构，轻量敏捷）
+### 模板能力补充
 
-### 手动引导运行指南
-1. **拉取资产**：
-   ```bash
-   git clone <你的开源仓库地址或目录>
-   cd FFmpegRunner
-   ```
-2. **构建本地全封闭核心支持（选做强推）**：
-   欲获得完全与您的 macOS 系统解耦的环境执行，请至 [evermeet.cx](https://evermeet.cx/ffmpeg/) 等权威源下载静态编译版本，解压提取其内核 `ffmpeg`/`ffprobe`。将其文件向 Xcode 工程结构的 `Resources/` 目录中拖拽（勾选 “*Copy items if needed*” 和 target：*FFmpegRunner* 绑定）。
-3. 主入口双击唤起 `FFmpegRunner.xcodeproj`。
-4. 在 Xcode 的物理模拟靶向栏中选取 **"My Mac"**。
-5. 按下光速启动组合键 `⌘ + R` 或按下 Run 三角箭标点燃主程序引擎。
+- 支持 `defaultValue`、`placeholder`、`isRequired`
+- 支持 `constraints`，例如 `min`、`max`、`fileTypes`、`options`
+- 支持 `optionLabels` 自定义下拉显示文案
+- 支持 `uiHint.visibleWhen` 做条件显示
+- 支持 `role: "raw"` 和 `escapeStrategy: "raw"` 处理原始参数片段
 
----
+## 构建与运行
 
-## 🧪 质检保证 (Testing Suite)
+### 系统要求
 
-我们不希望看到转义异常和组件链路的断裂，内建针对核心引擎的基础 Sandbox Unit Test：
-1. `CommandRenderer` 转义逻辑的完备查杀。
-2. Context 挂载预期性以及底层 `ExecutionPlan` 回填覆盖测试。
+- macOS 13.0 及以上
+- Xcode 15.0 及以上
 
-（利用 Xcode 唤起 `⌘ + U` 或开启专门的 Test Navigator 无感运行）
+### 本地运行
 
----
+1. 克隆仓库
 
-## 📄 开源许可证
+```bash
+git clone <repository-url>
+cd FFmpegRunner
+```
 
-本项目遵从 [MIT License](LICENSE) 允许在保留声明的情况下进行二次散播及私人定制。欢迎提交 Issues、Fork 和 PR 共建！
+2. 可选：准备内置 `ffmpeg` / `ffprobe`
+
+如果你希望应用在没有系统 FFmpeg 的机器上也能直接运行，可以下载静态编译版本，并把 `ffmpeg` / `ffprobe` 放入 Xcode 工程的 `Resources/` 中。
+
+3. 打开工程
+
+```bash
+open FFmpegRunner.xcodeproj
+```
+
+4. 在 Xcode 中选择 `My Mac`
+
+5. 按 `⌘R` 运行
+
+## 常用使用方式
+
+### 使用内置模板
+
+1. 选择左侧模板
+2. 填写输入文件、输出文件和参数
+3. 查看命令预览
+4. 点击执行，或先加入队列再统一执行
+
+### 使用自定义命令
+
+1. 选择“自定义命令”
+2. 直接输入完整 `ffmpeg` / `ffprobe` 命令
+3. 执行后，如需复用，可保存为模板
+
+### 管理模板
+
+- 导入外部 JSON 模板
+- 导出当前模板
+- 复制模板后再修改
+- 重命名用户模板
+- 删除用户模板
+
+## 测试
+
+项目当前包含命令解析、模板加载、模板管理、最近使用恢复、执行控制、队列等关键路径测试。
+
+在 Xcode 中可使用 `⌘U` 运行测试，也可以在命令行运行：
+
+```bash
+xcodebuild test \
+  -project FFmpegRunner.xcodeproj \
+  -scheme FFmpegRunner \
+  -destination 'platform=macOS'
+```
+
+## 许可证
+
+本项目基于 [MIT License](LICENSE) 开源。欢迎提交 Issue、PR 或 Fork 继续扩展。
