@@ -464,17 +464,6 @@ private struct TemplateManagementBar: View {
             .menuStyle(.borderlessButton)
 
             Spacer()
-
-            if let selectedTemplate {
-                Text(selectedTemplate.name)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            } else {
-                Text("未选择模板")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
         }
     }
 }
