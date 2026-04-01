@@ -47,7 +47,8 @@ struct ExecutionAlertsModifier: ViewModifier {
                                 executionViewModel: executionViewModel
                             )
                         }
-                    }
+                    },
+                    continueTitle: headerViewModel.confirmActionTitle
                 )
             }
             .alert("首次执行提醒", isPresented: $headerViewModel.showSafetyWarning) {
@@ -76,7 +77,7 @@ struct ExecutionAlertsModifier: ViewModifier {
                 isPresented: $headerViewModel.showRunConfirmation,
                 titleVisibility: .visible
             ) {
-                Button("执行") {
+                Button(headerViewModel.confirmActionTitle) {
                     Task {
                         await headerViewModel.confirmPendingExecution(
                             executionViewModel: executionViewModel
@@ -94,7 +95,7 @@ struct ExecutionAlertsModifier: ViewModifier {
                 Button("取消", role: .cancel) {
                     headerViewModel.cancelPendingExecution()
                 }
-                Button("覆盖", role: .destructive) {
+                Button(headerViewModel.overwriteActionTitle, role: .destructive) {
                     Task {
                         await headerViewModel.confirmPendingOverwrite(
                             executionViewModel: executionViewModel
@@ -105,13 +106,13 @@ struct ExecutionAlertsModifier: ViewModifier {
                 Text("输出文件「\(headerViewModel.existingOutputFile)」已存在，是否覆盖？")
             }
             // 保存成功提示
-            .alert("保存成功", isPresented: $headerViewModel.showSuccess) {
+            .alert(headerViewModel.successTitle, isPresented: $headerViewModel.showSuccess) {
                 Button("好的") {}
             } message: {
                 Text(headerViewModel.successMessage)
             }
             // 保存失败提示
-            .alert("保存失败", isPresented: $headerViewModel.showError) {
+            .alert(headerViewModel.errorTitle, isPresented: $headerViewModel.showError) {
                 Button("好的") {}
             } message: {
                 Text(headerViewModel.errorMessage)
@@ -143,6 +144,7 @@ private struct ExecutionReviewSheet: View {
     let outputPath: String?
     let onCancel: () -> Void
     let onContinue: () -> Void
+    let continueTitle: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -238,7 +240,7 @@ private struct ExecutionReviewSheet: View {
                 Button("取消", role: .cancel, action: onCancel)
                     .keyboardShortcut(.cancelAction)
 
-                Button("继续执行", action: onContinue)
+                Button(continueTitle, action: onContinue)
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
             }

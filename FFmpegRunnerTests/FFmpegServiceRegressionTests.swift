@@ -397,6 +397,123 @@ final class FFmpegServiceRegressionTests: XCTestCase {
         XCTAssertFalse(service.isRunning)
     }
 
+    @MainActor
+    func testExecutionControllerRunsQueuedPlansSequentially() async throws {
+        let settings = snapshotSettings()
+        defer { restoreSettings(settings) }
+
+        let markerFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("queue-sequential-\(UUID().uuidString).log")
+        defer { try? FileManager.default.removeItem(at: markerFile) }
+
+        let script = try makeExecutableScript(body: """
+        #!/bin/sh
+        marker="$1"
+        file="$2"
+        printf '%s-start\\n' "$marker" >> "$file"
+        sleep 0.2
+        printf '%s-end\\n' "$marker" >> "$file"
+        """)
+        defer { try? FileManager.default.removeItem(atPath: script) }
+
+        let resolver = MockPathResolver(
+            bundledPath: nil,
+            systemPathValue: nil
+        )
+        let service = FFmpegService.makeForTesting(pathResolver: resolver)
+        let controller = ExecutionController(ffmpegService: service)
+
+        service.setSource(.custom, customPath: script)
+        try await waitForCondition {
+            service.ffmpegPath == script
+        }
+
+        _ = controller.enqueue(plan: ExecutionPlan(
+            arguments: ["first", markerFile.path],
+            displayCommand: "ffmpeg first"
+        ))
+        _ = controller.enqueue(plan: ExecutionPlan(
+            arguments: ["second", markerFile.path],
+            displayCommand: "ffmpeg second"
+        ))
+
+        controller.startQueue()
+
+        try await waitForCondition(timeout: 3.0) {
+            !controller.isQueueRunning && controller.queueItems.isEmpty
+        }
+
+        let lines = try String(contentsOf: markerFile, encoding: .utf8)
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+
+        XCTAssertEqual(lines, ["first-start", "first-end", "second-start", "second-end"])
+        XCTAssertEqual(controller.completedQueueItemCount, 2)
+    }
+
+    @MainActor
+    func testExecutionControllerCancelStopsQueueAfterCurrentItem() async throws {
+        let settings = snapshotSettings()
+        defer { restoreSettings(settings) }
+
+        let markerFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("queue-cancel-\(UUID().uuidString).log")
+        defer { try? FileManager.default.removeItem(at: markerFile) }
+
+        let script = try makeExecutableScript(body: """
+        #!/bin/sh
+        marker="$1"
+        file="$2"
+        printf '%s-start\\n' "$marker" >> "$file"
+        sleep 5
+        printf '%s-end\\n' "$marker" >> "$file"
+        """)
+        defer { try? FileManager.default.removeItem(atPath: script) }
+
+        let resolver = MockPathResolver(
+            bundledPath: nil,
+            systemPathValue: nil
+        )
+        let service = FFmpegService.makeForTesting(pathResolver: resolver)
+        let controller = ExecutionController(ffmpegService: service)
+
+        service.setSource(.custom, customPath: script)
+        try await waitForCondition {
+            service.ffmpegPath == script
+        }
+
+        _ = controller.enqueue(plan: ExecutionPlan(
+            arguments: ["first", markerFile.path],
+            displayCommand: "ffmpeg first"
+        ))
+        _ = controller.enqueue(plan: ExecutionPlan(
+            arguments: ["second", markerFile.path],
+            displayCommand: "ffmpeg second"
+        ))
+
+        controller.startQueue()
+
+        try await waitForCondition(timeout: 2.0) {
+            controller.isQueueRunning &&
+            controller.activeQueueItemID != nil &&
+            service.isRunning
+        }
+
+        controller.cancel()
+
+        try await waitForCondition(timeout: 10.0) {
+            !controller.isQueueRunning && controller.queueItems.isEmpty && !service.isRunning
+        }
+
+        let lines = try String(contentsOf: markerFile, encoding: .utf8)
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+
+        XCTAssertEqual(lines, ["first-start"])
+        XCTAssertEqual(controller.completedQueueItemCount, 1)
+        XCTAssertNil(controller.activeQueueItemID)
+    }
+
     // MARK: - Helpers
 
     private func snapshotSettings() -> (

@@ -12,10 +12,34 @@ import SwiftUI
 @MainActor
 class TemplateHeaderViewModel: ObservableObject {
 
+    private enum PendingExecutionAction: Equatable {
+        case run
+        case enqueue
+
+        var confirmationButtonTitle: String {
+            switch self {
+            case .run:
+                return "执行"
+            case .enqueue:
+                return "加入队列"
+            }
+        }
+
+        var overwriteButtonTitle: String {
+            switch self {
+            case .run:
+                return "覆盖并执行"
+            case .enqueue:
+                return "覆盖并加入队列"
+            }
+        }
+    }
+
     private struct PendingExecutionRequest {
         let binding: TemplateBinding
         let currentCommand: RenderedCommand
         let templateName: String
+        let action: PendingExecutionAction
     }
 
     // MARK: - Published Properties
@@ -50,6 +74,12 @@ class TemplateHeaderViewModel: ObservableObject {
     /// 执行前预览的可执行文件
     @Published private(set) var runPreviewExecutable = CommandExecutable.ffmpeg.binaryName
 
+    /// 执行确认按钮文案
+    @Published private(set) var confirmActionTitle = "执行"
+
+    /// 覆盖确认按钮文案
+    @Published private(set) var overwriteActionTitle = "覆盖并执行"
+
     /// 显示覆盖确认对话框
     @Published var showOverwriteConfirm = false
 
@@ -67,11 +97,17 @@ class TemplateHeaderViewModel: ObservableObject {
     /// 显示错误提示
     @Published var showError = false
 
+    /// 错误标题
+    @Published private(set) var errorTitle = "保存失败"
+
     /// 错误信息
     @Published var errorMessage = ""
 
     /// 显示成功提示
     @Published var showSuccess = false
+
+    /// 成功标题
+    @Published private(set) var successTitle = "保存成功"
 
     /// 成功信息
     @Published var successMessage = ""
@@ -104,7 +140,8 @@ class TemplateHeaderViewModel: ObservableObject {
         let request = PendingExecutionRequest(
             binding: binding,
             currentCommand: currentCommand,
-            templateName: binding.template.name
+            templateName: binding.template.name,
+            action: .run
         )
         pendingExecutionRequest = request
 
@@ -114,6 +151,27 @@ class TemplateHeaderViewModel: ObservableObject {
             showSafetyWarning = true
             return
         }
+
+        await presentExecutionReviewIfNeeded(executionViewModel: executionViewModel)
+    }
+
+    func requestEnqueue(
+        binding: TemplateBinding?,
+        currentCommand: RenderedCommand?,
+        executionViewModel: ExecutionViewModel
+    ) async {
+        guard let binding,
+              let currentCommand else {
+            return
+        }
+
+        let request = PendingExecutionRequest(
+            binding: binding,
+            currentCommand: currentCommand,
+            templateName: binding.template.name,
+            action: .enqueue
+        )
+        pendingExecutionRequest = request
 
         await presentExecutionReviewIfNeeded(executionViewModel: executionViewModel)
     }
@@ -135,9 +193,9 @@ class TemplateHeaderViewModel: ObservableObject {
 
         showOverwriteConfirm = false
         pendingExecutionRequest = nil
-        await executeCommand(
+        await performPendingRequest(
             forceOverwrite: true,
-            binding: request.binding,
+            request: request,
             executionViewModel: executionViewModel
         )
     }
@@ -153,6 +211,8 @@ class TemplateHeaderViewModel: ObservableObject {
         runPreviewCommand = ""
         runPreviewOutputPath = nil
         runPreviewExecutable = CommandExecutable.ffmpeg.binaryName
+        confirmActionTitle = PendingExecutionAction.run.confirmationButtonTitle
+        overwriteActionTitle = PendingExecutionAction.run.overwriteButtonTitle
     }
 
     /// 执行命令
@@ -167,6 +227,28 @@ class TemplateHeaderViewModel: ObservableObject {
             binding: binding,
             forceOverwrite: forceOverwrite
         )
+    }
+
+    func enqueueCommand(
+        forceOverwrite: Bool,
+        binding: TemplateBinding?,
+        executionViewModel: ExecutionViewModel
+    ) async {
+        guard let binding else { return }
+
+        do {
+            _ = try executionViewModel.enqueue(
+                binding: binding,
+                forceOverwrite: forceOverwrite
+            )
+            successTitle = "已加入队列"
+            successMessage = "已加入队列"
+            showSuccess = true
+        } catch {
+            errorTitle = "加入队列失败"
+            errorMessage = "加入队列失败: \(error.localizedDescription)"
+            showError = true
+        }
     }
 
     /// 保存为模板
@@ -190,6 +272,7 @@ class TemplateHeaderViewModel: ObservableObject {
             try templateRepository.saveUserTemplate(template)
 
             // 成功提示
+            successTitle = "保存成功"
             successMessage = "模板「\(templateName)」保存成功"
             showSuccess = true
 
@@ -205,6 +288,7 @@ class TemplateHeaderViewModel: ObservableObject {
             templateCategory = ""
 
         } catch {
+            errorTitle = "保存失败"
             errorMessage = "保存模板失败: \(error.localizedDescription)"
             showError = true
         }
@@ -227,9 +311,9 @@ class TemplateHeaderViewModel: ObservableObject {
         }
 
         pendingExecutionRequest = nil
-        await executeCommand(
+        await performPendingRequest(
             forceOverwrite: outputExists,
-            binding: request.binding,
+            request: request,
             executionViewModel: executionViewModel
         )
     }
@@ -263,7 +347,11 @@ class TemplateHeaderViewModel: ObservableObject {
     }
 
     private func prepareRunConfirmation(for request: PendingExecutionRequest) {
-        runConfirmationTitle = "执行「\(request.templateName)」"
+        runConfirmationTitle = request.action == .run
+            ? "执行「\(request.templateName)」"
+            : "加入队列「\(request.templateName)」"
+        confirmActionTitle = request.action.confirmationButtonTitle
+        overwriteActionTitle = request.action.overwriteButtonTitle
 
         let commandPreview = request.currentCommand.displayString.count > 160
             ? String(request.currentCommand.displayString.prefix(160)) + "..."
@@ -281,9 +369,34 @@ class TemplateHeaderViewModel: ObservableObject {
     }
 
     private func prepareRunPreview(for request: PendingExecutionRequest) {
-        runPreviewTitle = "执行「\(request.templateName)」"
+        runPreviewTitle = request.action == .run
+            ? "执行「\(request.templateName)」"
+            : "加入队列「\(request.templateName)」"
+        confirmActionTitle = request.action.confirmationButtonTitle
+        overwriteActionTitle = request.action.overwriteButtonTitle
         runPreviewCommand = request.currentCommand.displayString
         runPreviewOutputPath = request.currentCommand.outputPath
         runPreviewExecutable = request.currentCommand.executable.binaryName
+    }
+
+    private func performPendingRequest(
+        forceOverwrite: Bool,
+        request: PendingExecutionRequest,
+        executionViewModel: ExecutionViewModel
+    ) async {
+        switch request.action {
+        case .run:
+            await executeCommand(
+                forceOverwrite: forceOverwrite,
+                binding: request.binding,
+                executionViewModel: executionViewModel
+            )
+        case .enqueue:
+            await enqueueCommand(
+                forceOverwrite: forceOverwrite,
+                binding: request.binding,
+                executionViewModel: executionViewModel
+            )
+        }
     }
 }

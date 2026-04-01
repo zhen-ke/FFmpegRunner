@@ -100,11 +100,26 @@ final class ExecutionController: ObservableObject {
     /// FFmpeg 版本信息
     @Published private(set) var ffmpegVersion: String?
 
+    /// 等待执行的队列项
+    @Published private(set) var queueItems: [ExecutionQueueItem] = []
+
+    /// 是否正在消费队列
+    @Published private(set) var isQueueRunning = false
+
+    /// 当前正在执行的队列项
+    @Published private(set) var activeQueueItemID: UUID?
+
+    /// 本轮队列已完成的任务数
+    @Published private(set) var completedQueueItemCount = 0
+
     // MARK: - Dependencies
 
     private let ffmpegService: FFmpegService
     private let recentCommandsService: RecentCommandsService
     private var cancellables = Set<AnyCancellable>()
+    private var queueTask: Task<Void, Never>?
+    private var shouldStopQueueAfterCurrentItem = false
+    private var isExecutingQueuedItem = false
 
     // MARK: - Callbacks
 
@@ -116,6 +131,12 @@ final class ExecutionController: ObservableObject {
 
     /// 最近使用变更回调
     var onRecentCommandsChanged: (() -> Void)?
+
+    /// 队列项开始执行回调
+    var onQueueItemStarted: ((ExecutionQueueItem) -> Void)?
+
+    /// 队列执行结束回调
+    var onQueueFinished: (() -> Void)?
 
     // MARK: - Initialization
 
@@ -173,7 +194,7 @@ final class ExecutionController: ObservableObject {
     @discardableResult
     func execute(plan: ExecutionPlan) async throws -> ExecutionResult {
         // 仅阻止真实运行中的并发；.preparing 可能来自当前调用链（command/template -> plan）
-        if ffmpegService.isRunning || state.isCancelling {
+        if ffmpegService.isRunning || state.isCancelling || (isQueueRunning && !isExecutingQueuedItem) {
             throw ExecutionError.alreadyRunning
         }
 
@@ -295,30 +316,14 @@ final class ExecutionController: ObservableObject {
         binding: TemplateBinding,
         forceOverwrite: Bool = false
     ) async throws -> ExecutionResult {
-        guard !state.isRunning else {
+        guard !state.isRunning, !isQueueRunning else {
             throw ExecutionError.alreadyRunning
         }
 
         state = .preparing
 
         do {
-            var plan = try CommandPlanner.prepare(binding: binding)
-            if forceOverwrite,
-               plan.executable == .ffmpeg,
-               !plan.arguments.contains("-y"),
-               !plan.arguments.contains("-n") {
-                var overwrittenArguments = plan.arguments
-                overwrittenArguments.insert("-y", at: 0)
-                plan = ExecutionPlan(
-                    arguments: overwrittenArguments,
-                    displayCommand: plan.displayCommand,
-                    executable: plan.executable,
-                    templateId: plan.templateId,
-                    templateName: plan.templateName,
-                    validatedBindings: plan.validatedBindings,
-                    createdAt: plan.createdAt
-                )
-            }
+            let plan = try makeExecutionPlan(binding: binding, forceOverwrite: forceOverwrite)
             return try await execute(plan: plan)
         } catch let error as CommandPlannerError {
             state = .error(error.localizedDescription)
@@ -331,7 +336,7 @@ final class ExecutionController: ObservableObject {
     /// - Returns: 执行结果
     @discardableResult
     func execute(command: String) async throws -> ExecutionResult {
-        guard !state.isRunning else {
+        guard !state.isRunning, !isQueueRunning else {
             throw ExecutionError.alreadyRunning
         }
 
@@ -357,7 +362,7 @@ final class ExecutionController: ObservableObject {
         displayCommand: String,
         executable: CommandExecutable = .ffmpeg
     ) async throws -> ExecutionResult {
-        guard !state.isRunning else {
+        guard !state.isRunning, !isQueueRunning else {
             throw ExecutionError.alreadyRunning
         }
 
@@ -369,10 +374,74 @@ final class ExecutionController: ObservableObject {
         return try await execute(plan: plan)
     }
 
+    // MARK: - Queue
+
+    @discardableResult
+    func enqueue(plan: ExecutionPlan) -> ExecutionQueueItem {
+        let item = ExecutionQueueItem(plan: plan)
+        queueItems.append(item)
+        return item
+    }
+
+    @discardableResult
+    func enqueue(
+        binding: TemplateBinding,
+        forceOverwrite: Bool = false
+    ) throws -> ExecutionQueueItem {
+        do {
+            let plan = try makeExecutionPlan(binding: binding, forceOverwrite: forceOverwrite)
+            return enqueue(plan: plan)
+        } catch let error as CommandPlannerError {
+            throw ExecutionError.planningFailed(error.localizedDescription)
+        }
+    }
+
+    func removeQueuedItem(id: UUID) {
+        guard activeQueueItemID != id else { return }
+        queueItems.removeAll { $0.id == id }
+        if queueItems.isEmpty && !state.isRunning {
+            completedQueueItemCount = 0
+        }
+    }
+
+    func clearQueue() {
+        if let activeQueueItemID {
+            queueItems.removeAll { $0.id == activeQueueItemID }
+            shouldStopQueueAfterCurrentItem = true
+            return
+        }
+
+        queueItems = []
+        completedQueueItemCount = 0
+    }
+
+    func startQueue() {
+        guard !isQueueRunning, !queueItems.isEmpty, !state.isRunning else { return }
+
+        isQueueRunning = true
+        completedQueueItemCount = 0
+        shouldStopQueueAfterCurrentItem = false
+
+        queueTask = Task { [weak self] in
+            await self?.runQueue()
+        }
+    }
+
     // MARK: - Cancel
 
     /// 取消当前执行
     func cancel() {
+        if isQueueRunning {
+            shouldStopQueueAfterCurrentItem = true
+
+            if let activeQueueItemID {
+                queueItems.removeAll { $0.id != activeQueueItemID }
+            } else {
+                queueItems = []
+                finishQueueRun()
+            }
+        }
+
         guard state.isRunning else { return }
 
         state = .cancelling
@@ -442,6 +511,72 @@ final class ExecutionController: ObservableObject {
             templateName: plan.templateName,
             parameterValues: parameterValues
         )
+    }
+
+    private func makeExecutionPlan(
+        binding: TemplateBinding,
+        forceOverwrite: Bool
+    ) throws -> ExecutionPlan {
+        var plan = try CommandPlanner.prepare(binding: binding)
+        if forceOverwrite,
+           plan.executable == .ffmpeg,
+           !plan.arguments.contains("-y"),
+           !plan.arguments.contains("-n") {
+            var overwrittenArguments = plan.arguments
+            overwrittenArguments.insert("-y", at: 0)
+            plan = ExecutionPlan(
+                arguments: overwrittenArguments,
+                displayCommand: plan.displayCommand,
+                executable: plan.executable,
+                templateId: plan.templateId,
+                templateName: plan.templateName,
+                validatedBindings: plan.validatedBindings,
+                createdAt: plan.createdAt
+            )
+        }
+        return plan
+    }
+
+    private func runQueue() async {
+        defer {
+            finishQueueRun()
+        }
+
+        while !Task.isCancelled {
+            guard let item = queueItems.first else { return }
+
+            activeQueueItemID = item.id
+            onQueueItemStarted?(item)
+
+            do {
+                isExecutingQueuedItem = true
+                _ = try await execute(plan: item.plan)
+            } catch {
+                if Task.isCancelled {
+                    return
+                }
+            }
+
+            isExecutingQueuedItem = false
+            queueItems.removeAll { $0.id == item.id }
+            completedQueueItemCount += 1
+            activeQueueItemID = nil
+
+            if shouldStopQueueAfterCurrentItem {
+                queueItems = []
+                return
+            }
+        }
+    }
+
+    private func finishQueueRun() {
+        queueTask?.cancel()
+        queueTask = nil
+        isExecutingQueuedItem = false
+        isQueueRunning = false
+        activeQueueItemID = nil
+        shouldStopQueueAfterCurrentItem = false
+        onQueueFinished?()
     }
 
     private func executePlanWithTimeoutIfNeeded(_ plan: ExecutionPlan) async throws -> ExecutionResult {

@@ -82,11 +82,31 @@ class ExecutionViewModel: ObservableObject {
     /// FFmpeg 是否可用（从 Controller 同步）
     @Published private(set) var isFFmpegAvailable = false
 
+    /// 当前待执行队列
+    @Published private(set) var queueItems: [ExecutionQueueItem] = []
+
+    /// 队列是否正在执行
+    @Published private(set) var isQueueRunning = false
+
+    /// 当前队列执行中的任务
+    @Published private(set) var activeQueueItemID: UUID?
+
+    /// 本轮队列已完成任务数
+    @Published private(set) var completedQueueItemCount = 0
+
     // MARK: - Computed Properties
 
     /// 是否正在运行
     var isRunning: Bool {
         state.isRunning
+    }
+
+    var hasQueuedItems: Bool {
+        !queueItems.isEmpty
+    }
+
+    var canStartQueue: Bool {
+        hasQueuedItems && !isQueueRunning && !isRunning
     }
 
     // MARK: - Configuration
@@ -159,6 +179,9 @@ class ExecutionViewModel: ObservableObject {
                 guard let self else { return }
                 let previousState = self.state
                 self.state = newState
+                if case .completed(let result) = newState {
+                    self.lastResult = result
+                }
                 // 执行结束后清除进度（保留最终快照一小段时间供 UI 过渡）
                 if newState.isTerminal {
                     self.progress = nil
@@ -186,6 +209,34 @@ class ExecutionViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        controller.$queueItems
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] items in
+                self?.queueItems = items
+            }
+            .store(in: &cancellables)
+
+        controller.$isQueueRunning
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] running in
+                self?.isQueueRunning = running
+            }
+            .store(in: &cancellables)
+
+        controller.$activeQueueItemID
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] id in
+                self?.activeQueueItemID = id
+            }
+            .store(in: &cancellables)
+
+        controller.$completedQueueItemCount
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] count in
+                self?.completedQueueItemCount = count
+            }
+            .store(in: &cancellables)
+
         // 设置日志回调
         controller.onLogOutput = { [weak self] entry in
             self?.appendLog(entry)
@@ -194,6 +245,10 @@ class ExecutionViewModel: ObservableObject {
         // 订阅进度更新（通过 Controller → FFmpegService → ProgressTracker）
         controller.onProgressUpdate = { [weak self] progressInfo in
             self?.progress = progressInfo
+        }
+
+        controller.onQueueItemStarted = { [weak self] item in
+            self?.prepareForQueuedExecution(item)
         }
 
         // 监听 logs、filter、searchText 变化，使用 throttle 防抖处理
@@ -227,7 +282,7 @@ class ExecutionViewModel: ObservableObject {
 
     /// 执行命令
     func execute(command: String) async {
-        guard !isRunning else { return }
+        guard !isRunning, !isQueueRunning else { return }
 
         clearLogs()
         currentTemplateName = nil
@@ -261,7 +316,7 @@ class ExecutionViewModel: ObservableObject {
         binding: TemplateBinding,
         forceOverwrite: Bool = false
     ) async {
-        guard !isRunning else { return }
+        guard !isRunning, !isQueueRunning else { return }
 
         clearLogs()
         currentTemplateName = binding.template.name
@@ -293,7 +348,7 @@ class ExecutionViewModel: ObservableObject {
         displayCommand: String,
         executable: CommandExecutable = .ffmpeg
     ) async {
-        guard !isRunning else { return }
+        guard !isRunning, !isQueueRunning else { return }
 
         clearLogs()
         currentTemplateName = nil
@@ -335,6 +390,26 @@ class ExecutionViewModel: ObservableObject {
         persistedLogs = []
         lastProgressLogTime = nil
         lastPersistedProgressLogTime = nil
+    }
+
+    @discardableResult
+    func enqueue(
+        binding: TemplateBinding,
+        forceOverwrite: Bool = false
+    ) throws -> ExecutionQueueItem {
+        try controller.enqueue(binding: binding, forceOverwrite: forceOverwrite)
+    }
+
+    func startQueue() {
+        controller.startQueue()
+    }
+
+    func removeQueuedItem(id: UUID) {
+        controller.removeQueuedItem(id: id)
+    }
+
+    func clearQueue() {
+        controller.clearQueue()
     }
 
     /// 设置 FFmpeg 来源
@@ -457,6 +532,18 @@ class ExecutionViewModel: ObservableObject {
         }
 
         logs = keepIndices.map { logs[$0] }
+    }
+
+    private func prepareForQueuedExecution(_ item: ExecutionQueueItem) {
+        clearLogs()
+        lastResult = nil
+        currentTemplateName = item.plan.templateName
+        currentCommand = item.plan.displayCommand
+        appendLog(LogEntry(
+            timestamp: Date(),
+            level: .info,
+            message: "开始执行队列任务：\(item.title)"
+        ))
     }
 
     /// 导出日志

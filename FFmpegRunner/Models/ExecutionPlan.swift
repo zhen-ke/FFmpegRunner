@@ -127,3 +127,25 @@ extension ExecutionPlan {
         )
     }
 }
+
+// MARK: - Execution Queue Item
+
+struct ExecutionQueueItem: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let plan: ExecutionPlan
+    let enqueuedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        plan: ExecutionPlan,
+        enqueuedAt: Date = Date()
+    ) {
+        self.id = id
+        self.plan = plan
+        self.enqueuedAt = enqueuedAt
+    }
+
+    var title: String {
+        plan.templateName ?? plan.executable.binaryName.uppercased()
+    }
+}
