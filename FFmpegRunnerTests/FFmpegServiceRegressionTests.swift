@@ -632,6 +632,59 @@ final class FFmpegServiceRegressionTests: XCTestCase {
         ))
     }
 
+    @MainActor
+    func testTemplateRepositoryReportsBrokenTemplateFiles() async throws {
+        let directory = try makeTemporaryTemplateDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let brokenFile = directory.appendingPathComponent("broken.json")
+        try "{".write(to: brokenFile, atomically: true, encoding: .utf8)
+
+        let repository = TemplateRepository(
+            sources: [UserTemplateSource(directory: directory)],
+            userDirectory: directory
+        )
+        let report = await repository.loadTemplates()
+
+        XCTAssertTrue(report.templates.contains { $0.id == Template.rawCommandId })
+        XCTAssertTrue(report.errors.contains {
+            if case .decodingFailed(let url, let reason) = $0 {
+                return url.lastPathComponent == "broken.json" && reason.contains("JSON 格式不正确")
+            }
+            return false
+        })
+    }
+
+    @MainActor
+    func testTemplateListViewModelShowsInvalidTemplateReasons() async throws {
+        let directory = try makeTemporaryTemplateDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let invalidTemplate = Template(
+            id: "nameless-template",
+            name: "",
+            description: "broken",
+            commandTemplate: "ffmpeg -version",
+            parameters: [],
+            category: "测试",
+            icon: "exclamationmark.triangle"
+        )
+        try writeTemplate(invalidTemplate, to: directory.appendingPathComponent("nameless-template.json"))
+
+        let repository = TemplateRepository(
+            sources: [UserTemplateSource(directory: directory)],
+            userDirectory: directory
+        )
+        let viewModel = TemplateListViewModel(templateRepository: repository)
+
+        await viewModel.loadTemplates()
+
+        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertTrue(viewModel.errorMessage?.contains("nameless-template") == true)
+        XCTAssertTrue(viewModel.errorMessage?.contains("模板名称为空") == true)
+        XCTAssertFalse(viewModel.templates.contains { $0.id == invalidTemplate.id })
+    }
+
     // MARK: - Helpers
 
     private func snapshotSettings() -> (

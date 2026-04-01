@@ -1513,7 +1513,7 @@ private actor StaticTemplateSource: TemplateSource {
         self.templates = templates
     }
 
-    func loadTemplates() async -> Result<[Template], TemplateLoadError> {
-        .success(templates)
+    func loadTemplates() async -> TemplateSourceLoadResult {
+        TemplateSourceLoadResult(templates: templates, errors: [])
     }
 }

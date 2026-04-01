@@ -85,8 +85,7 @@ class TemplateListViewModel: ObservableObject {
         selectedTemplate = templates.first(where: { $0.id == preferredTemplateId }) ?? templates.first
 
         if !report.errors.isEmpty {
-            let messages = report.errors.compactMap { $0.errorDescription }
-            errorMessage = messages.joined(separator: "\n")
+            errorMessage = Self.makeTemplateIssueMessage(from: report.errors)
         }
 
         isLoading = false
@@ -146,5 +145,26 @@ class TemplateListViewModel: ObservableObject {
     @discardableResult
     func exportTemplate(_ template: Template, to url: URL) throws -> URL {
         try templateRepository.exportTemplate(template, to: url)
+    }
+
+    private static func makeTemplateIssueMessage(from errors: [TemplateLoadError]) -> String? {
+        let descriptions = errors
+            .compactMap(\.errorDescription)
+            .reduce(into: [String]()) { result, message in
+                if !result.contains(message) {
+                    result.append(message)
+                }
+            }
+
+        guard !descriptions.isEmpty else {
+            return nil
+        }
+
+        let header = "发现 \(descriptions.count) 个模板问题："
+        let details = descriptions.enumerated().map { index, message in
+            "\(index + 1). \(message)"
+        }
+
+        return ([header] + details).joined(separator: "\n")
     }
 }

@@ -7,6 +7,13 @@
 
 import Foundation
 
+struct TemplateSourceLoadResult: Sendable {
+    let templates: [Template]
+    let errors: [TemplateLoadError]
+
+    static let empty = TemplateSourceLoadResult(templates: [], errors: [])
+}
+
 // MARK: - Protocol
 
 /// 模板来源协议
@@ -16,7 +23,7 @@ protocol TemplateSource: Sendable {
     var identifier: String { get }
 
     /// 加载该来源的所有模板
-    func loadTemplates() async -> Result<[Template], TemplateLoadError>
+    func loadTemplates() async -> TemplateSourceLoadResult
 }
 
 // MARK: - Bundle Template Source
@@ -26,10 +33,10 @@ struct BundleTemplateSource: TemplateSource {
 
     let identifier = "bundle"
 
-    func loadTemplates() async -> Result<[Template], TemplateLoadError> {
+    func loadTemplates() async -> TemplateSourceLoadResult {
         guard let url = Bundle.main.url(forResource: "Templates", withExtension: nil) else {
             // Bundle 模板目录不存在是正常情况（可能没有内置模板）
-            return .success([])
+            return .empty
         }
 
         return await TemplateFileLoader.load(from: url)
@@ -58,7 +65,7 @@ struct UserTemplateSource: TemplateSource {
         }
     }
 
-    func loadTemplates() async -> Result<[Template], TemplateLoadError> {
+    func loadTemplates() async -> TemplateSourceLoadResult {
         // 确保目录存在
         try? FileManager.default.createDirectory(
             at: directory,

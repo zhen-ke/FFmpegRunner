@@ -90,14 +90,14 @@ final class TemplateRepository {
         templateDict[rawCommand.id] = rawCommand
 
         // 2. 从所有来源并行加载（避免串行 IO）
-        let results = await withTaskGroup(of: Result<[Template], TemplateLoadError>.self) { group in
+        let results = await withTaskGroup(of: TemplateSourceLoadResult.self) { group in
             for source in sources {
                 group.addTask {
                     await source.loadTemplates()
                 }
             }
 
-            var collected: [Result<[Template], TemplateLoadError>] = []
+            var collected: [TemplateSourceLoadResult] = []
             for await result in group {
                 collected.append(result)
             }
@@ -105,28 +105,27 @@ final class TemplateRepository {
         }
 
         for result in results {
-            switch result {
-            case .success(let templates):
-                for template in templates {
-                    // 验证模板
-                    let warnings = validator.validate(template)
+            allErrors.append(contentsOf: result.errors)
 
-                    // 只添加有效模板（无致命错误）
-                    if validator.isValid(template) {
-                        templateDict[template.id] = template
+            for template in result.templates {
+                let warnings = validator.validate(template)
+                let fatalWarnings = warnings.filter(\.isFatal)
 
-                        // 记录警告
-                        if !warnings.isEmpty {
-                            allWarnings[template.id] = warnings
-                        }
-                    } else {
-                        // 记录致命警告但不添加模板
-                        allWarnings[template.id] = warnings
+                if fatalWarnings.isEmpty {
+                    templateDict[template.id] = template
+
+                    if !warnings.isEmpty {
+                        allWarnings[warningKey(for: template)] = warnings
                     }
+                } else {
+                    allWarnings[warningKey(for: template)] = warnings
+                    allErrors.append(
+                        .invalidTemplate(
+                            templateDisplayName(for: template),
+                            fatalWarnings.map(\.description)
+                        )
+                    )
                 }
-
-            case .failure(let error):
-                allErrors.append(error)
             }
         }
 
@@ -331,6 +330,25 @@ final class TemplateRepository {
     private func normalizedTemplateName(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "未命名模板" : trimmed
+    }
+
+    private func warningKey(for template: Template) -> String {
+        let trimmedID = template.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedID.isEmpty ? UUID().uuidString : trimmedID
+    }
+
+    private func templateDisplayName(for template: Template) -> String {
+        let trimmedName = template.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedName.isEmpty {
+            return trimmedName
+        }
+
+        let trimmedID = template.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedID.isEmpty {
+            return trimmedID
+        }
+
+        return "未命名模板"
     }
 
     /// 创建内置的 RawCommandTemplate
