@@ -134,7 +134,10 @@ extension Template {
         let copiedParameters = parameters.map { parameter in
             var parameter = parameter
             if let defaultValue = defaultValuesByKey[parameter.key] {
-                if parameter.type == .file && !preservingFileParameterDefaults {
+                if parameter.shouldClearDefaultValueWhenSavingAsUserTemplate(
+                    snapshotValue: defaultValue,
+                    preservingFileParameterDefaults: preservingFileParameterDefaults
+                ) {
                     parameter.defaultValue = ""
                 } else {
                     parameter.defaultValue = defaultValue
@@ -152,5 +155,87 @@ extension Template {
             category: category ?? "用户模板",
             icon: icon ?? self.icon
         )
+    }
+}
+
+private extension TemplateParameter {
+    private static let reusableTemplatePathKeys: Set<String> = [
+        "input",
+        "output",
+        "source",
+        "src",
+        "inputfile",
+        "outputfile",
+        "videoinput",
+        "videooutput",
+        "audioinput",
+        "audiooutput"
+    ]
+
+    func shouldClearDefaultValueWhenSavingAsUserTemplate(
+        snapshotValue: String,
+        preservingFileParameterDefaults: Bool
+    ) -> Bool {
+        if type == .file {
+            return !preservingFileParameterDefaults
+        }
+
+        if constraints?.isOutputFile == true {
+            return true
+        }
+
+        let normalizedKey = key
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        guard Self.reusableTemplatePathKeys.contains(normalizedKey) else {
+            return false
+        }
+
+        // 只在值看起来像真实文件/路径时清空，避免误伤普通字符串参数。
+        return snapshotValue.looksLikeFileSystemValue
+    }
+}
+
+private extension String {
+    var looksLikeFileSystemValue: Bool {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        if trimmed.hasPrefix("/") || trimmed.hasPrefix("~") {
+            return true
+        }
+
+        if trimmed.contains("\\") || trimmed.contains("/") {
+            return true
+        }
+
+        let lastComponent = URL(fileURLWithPath: trimmed).lastPathComponent
+        guard !lastComponent.isEmpty, lastComponent != trimmed && trimmed.contains("/") else {
+            return Self.looksLikeFilename(trimmed)
+        }
+
+        return Self.looksLikeFilename(lastComponent)
+    }
+
+    private static func looksLikeFilename(_ value: String) -> Bool {
+        let candidate = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty,
+              !candidate.hasPrefix("-"),
+              !candidate.contains("{{"),
+              !candidate.contains("=") else {
+            return false
+        }
+
+        let nsValue = candidate as NSString
+        let ext = nsValue.pathExtension
+        guard !ext.isEmpty, ext.count <= 8 else { return false }
+
+        let stem = nsValue.deletingPathExtension
+        guard !stem.isEmpty else { return false }
+
+        let invalidCharacters = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters)
+            .subtracting(CharacterSet(charactersIn: "._-"))
+        return stem.rangeOfCharacter(from: invalidCharacters) == nil
     }
 }
