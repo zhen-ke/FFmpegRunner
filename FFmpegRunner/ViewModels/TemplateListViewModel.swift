@@ -101,4 +101,50 @@ class TemplateListViewModel: ObservableObject {
     func removeTemplate(_ template: Template) {
         templates.removeAll { $0.id == template.id }
     }
+
+    func canRename(_ template: Template) -> Bool {
+        templateRepository.canRenameTemplate(template)
+    }
+
+    func canDelete(_ template: Template) -> Bool {
+        templateRepository.canDeleteTemplate(template)
+    }
+
+    func canDuplicate(_ template: Template) -> Bool {
+        templateRepository.canDuplicateTemplate(template)
+    }
+
+    func canExport(_ template: Template) -> Bool {
+        templateRepository.canExportTemplate(template)
+    }
+
+    func importTemplates(from urls: [URL]) async -> TemplateImportSummary {
+        let summary = await templateRepository.importTemplates(from: urls)
+        await loadTemplates()
+        return summary
+    }
+
+    @discardableResult
+    func duplicateTemplate(_ template: Template, named name: String? = nil) throws -> Template {
+        let duplicated = try templateRepository.duplicateTemplate(template, named: name)
+        templates.append(duplicated)
+        templates = TemplateSorter.sort(templates)
+        selectedTemplate = duplicated
+        return duplicated
+    }
+
+    @discardableResult
+    func renameTemplate(_ template: Template, to newName: String) throws -> Template {
+        let renamed = try templateRepository.renameUserTemplate(template, to: newName)
+        if let index = templates.firstIndex(where: { $0.id == template.id }) {
+            templates[index] = renamed
+        }
+        selectedTemplate = renamed
+        return renamed
+    }
+
+    @discardableResult
+    func exportTemplate(_ template: Template, to url: URL) throws -> URL {
+        try templateRepository.exportTemplate(template, to: url)
+    }
 }

@@ -8,6 +8,33 @@
 
 import Foundation
 
+enum TemplateRepositoryError: LocalizedError {
+    case notUserTemplate
+    case invalidImportedTemplate(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .notUserTemplate:
+            return "只有用户模板才能直接重命名或删除"
+        case .invalidImportedTemplate(let reason):
+            return reason
+        }
+    }
+}
+
+struct TemplateImportSummary {
+    let importedTemplates: [Template]
+    let errors: [String]
+
+    var importedCount: Int {
+        importedTemplates.count
+    }
+
+    var hasFailures: Bool {
+        !errors.isEmpty
+    }
+}
+
 /// 模板仓库 - 新的统一入口
 /// 整合所有模板来源、校验器、排序器
 @MainActor
@@ -150,20 +177,161 @@ final class TemplateRepository {
 
     /// 保存用户模板到应用支持目录
     func saveUserTemplate(_ template: Template) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .prettyPrinted
-
-        let data = try encoder.encode(template)
         try FileManager.default.createDirectory(
             at: userTemplatesDirectory,
             withIntermediateDirectories: true
         )
 
         let fileURL = userTemplatesDirectory.appendingPathComponent("\(template.id).json")
-        try data.write(to: fileURL)
+        try writeTemplate(template, to: fileURL)
+    }
+
+    /// 导入模板文件
+    func importTemplates(from urls: [URL]) async -> TemplateImportSummary {
+        let existingTemplates = await loadAllTemplates()
+        var usedIDs = Set(existingTemplates.map(\.id))
+        var importedTemplates: [Template] = []
+        var errors: [String] = []
+
+        for url in urls {
+            let imported: Template
+            switch await TemplateFileLoader.loadSingle(from: url) {
+            case .success(let template):
+                imported = template
+            case .failure(let error):
+                errors.append(error.localizedDescription)
+                continue
+            }
+
+            let warnings = validator.validate(imported)
+            let fatalWarnings = warnings.filter(\.isFatal)
+            if !fatalWarnings.isEmpty {
+                let reasons = fatalWarnings.map(\.description).joined(separator: "，")
+                errors.append("\(url.lastPathComponent)：\(reasons)")
+                continue
+            }
+
+            let normalized = normalizedImportedTemplate(imported, usedIDs: &usedIDs)
+
+            do {
+                try saveUserTemplate(normalized)
+                importedTemplates.append(normalized)
+            } catch {
+                errors.append("\(url.lastPathComponent)：\(error.localizedDescription)")
+            }
+        }
+
+        return TemplateImportSummary(
+            importedTemplates: importedTemplates,
+            errors: errors
+        )
+    }
+
+    /// 导出模板到指定位置
+    @discardableResult
+    func exportTemplate(_ template: Template, to destinationURL: URL) throws -> URL {
+        let finalURL: URL
+        if destinationURL.pathExtension.isEmpty {
+            finalURL = destinationURL.appendingPathExtension("json")
+        } else {
+            finalURL = destinationURL
+        }
+
+        try writeTemplate(template, to: finalURL)
+        return finalURL
+    }
+
+    /// 复制模板到用户目录
+    func duplicateTemplate(_ template: Template, named name: String? = nil) throws -> Template {
+        let duplicated = Template(
+            id: "user-\(UUID().uuidString)",
+            name: normalizedTemplateName(name ?? "\(template.name) 副本"),
+            description: template.description,
+            commandTemplate: template.commandTemplate,
+            parameters: template.parameters,
+            category: template.category ?? "用户模板",
+            icon: template.icon
+        )
+
+        try saveUserTemplate(duplicated)
+        return duplicated
+    }
+
+    /// 重命名用户模板
+    func renameUserTemplate(_ template: Template, to newName: String) throws -> Template {
+        guard canDeleteTemplate(template) else {
+            throw TemplateRepositoryError.notUserTemplate
+        }
+
+        let renamed = Template(
+            id: template.id,
+            name: normalizedTemplateName(newName),
+            description: template.description,
+            commandTemplate: template.commandTemplate,
+            parameters: template.parameters,
+            category: template.category,
+            icon: template.icon
+        )
+
+        try saveUserTemplate(renamed)
+        return renamed
+    }
+
+    /// 判断模板是否可重命名
+    func canRenameTemplate(_ template: Template) -> Bool {
+        canDeleteTemplate(template)
+    }
+
+    /// 判断模板是否可复制
+    func canDuplicateTemplate(_ template: Template) -> Bool {
+        !template.isBuiltInRawCommand
+    }
+
+    /// 判断模板是否可导出
+    func canExportTemplate(_ template: Template) -> Bool {
+        !template.isBuiltInRawCommand
+    }
+
+    /// 判断模板是否来自用户目录
+    func isUserTemplate(_ template: Template) -> Bool {
+        canDeleteTemplate(template)
     }
 
     // MARK: - Private
+
+    private func writeTemplate(_ template: Template, to url: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        let data = try encoder.encode(template)
+        try data.write(to: url, options: .atomic)
+    }
+
+    private func normalizedImportedTemplate(
+        _ template: Template,
+        usedIDs: inout Set<String>
+    ) -> Template {
+        var resolvedID = template.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if resolvedID.isEmpty || resolvedID == Template.rawCommandId || usedIDs.contains(resolvedID) {
+            resolvedID = "user-\(UUID().uuidString)"
+        }
+        usedIDs.insert(resolvedID)
+
+        return Template(
+            id: resolvedID,
+            name: normalizedTemplateName(template.name),
+            description: template.description.isEmpty ? "导入的模板" : template.description,
+            commandTemplate: template.commandTemplate,
+            parameters: template.parameters,
+            category: template.category ?? "用户模板",
+            icon: template.icon
+        )
+    }
+
+    private func normalizedTemplateName(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "未命名模板" : trimmed
+    }
 
     /// 创建内置的 RawCommandTemplate
     private func createRawCommandTemplate() -> Template {

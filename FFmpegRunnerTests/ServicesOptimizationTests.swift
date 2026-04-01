@@ -87,4 +87,3 @@ final class ServicesOptimizationTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: HardwareAccelerationProbe.CacheKey.probedAt)
     }
 }
-

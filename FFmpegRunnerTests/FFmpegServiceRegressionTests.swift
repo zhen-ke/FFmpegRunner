@@ -514,6 +514,124 @@ final class FFmpegServiceRegressionTests: XCTestCase {
         XCTAssertNil(controller.activeQueueItemID)
     }
 
+    @MainActor
+    func testTemplateRepositoryImportReassignsConflictingID() async throws {
+        let directory = try makeTemporaryTemplateDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let existing = Template(
+            id: "compress-video",
+            name: "旧模板",
+            description: "existing",
+            commandTemplate: "ffmpeg -i {{input}} {{output}}",
+            parameters: [
+                TemplateParameter(key: "input", label: "Input", type: .string, isRequired: true),
+                TemplateParameter(key: "output", label: "Output", type: .string, isRequired: true)
+            ],
+            category: "用户模板",
+            icon: "film"
+        )
+        try writeTemplate(existing, to: directory.appendingPathComponent("\(existing.id).json"))
+
+        let importedFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("incoming-template-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: importedFile) }
+
+        let incoming = Template(
+            id: "compress-video",
+            name: "导入模板",
+            description: "incoming",
+            commandTemplate: "ffmpeg -i {{input}} -c:v libx264 {{output}}",
+            parameters: [
+                TemplateParameter(key: "input", label: "Input", type: .string, isRequired: true),
+                TemplateParameter(key: "output", label: "Output", type: .string, isRequired: true)
+            ],
+            category: nil,
+            icon: "wand.and.stars"
+        )
+        try writeTemplate(incoming, to: importedFile)
+
+        let repository = TemplateRepository(
+            sources: [UserTemplateSource(directory: directory)],
+            userDirectory: directory
+        )
+        let summary = await repository.importTemplates(from: [importedFile])
+
+        XCTAssertEqual(summary.importedCount, 1)
+        XCTAssertTrue(summary.errors.isEmpty)
+
+        let imported = try XCTUnwrap(summary.importedTemplates.first)
+        XCTAssertNotEqual(imported.id, incoming.id)
+        XCTAssertEqual(imported.name, incoming.name)
+        XCTAssertEqual(imported.category, "用户模板")
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent("\(imported.id).json").path
+        ))
+    }
+
+    @MainActor
+    func testTemplateRepositoryExportAppendsJSONExtension() throws {
+        let directory = try makeTemporaryTemplateDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let repository = TemplateRepository(
+            sources: [UserTemplateSource(directory: directory)],
+            userDirectory: directory
+        )
+        let template = Template(
+            id: "exportable",
+            name: "导出模板",
+            description: "export",
+            commandTemplate: "ffmpeg -version",
+            parameters: [],
+            category: "工具",
+            icon: "square.and.arrow.up"
+        )
+
+        let exportedURL = try repository.exportTemplate(
+            template,
+            to: directory.appendingPathComponent("my-template")
+        )
+
+        XCTAssertEqual(exportedURL.pathExtension, "json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: exportedURL.path))
+    }
+
+    @MainActor
+    func testTemplateRepositoryDuplicateAndRenameUserTemplate() throws {
+        let directory = try makeTemporaryTemplateDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let repository = TemplateRepository(
+            sources: [UserTemplateSource(directory: directory)],
+            userDirectory: directory
+        )
+        let template = Template(
+            id: "user-original",
+            name: "原始模板",
+            description: "original",
+            commandTemplate: "ffmpeg -i {{input}} {{output}}",
+            parameters: [
+                TemplateParameter(key: "input", label: "Input", type: .string, isRequired: true),
+                TemplateParameter(key: "output", label: "Output", type: .string, isRequired: true)
+            ],
+            category: "用户模板",
+            icon: "doc"
+        )
+        try repository.saveUserTemplate(template)
+
+        let duplicated = try repository.duplicateTemplate(template, named: "原始模板 副本")
+        XCTAssertNotEqual(duplicated.id, template.id)
+        XCTAssertEqual(duplicated.name, "原始模板 副本")
+
+        let renamed = try repository.renameUserTemplate(duplicated, to: "新的模板名")
+        XCTAssertEqual(renamed.id, duplicated.id)
+        XCTAssertEqual(renamed.name, "新的模板名")
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent("\(renamed.id).json").path
+        ))
+    }
+
     // MARK: - Helpers
 
     private func snapshotSettings() -> (
@@ -588,6 +706,20 @@ final class FFmpegServiceRegressionTests: XCTestCase {
         try body.write(toFile: path, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
         return path
+    }
+
+    private func makeTemporaryTemplateDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("template-repository-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private func writeTemplate(_ template: Template, to url: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(template)
+        try data.write(to: url)
     }
 }
 

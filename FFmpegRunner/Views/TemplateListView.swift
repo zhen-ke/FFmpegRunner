@@ -49,10 +49,11 @@ struct TemplateListView: View {
             // 模板列表
             if viewModel.isLoading {
                 LoadingView()
-            } else if viewModel.filteredTemplates.isEmpty && recentCommandsViewModel.isEmpty {
-                NoResultsView()
             } else {
-                SidebarContentView(showHistorySheet: $showHistorySheet)
+                SidebarContentView(
+                    showHistorySheet: $showHistorySheet,
+                    showsEmptyState: viewModel.filteredTemplates.isEmpty && recentCommandsViewModel.isEmpty
+                )
             }
         }
         .navigationTitle("FFmpeg 模板")
@@ -86,43 +87,98 @@ struct SidebarContentView: View {
     @EnvironmentObject var executionViewModel: ExecutionViewModel
 
     @Binding var showHistorySheet: Bool
+    let showsEmptyState: Bool
 
     @State private var activeAlert: SidebarAlertType?
     @State private var listSelection: Template?
+    @State private var editSheet: TemplateEditSheet?
+    @State private var templateNameDraft = ""
+    @State private var noticeTitle = "已完成"
+    @State private var noticeMessage: String?
 
     var body: some View {
-        List(selection: $listSelection) {
-            // ✅ 最近使用（最多 3 条）
-            if !recentCommandsViewModel.isEmpty {
-                RecentHistorySection(
-                    history: Array(recentCommandsViewModel.recentCommands.prefix(3)),
-                    onShowAll: { showHistorySheet = true }
-                )
-            }
+        VStack(spacing: 0) {
+            TemplateManagementBar(
+                selectedTemplate: viewModel.selectedTemplate,
+                canExportSelected: selectedTemplateCanExport,
+                canDuplicateSelected: selectedTemplateCanDuplicate,
+                canRenameSelected: selectedTemplateCanRename,
+                canDeleteSelected: selectedTemplateCanDelete,
+                onImport: importTemplates,
+                onExport: exportSelectedTemplate,
+                onDuplicate: duplicateSelectedTemplate,
+                onRename: renameSelectedTemplate,
+                onDelete: confirmDeleteSelectedTemplate
+            )
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
 
-            // 模板分类
-            ForEach(viewModel.categories, id: \.self) { category in
-                Section(header: Text(category)) {
-                    ForEach(viewModel.groupedTemplates[category] ?? []) { template in
-                        TemplateRowView(
-                            template: template,
-                            isSelected: viewModel.selectedTemplate?.id == template.id
+            Divider()
+
+            if showsEmptyState {
+                NoResultsView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(selection: $listSelection) {
+                    // ✅ 最近使用（最多 3 条）
+                    if !recentCommandsViewModel.isEmpty {
+                        RecentHistorySection(
+                            history: Array(recentCommandsViewModel.recentCommands.prefix(3)),
+                            onShowAll: { showHistorySheet = true }
                         )
-                        .tag(template)
-                            .contextMenu {
-                                if TemplateRepository.shared.canDeleteTemplate(template) {
-                                    Button(role: .destructive) {
-                                        activeAlert = .deleteConfirmation(template)
-                                    } label: {
-                                        Label("删除模板", systemImage: "trash")
+                    }
+
+                    // 模板分类
+                    ForEach(viewModel.categories, id: \.self) { category in
+                        Section(header: Text(category)) {
+                            ForEach(viewModel.groupedTemplates[category] ?? []) { template in
+                                TemplateRowView(
+                                    template: template,
+                                    isSelected: viewModel.selectedTemplate?.id == template.id
+                                )
+                                .tag(template)
+                                .contextMenu {
+                                    if viewModel.canDuplicate(template) {
+                                        Button {
+                                            presentDuplicateSheet(for: template)
+                                        } label: {
+                                            Label("复制模板…", systemImage: "plus.square.on.square")
+                                        }
+                                    }
+
+                                    if viewModel.canExport(template) {
+                                        Button {
+                                            exportTemplate(template)
+                                        } label: {
+                                            Label("导出模板…", systemImage: "square.and.arrow.up")
+                                        }
+                                    }
+
+                                    if viewModel.canRename(template) {
+                                        Button {
+                                            presentRenameSheet(for: template)
+                                        } label: {
+                                            Label("重命名…", systemImage: "pencil")
+                                        }
+                                    }
+
+                                    if viewModel.canDelete(template) {
+                                        Divider()
+
+                                        Button(role: .destructive) {
+                                            activeAlert = .deleteConfirmation(template)
+                                        } label: {
+                                            Label("删除模板", systemImage: "trash")
+                                        }
                                     }
                                 }
                             }
+                        }
                     }
                 }
+                .listStyle(.sidebar)
             }
         }
-        .listStyle(.sidebar)
         .onAppear {
             listSelection = viewModel.selectedTemplate
         }
@@ -135,6 +191,15 @@ struct SidebarContentView: View {
             if viewModel.selectedTemplate?.id != newValue?.id {
                 viewModel.selectedTemplate = newValue
             }
+        }
+        .sheet(item: $editSheet) { sheet in
+            RenameSheetView(
+                title: sheet.title,
+                text: $templateNameDraft,
+                onSave: {
+                    handleTemplateEditSave(sheet)
+                }
+            )
         }
         .alert(item: $activeAlert) { alertType in
             switch alertType {
@@ -157,6 +222,16 @@ struct SidebarContentView: View {
                 )
             }
         }
+        .alert(noticeTitle, isPresented: Binding(
+            get: { noticeMessage != nil },
+            set: { if !$0 { noticeMessage = nil } }
+        )) {
+            Button("确定", role: .cancel) {
+                noticeMessage = nil
+            }
+        } message: {
+            Text(noticeMessage ?? "")
+        }
     }
 
     // MARK: - 模板操作
@@ -173,6 +248,233 @@ struct SidebarContentView: View {
             }
         } else {
             activeAlert = .deleteError("无法删除模板，请检查文件权限。")
+        }
+    }
+
+    private var selectedTemplateCanExport: Bool {
+        guard let template = viewModel.selectedTemplate else { return false }
+        return viewModel.canExport(template)
+    }
+
+    private var selectedTemplateCanDuplicate: Bool {
+        guard let template = viewModel.selectedTemplate else { return false }
+        return viewModel.canDuplicate(template)
+    }
+
+    private var selectedTemplateCanRename: Bool {
+        guard let template = viewModel.selectedTemplate else { return false }
+        return viewModel.canRename(template)
+    }
+
+    private var selectedTemplateCanDelete: Bool {
+        guard let template = viewModel.selectedTemplate else { return false }
+        return viewModel.canDelete(template)
+    }
+
+    private func importTemplates() {
+        Task { @MainActor in
+            let urls = await FilePicker.selectFiles(
+                types: ["json"],
+                prompt: "导入模板"
+            )
+            guard !urls.isEmpty else { return }
+
+            let summary = await viewModel.importTemplates(from: urls)
+
+            if summary.importedCount == 0 {
+                noticeTitle = "导入失败"
+                noticeMessage = summary.errors.joined(separator: "\n")
+                return
+            }
+
+            if let imported = summary.importedTemplates.first, summary.importedCount == 1 {
+                viewModel.selectedTemplate = imported
+            }
+
+            if summary.hasFailures {
+                noticeTitle = "部分导入完成"
+                noticeMessage = """
+                已导入 \(summary.importedCount) 个模板。
+
+                \(summary.errors.joined(separator: "\n"))
+                """
+            } else {
+                noticeTitle = "导入成功"
+                noticeMessage = "已导入 \(summary.importedCount) 个模板。"
+            }
+        }
+    }
+
+    private func exportSelectedTemplate() {
+        guard let template = viewModel.selectedTemplate else { return }
+        exportTemplate(template)
+    }
+
+    private func exportTemplate(_ template: Template) {
+        Task { @MainActor in
+            let destination = await FilePicker.saveFile(
+                defaultName: exportFileName(for: template),
+                types: ["json"],
+                prompt: "导出模板"
+            )
+            guard let destination else { return }
+
+            do {
+                let savedURL = try viewModel.exportTemplate(template, to: destination)
+                noticeTitle = "导出成功"
+                noticeMessage = "模板已导出到：\(savedURL.path)"
+            } catch {
+                noticeTitle = "导出失败"
+                noticeMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func duplicateSelectedTemplate() {
+        guard let template = viewModel.selectedTemplate else { return }
+        presentDuplicateSheet(for: template)
+    }
+
+    private func renameSelectedTemplate() {
+        guard let template = viewModel.selectedTemplate else { return }
+        presentRenameSheet(for: template)
+    }
+
+    private func confirmDeleteSelectedTemplate() {
+        guard let template = viewModel.selectedTemplate else { return }
+        activeAlert = .deleteConfirmation(template)
+    }
+
+    private func presentDuplicateSheet(for template: Template) {
+        templateNameDraft = "\(template.name) 副本"
+        editSheet = .duplicate(template)
+    }
+
+    private func presentRenameSheet(for template: Template) {
+        templateNameDraft = template.name
+        editSheet = .rename(template)
+    }
+
+    private func handleTemplateEditSave(_ sheet: TemplateEditSheet) {
+        let trimmedName = templateNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return }
+
+        do {
+            switch sheet {
+            case .duplicate(let template):
+                _ = try viewModel.duplicateTemplate(template, named: trimmedName)
+                noticeTitle = "复制成功"
+                noticeMessage = "已创建模板「\(trimmedName)」。"
+            case .rename(let template):
+                _ = try viewModel.renameTemplate(template, to: trimmedName)
+                noticeTitle = "重命名成功"
+                noticeMessage = "模板已更新为「\(trimmedName)」。"
+            }
+        } catch {
+            noticeTitle = sheet.failureTitle
+            noticeMessage = error.localizedDescription
+        }
+    }
+
+    private func exportFileName(for template: Template) -> String {
+        let sanitized = template.name
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "-")
+        return sanitized.isEmpty ? "template.json" : "\(sanitized).json"
+    }
+}
+
+private enum TemplateEditSheet: Identifiable {
+    case duplicate(Template)
+    case rename(Template)
+
+    var id: String {
+        switch self {
+        case .duplicate(let template):
+            return "duplicate-\(template.id)"
+        case .rename(let template):
+            return "rename-\(template.id)"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .duplicate:
+            return "复制模板"
+        case .rename:
+            return "重命名模板"
+        }
+    }
+
+    var failureTitle: String {
+        switch self {
+        case .duplicate:
+            return "复制失败"
+        case .rename:
+            return "重命名失败"
+        }
+    }
+}
+
+private struct TemplateManagementBar: View {
+    let selectedTemplate: Template?
+    let canExportSelected: Bool
+    let canDuplicateSelected: Bool
+    let canRenameSelected: Bool
+    let canDeleteSelected: Bool
+    let onImport: () -> Void
+    let onExport: () -> Void
+    let onDuplicate: () -> Void
+    let onRename: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: onImport) {
+                Label("导入", systemImage: "square.and.arrow.down")
+            }
+            .buttonStyle(.bordered)
+
+            Button(action: onExport) {
+                Label("导出", systemImage: "square.and.arrow.up")
+            }
+            .buttonStyle(.bordered)
+            .disabled(!canExportSelected)
+
+            Menu {
+                Button(action: onDuplicate) {
+                    Label("复制模板", systemImage: "plus.square.on.square")
+                }
+                .disabled(!canDuplicateSelected)
+
+                Button(action: onRename) {
+                    Label("重命名", systemImage: "pencil")
+                }
+                .disabled(!canRenameSelected)
+
+                Divider()
+
+                Button(role: .destructive, action: onDelete) {
+                    Label("删除模板", systemImage: "trash")
+                }
+                .disabled(!canDeleteSelected)
+            } label: {
+                Label("管理", systemImage: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+
+            Spacer()
+
+            if let selectedTemplate {
+                Text(selectedTemplate.name)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            } else {
+                Text("未选择模板")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
         }
     }
 }
