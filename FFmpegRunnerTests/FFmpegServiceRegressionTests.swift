@@ -685,6 +685,50 @@ final class FFmpegServiceRegressionTests: XCTestCase {
         XCTAssertFalse(viewModel.templates.contains { $0.id == invalidTemplate.id })
     }
 
+    func testExecutionViewModelMatchesOnlyLastExecutedCommand() async throws {
+        let settings = snapshotSettings()
+        defer { restoreSettings(settings) }
+
+        let truePath = "/usr/bin/true"
+        guard FileManager.default.isExecutableFile(atPath: truePath) else {
+            throw XCTSkip("Missing executable: \(truePath)")
+        }
+
+        let recentDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("execution-match-recent-\(UUID().uuidString)", isDirectory: true)
+        let legacyDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("execution-match-legacy-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: recentDirectory)
+            try? FileManager.default.removeItem(at: legacyDirectory)
+        }
+
+        let controller = ExecutionController(
+            ffmpegService: FFmpegService.makeForTesting(
+                pathResolver: MockPathResolver(
+                    bundledPath: nil,
+                    systemPathValue: nil
+                )
+            ),
+            recentCommandsService: RecentCommandsService(
+                recentCommandsDirectory: recentDirectory,
+                legacyHistoryDirectory: legacyDirectory
+            )
+        )
+        let viewModel = ExecutionViewModel(controller: controller)
+
+        viewModel.setFFmpegSource(.custom, customPath: truePath)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        await viewModel.execute(command: "ffmpeg -version")
+
+        XCTAssertTrue(viewModel.matchesLastExecutedCommand("ffmpeg -version"))
+        XCTAssertFalse(viewModel.matchesLastExecutedCommand("ffprobe -show_streams source.mov"))
+
+        viewModel.reset()
+        XCTAssertFalse(viewModel.matchesLastExecutedCommand("ffmpeg -version"))
+    }
+
     // MARK: - Helpers
 
     private func snapshotSettings() -> (

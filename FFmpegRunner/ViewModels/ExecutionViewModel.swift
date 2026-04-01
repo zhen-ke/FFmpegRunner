@@ -109,6 +109,14 @@ class ExecutionViewModel: ObservableObject {
         hasQueuedItems && !isQueueRunning && !isRunning
     }
 
+    /// 当前命令预览是否对应最近一次执行上下文
+    func matchesLastExecutedCommand(_ command: String) -> Bool {
+        guard let currentCommand else { return false }
+
+        return currentCommand.trimmingCharacters(in: .whitespacesAndNewlines) ==
+            command.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // MARK: - Configuration
 
     /// 最大日志条目数

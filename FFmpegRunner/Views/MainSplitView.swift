@@ -68,8 +68,6 @@ struct DetailContentView: View {
         .onChange(of: listViewModel.selectedTemplate) { newTemplate in
             headerViewModel.cancelPendingExecution()
             detailViewModel.selectTemplate(newTemplate)
-            executionViewModel.clearLogs()
-            executionViewModel.reset()
         }
     }
 }

@@ -119,8 +119,12 @@ struct TemplateHeaderView: View {
         guard let template = detailViewModel.template else { return false }
         let isRawCommand = template.isBuiltInRawCommand
         let hasSuccessfulResult = executionViewModel.lastResult?.isSuccess == true
+        let previewMatchesLastExecution = executionViewModel.matchesLastExecutedCommand(
+            previewViewModel.renderedCommand
+        )
         return isRawCommand &&
             hasSuccessfulResult &&
+            previewMatchesLastExecution &&
             !executionViewModel.isRunning &&
             !executionViewModel.isQueueRunning
     }
