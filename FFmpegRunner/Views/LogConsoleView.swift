@@ -39,12 +39,16 @@ private enum ConsoleTheme {
     static let divider = NSColor.separatorColor.withAlphaComponent(0.18)
 
     static let text = NSColor.textColor
-    static let timestamp = NSColor.secondaryLabelColor.withAlphaComponent(0.6)
+    static let timestamp = NSColor.secondaryLabelColor
     static let debug = NSColor.secondaryLabelColor
     static let warning = NSColor.systemOrange.withAlphaComponent(0.92)
     static let error = NSColor.systemRed.withAlphaComponent(0.95)
     static let stderr = NSColor.systemOrange.withAlphaComponent(0.88)
-    static let errorBackground = NSColor.systemRed.withAlphaComponent(0.08)
+    static let errorBackground = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor.systemRed.withAlphaComponent(0.16)
+            : NSColor.systemRed.withAlphaComponent(0.08)
+    }
     static let activeHighlight = NSColor.controlAccentColor.withAlphaComponent(0.05)
 }
 
@@ -131,7 +135,7 @@ struct ConsoleHeaderView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 10) {
                 Text("控制台")
                     .font(.headline)
 
@@ -145,27 +149,15 @@ struct ConsoleHeaderView: View {
                         .foregroundColor(.orange)
                 }
 
-                Menu {
+                Picker("过滤", selection: $logFilter) {
                     ForEach(LogFilter.allCases, id: \.self) { filter in
-                        Button {
-                            logFilter = filter
-                        } label: {
-                            HStack {
-                                Text(filter.rawValue)
-                                if logFilter == filter {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
+                        Text(filter.rawValue).tag(filter)
                     }
-                } label: {
-                    Image(systemName: logFilter == .all
-                          ? "line.3.horizontal.decrease.circle"
-                          : "line.3.horizontal.decrease.circle.fill")
                 }
-                .menuStyle(.borderlessButton)
-                .frame(width: 28)
-                .help("日志过滤: \(logFilter.rawValue)")
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 90)
+                .help("过滤日志")
 
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
@@ -180,29 +172,36 @@ struct ConsoleHeaderView: View {
                     Image(systemName: showSearch || !searchText.isEmpty
                           ? "magnifyingglass.circle.fill"
                           : "magnifyingglass")
+                        .frame(width: 18, height: 18)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
                 .help("搜索日志")
                 .keyboardShortcut("f", modifiers: .command)
 
-                Toggle(isOn: $autoScroll) {
+                Button {
+                    autoScroll.toggle()
+                } label: {
                     Image(systemName: "arrow.down.to.line")
+                        .frame(width: 18, height: 18)
+                        .foregroundColor(autoScroll ? .accentColor : .primary)
                 }
-                .toggleStyle(.button)
+                .buttonStyle(.borderless)
                 .help("自动滚动到底部")
 
                 Button(action: onExport) {
                     Image(systemName: "square.and.arrow.up")
+                        .frame(width: 18, height: 18)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
                 .help("导出日志")
 
                 Button {
                     showLogHistory.toggle()
                 } label: {
                     Image(systemName: "clock.arrow.circlepath")
+                        .frame(width: 18, height: 18)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
                 .help("历史日志")
                 .popover(isPresented: $showLogHistory, arrowEdge: .bottom) {
                     LogHistoryPopover()
@@ -212,16 +211,19 @@ struct ConsoleHeaderView: View {
                     showClearConfirm = true
                 } label: {
                     Image(systemName: "trash")
+                        .frame(width: 18, height: 18)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
                 .help("清空日志")
                 .confirmationDialog(
-                    "确定要清空所有日志吗？",
+                    "清空所有日志",
                     isPresented: $showClearConfirm,
                     titleVisibility: .visible
                 ) {
                     Button("清空", role: .destructive, action: onClear)
                     Button("取消", role: .cancel) {}
+                } message: {
+                    Text("此操作无法撤销。")
                 }
             }
             .padding(.horizontal)
@@ -301,9 +303,10 @@ struct ExecutionStatusBadge: View {
                     .scaleEffect(0.6)
                     .frame(width: 12, height: 12)
             } else {
-                Circle()
-                    .fill(state.displayColor)
-                    .frame(width: 8, height: 8)
+                Image(systemName: "circle.fill")
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(state.displayColor)
+                    .font(.system(size: 8))
             }
             Text(state.displayText).font(.caption)
         }
@@ -998,7 +1001,7 @@ private enum ConsoleTextRenderer {
             NSTextTab(textAlignment: .left, location: messageColumn)
         ]
         style.defaultTabInterval = messageColumn
-        style.headIndent = messageColumn
+        style.headIndent = 0
         return style
     }
 
@@ -1025,7 +1028,7 @@ private enum ConsoleTextRenderer {
     }
 
     private static func shortTimestamp(for entry: LogEntry) -> String {
-        String(entry.formattedTimestamp.prefix(8))
+        entry.formattedTimestamp
     }
 
     private static func shortLevelLabel(for entry: LogEntry) -> String {
@@ -1044,7 +1047,7 @@ private enum ConsoleTextRenderer {
     private static func metadataColor(for entry: LogEntry) -> NSColor {
         switch entry.level {
         case .info:
-            return entry.isStderr ? ConsoleTheme.stderr : ConsoleTheme.timestamp
+            return ConsoleTheme.timestamp
         case .warning:
             return ConsoleTheme.warning
         case .error:
@@ -1103,9 +1106,10 @@ struct ConsoleStatusBar: View {
             // 状态栏
             HStack(spacing: 12) {
                 HStack(spacing: 4) {
-                    Circle()
-                        .fill(state.displayColor)
-                        .frame(width: 6, height: 6)
+                    Image(systemName: "circle.fill")
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(state.displayColor)
+                        .font(.system(size: 6))
                     Text(state.displayText)
                         .font(.caption2)
                         .fontWeight(.medium)
@@ -1134,7 +1138,7 @@ struct ConsoleStatusBar: View {
                 }
             }
             .padding(.horizontal)
-            .padding(.vertical, 4)
+            .padding(.vertical, 6)
         }
         .background(Color(NSColor.controlBackgroundColor))
         .animation(.easeInOut(duration: 0.25), value: progress != nil)
@@ -1417,6 +1421,7 @@ private struct LogHistoryRow: View {
             }
             .buttonStyle(.plain)
             .help("在 Finder 中显示")
+            .accessibilityLabel("在 Finder 中显示")
         }
         .padding(.horizontal)
         .padding(.vertical, 6)

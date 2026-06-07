@@ -142,7 +142,7 @@ struct LogEntry: Identifiable, Equatable {
 
     private static let timestampFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss.SSS"
+        f.dateFormat = "HH:mm:ss"
         return f
     }()
 
