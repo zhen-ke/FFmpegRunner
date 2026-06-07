@@ -352,7 +352,7 @@ struct CommandTextView: View {
                 }
             }
             .background(Color(NSColor.textBackgroundColor))
-            .cornerRadius(6)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(

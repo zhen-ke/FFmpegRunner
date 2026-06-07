@@ -131,6 +131,7 @@ struct ConsoleHeaderView: View {
     @State private var showClearConfirm = false
     @State private var showSearch = false
     @State private var showLogHistory = false
+    @State private var focusSearchField = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -161,8 +162,11 @@ struct ConsoleHeaderView: View {
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         showSearch.toggle()
-                        if !showSearch {
+                        if showSearch {
+                            focusSearchField = true
+                        } else {
                             searchText = ""
+                            focusSearchField = false
                         }
                     }
                 } label: {
@@ -237,7 +241,8 @@ struct ConsoleHeaderView: View {
                     HStack(spacing: 8) {
                         NativeSearchField(
                             text: $searchText,
-                            placeholder: isRegexSearchEnabled ? "输入正则表达式..." : "搜索日志..."
+                            placeholder: isRegexSearchEnabled ? "输入正则表达式..." : "搜索日志...",
+                            shouldFocus: $focusSearchField
                         ) {
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 showSearch = false
@@ -1086,10 +1091,20 @@ struct ConsoleStatusBar: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // 顶部分隔线 - 与上方的日志内容清晰分隔
+            Rectangle()
+                .fill(Color(NSColor.separatorColor))
+                .frame(height: 1)
+
             // 进度条（仅执行中且有进度数据时显示）
             if state.isRunning, let progress {
                 TranscodeProgressBar(progress: progress)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+
+                // 进度条与状态栏之间的分隔线
+                Rectangle()
+                    .fill(Color(NSColor.separatorColor).opacity(0.6))
+                    .frame(height: 1)
             }
 
             // 状态栏
@@ -1456,6 +1471,7 @@ private struct LogHistoryRow: View {
 struct NativeSearchField: NSViewRepresentable {
     @Binding var text: String
     var placeholder: String
+    @Binding var shouldFocus: Bool
     var onCancel: () -> Void
 
     func makeNSView(context: Context) -> NSSearchField {
@@ -1464,17 +1480,20 @@ struct NativeSearchField: NSViewRepresentable {
         searchField.delegate = context.coordinator
         searchField.bezelStyle = .roundedBezel
         searchField.font = NSFont.systemFont(ofSize: NSFont.systemFontSize(for: .small))
-        
-        // Auto-focus when appearing
-        DispatchQueue.main.async {
-            searchField.window?.makeFirstResponder(searchField)
-        }
         return searchField
     }
 
     func updateNSView(_ nsView: NSSearchField, context: Context) {
         if nsView.stringValue != text {
             nsView.stringValue = text
+        }
+        if shouldFocus {
+            if nsView.window?.firstResponder !== nsView {
+                nsView.window?.makeFirstResponder(nsView)
+            }
+            DispatchQueue.main.async {
+                self.shouldFocus = false
+            }
         }
     }
 

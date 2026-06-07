@@ -76,7 +76,6 @@ struct ParameterFieldView: View {
             HStack {
                 Text(parameter.label)
                     .font(.callout)
-                    .fontWeight(.medium)
 
                 if parameter.isRequired {
                     Text("*")
@@ -217,7 +216,6 @@ struct FastCutTimeRangeField: View {
             HStack(spacing: 4) {
                 Text(title)
                     .font(.callout)
-                    .fontWeight(.medium)
 
                 Text("*")
                     .foregroundColor(.red)
@@ -487,7 +485,6 @@ struct GifFpsWidthField: View {
                 HStack {
                     Text("宽度 (像素)")
                         .font(.callout)
-                        .fontWeight(.medium)
                     Text("*")
                         .foregroundColor(.red)
                         .accessibilityLabel("必填")
@@ -507,7 +504,6 @@ struct GifFpsWidthField: View {
                 HStack {
                     Text("帧率 (FPS)")
                         .font(.callout)
-                        .fontWeight(.medium)
                     Text("*")
                         .foregroundColor(.red)
                         .accessibilityLabel("必填")
@@ -638,7 +634,7 @@ struct StringField: View {
                             .frame(minHeight: 120)
                             .padding(4)
                             .background(Color(NSColor.textBackgroundColor))
-                            .cornerRadius(6)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 6)
                                     .stroke(Color.secondary.opacity(0.2), lineWidth: 1)

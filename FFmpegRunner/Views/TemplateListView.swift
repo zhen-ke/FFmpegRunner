@@ -473,7 +473,7 @@ private struct TemplateManagementBar: View {
 
 struct RecentHistorySection: View {
 
-    let history: [CommandHistory]
+    let history: [RecentCommand]
     let onShowAll: () -> Void
 
     @EnvironmentObject var executionViewModel: ExecutionViewModel
@@ -512,7 +512,7 @@ struct RecentHistorySection: View {
         }
     }
 
-    private func fill(_ entry: CommandHistory) {
+    private func fill(_ entry: RecentCommand) {
         restoreRecentCommand(
             entry,
             listViewModel: viewModel,
@@ -524,7 +524,7 @@ struct RecentHistorySection: View {
 
 @MainActor
 private func restoreRecentCommand(
-    _ entry: CommandHistory,
+    _ entry: RecentCommand,
     listViewModel: TemplateListViewModel,
     detailViewModel: TemplateDetailViewModel,
     executionViewModel: ExecutionViewModel,
@@ -570,9 +570,16 @@ struct HistorySheetView: View {
     @State private var searchText = ""
     @State private var showRenameSheet = false
     @State private var renameText = ""
-    @State private var selectedEntry: CommandHistory?
+    @State private var selectedEntry: RecentCommand?
     @State private var showClearConfirm = false
     @State private var timeFilter: HistoryTimeFilter = .all
+    @State private var focusSearchField = true
+
+    // 保存为模板相关的状态
+    @State private var showSaveTemplateSheet = false
+    @State private var templateName = ""
+    @State private var templateCategory = ""
+    @State private var savingEntry: RecentCommand?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -580,7 +587,7 @@ struct HistorySheetView: View {
 
             Divider()
 
-            HistorySearchBar(text: $searchText, timeFilter: $timeFilter)
+            HistorySearchBar(text: $searchText, timeFilter: $timeFilter, shouldFocus: $focusSearchField)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
 
@@ -607,6 +614,27 @@ struct HistorySheetView: View {
                     }
                 }
             )
+        }
+        .sheet(isPresented: $showSaveTemplateSheet) {
+            if let entry = savingEntry {
+                SaveHistoryAsTemplateSheet(
+                    command: entry.command,
+                    name: $templateName,
+                    category: $templateCategory,
+                    onSave: {
+                        Task {
+                            let didSave = await recentCommandsViewModel.saveAsTemplate(
+                                entry,
+                                name: templateName,
+                                category: templateCategory.trimmingCharacters(in: .whitespaces).isEmpty ? "用户模板" : templateCategory
+                            )
+                            if didSave {
+                                await viewModel.loadTemplates()
+                            }
+                        }
+                    }
+                )
+            }
         }
         .alert("清空最近使用", isPresented: $showClearConfirm) {
             Button("取消", role: .cancel) {}
@@ -701,7 +729,7 @@ struct HistorySheetView: View {
                             }
 
                             Button {
-                                saveAsTemplate(entry)
+                                presentSaveTemplateSheet(for: entry)
                             } label: {
                                 Label("保存为模板…", systemImage: "square.and.arrow.down")
                             }
@@ -742,7 +770,7 @@ struct HistorySheetView: View {
                     renameText = entry.displayName ?? ""
                     showRenameSheet = true
                 },
-                onSaveTemplate: { saveAsTemplate(entry) },
+                onSaveTemplate: { presentSaveTemplateSheet(for: entry) },
                 onDelete: { deleteEntry(entry) }
             )
         } else {
@@ -750,27 +778,21 @@ struct HistorySheetView: View {
         }
     }
 
-    private var filteredHistory: [CommandHistory] {
+    private var filteredHistory: [RecentCommand] {
         recentCommandsViewModel.filteredCommands(
             searchText: searchText,
             timeFilter: timeFilter
         )
     }
 
-    private func saveAsTemplate(_ entry: CommandHistory) {
-        Task {
-            let didSave = await recentCommandsViewModel.saveAsTemplate(
-                entry,
-                name: entry.title,
-                category: nil
-            )
-            if didSave {
-                await viewModel.loadTemplates()
-            }
-        }
+    private func presentSaveTemplateSheet(for entry: RecentCommand) {
+        savingEntry = entry
+        templateName = entry.title
+        templateCategory = "用户模板"
+        showSaveTemplateSheet = true
     }
 
-    private func restore(_ entry: CommandHistory) {
+    private func restore(_ entry: RecentCommand) {
         restoreRecentCommand(
             entry,
             listViewModel: viewModel,
@@ -812,7 +834,7 @@ struct HistorySheetView: View {
         NSPasteboard.general.setString(command, forType: .string)
     }
 
-    private func deleteEntry(_ entry: CommandHistory) {
+    private func deleteEntry(_ entry: RecentCommand) {
         recentCommandsViewModel.deleteEntry(entry)
         if selectedEntry?.id == entry.id {
             selectedEntry = nil
@@ -884,24 +906,18 @@ struct HistoryActionButton: View {
 struct HistorySearchBar: View {
     @Binding var text: String
     @Binding var timeFilter: HistoryTimeFilter
+    @Binding var shouldFocus: Bool
 
     var body: some View {
         VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-
-                TextField("搜索最近使用...", text: $text)
-                    .textFieldStyle(.plain)
-
-                if !text.isEmpty {
-                    Button(action: { text = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
+            NativeSearchField(
+                text: $text,
+                placeholder: "搜索最近使用...",
+                shouldFocus: $shouldFocus
+            ) {
+                text = ""
             }
+            .frame(height: 22)
 
             Picker("时间范围", selection: $timeFilter) {
                 ForEach(HistoryTimeFilter.allCases, id: \.self) { filter in
@@ -913,7 +929,7 @@ struct HistorySearchBar: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(8)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color(NSColor.separatorColor).opacity(0.6), lineWidth: 1)
@@ -943,7 +959,7 @@ struct HistoryEmptyState: View {
 }
 
 struct HistoryListRow: View {
-    let entry: CommandHistory
+    let entry: RecentCommand
 
     private var statusColor: Color {
         entry.wasSuccessful ? .green : .red
@@ -980,7 +996,7 @@ struct HistoryListRow: View {
 }
 
 struct HistoryDetailView: View {
-    let entry: CommandHistory
+    let entry: RecentCommand
     let onRestore: () -> Void
     let onCopy: () -> Void
     let onToggleFavorite: () -> Void
@@ -1096,7 +1112,7 @@ struct HistoryStatusPill: View {
 // MARK: - 最近使用行视图
 
 struct HistoryRowView: View {
-    let entry: CommandHistory
+    let entry: RecentCommand
 
     @State private var isHovered = false
 
@@ -1144,9 +1160,9 @@ struct HistoryRowView: View {
                         .foregroundColor(entry.wasSuccessful ? .green : .red)
                 }
 
-                // 命令预览
-                Text(entry.command)
-                    .font(.system(size: 10, design: .monospaced))
+                // 命令预览（始终展示人类可读摘要，保持高度固定一致，防抖且易读）
+                Text(entry.humanReadableSummary)
+                    .font(.system(size: 10))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -1160,6 +1176,7 @@ struct HistoryRowView: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(isHovered ? Color(NSColor.controlBackgroundColor) : Color.clear)
         )
+        .help(entry.command) // 悬停显示完整命令 Tooltip
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
@@ -1228,7 +1245,7 @@ struct SearchBarView: View {
         }
         .padding(8)
         .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(8)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -1317,5 +1334,70 @@ private struct TemplateListView_Previews: PreviewProvider {
             .environmentObject(TemplateDetailViewModel())
             .environmentObject(ExecutionViewModel())
             .frame(width: 300, height: 600)
+    }
+}
+
+// MARK: - 保存最近使用为模板弹窗
+
+struct SaveHistoryAsTemplateSheet: View {
+    let command: String
+    @Binding var name: String
+    @Binding var category: String
+    let onSave: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("保存为模板")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("模板名称")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                TextField("例如：视频压缩 H265", text: $name)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("分类")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                TextField("例如：视频处理", text: $category)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("命令预览")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Text(command)
+                    .font(.system(.caption, design: .monospaced))
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(Color(NSColor.textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+
+            HStack {
+                Button("取消") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Spacer()
+
+                Button("保存") {
+                    onSave()
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding()
+        .frame(width: 400)
     }
 }

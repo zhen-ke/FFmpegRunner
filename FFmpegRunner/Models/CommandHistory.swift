@@ -75,6 +75,27 @@ struct RecentCommand: Identifiable, Codable, Hashable, Sendable {
         return trimmed
     }
 
+    /// 人类可读的参数摘要，例如：输入：25338_877.mp4 → 输出：output.mp4
+    var humanReadableSummary: String {
+        let inputName = CommandPathDetector.detectInputFileName(from: arguments)
+        let outputName = CommandPathDetector.detectOutputFileName(from: arguments)
+        
+        if let inputName, let outputName {
+            return "输入：\(inputName) → 输出：\(outputName)"
+        } else if let inputName {
+            return "输入：\(inputName)"
+        } else if let outputName {
+            return "输出：\(outputName)"
+        } else {
+            // 回退到原指令的简短描述
+            let trimmed = displayCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.count > 40 {
+                return String(trimmed.prefix(40)) + "..."
+            }
+            return trimmed
+        }
+    }
+
     /// 格式化的最近使用时间
     var formattedDate: String {
         Self.dateFormatter.string(from: lastUsedAt)

@@ -12,7 +12,8 @@ struct StandardTemplateWorkspaceView: View {
         HSplitView {
             VStack(spacing: 0) {
                 Text("参数设置")
-                    .font(.headline)
+                    .font(.title3)
+                    .fontWeight(.semibold)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
                     .background(Color(NSColor.controlBackgroundColor))

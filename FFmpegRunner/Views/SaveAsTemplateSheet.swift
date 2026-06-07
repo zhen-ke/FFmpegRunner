@@ -46,7 +46,7 @@ struct SaveAsTemplateSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
                     .background(Color(NSColor.textBackgroundColor))
-                    .cornerRadius(4)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
             }
 
             HStack {

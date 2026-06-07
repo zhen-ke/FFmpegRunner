@@ -43,6 +43,22 @@ enum CommandPathDetector {
         detectOutputURL(from: arguments)?.lastPathComponent
     }
 
+    static func detectInputURL(from arguments: [String]) -> URL? {
+        guard let index = arguments.firstIndex(of: "-i"),
+              index + 1 < arguments.count else {
+            return nil
+        }
+        let rawPath = arguments[index + 1]
+        guard isFileSystemPath(rawPath) else { return nil }
+        
+        let expandedPath = (rawPath as NSString).expandingTildeInPath
+        return URL(fileURLWithPath: expandedPath).standardizedFileURL
+    }
+
+    static func detectInputFileName(from arguments: [String]) -> String? {
+        detectInputURL(from: arguments)?.lastPathComponent
+    }
+
     private static func extractLastPositionalArg(from arguments: [String]) -> String? {
         arguments
             .filter { !$0.isEmpty }

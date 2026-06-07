@@ -239,11 +239,11 @@ actor RecentCommandsService {
         recentCommandsDirectory
     }
 
-    func loadHistory() async -> [CommandHistory] {
+    func loadHistory() async -> [RecentCommand] {
         await loadRecentCommands()
     }
 
-    func addEntry(_ entry: CommandHistory) async throws {
+    func addEntry(_ entry: RecentCommand) async throws {
         try await recordUsage(
             RecentCommandUsage(
                 executable: entry.executable,

@@ -14,6 +14,7 @@ struct CommandPreviewView: View {
     // MARK: - Environment
 
     @EnvironmentObject var viewModel: CommandPreviewViewModel
+    @Environment(\.colorSchemeContrast) private var contrast
 
     // MARK: - State
 
@@ -23,8 +24,20 @@ struct CommandPreviewView: View {
     // MARK: - Configuration
 
     // 终端风格配色
-    private let terminalBackground = Color(red: 40/255, green: 44/255, blue: 52/255) // One Dark 背景色
-    private let terminalBorder = Color(white: 0.2)
+    private var terminalBackground: Color {
+        if contrast == .increased {
+            return .black
+        } else {
+            return Color(red: 40/255, green: 44/255, blue: 52/255) // One Dark 背景色
+        }
+    }
+    private var terminalBorder: Color {
+        if contrast == .increased {
+            return .primary
+        } else {
+            return Color(white: 0.2)
+        }
+    }
     private let headerBackground = Color(NSColor.controlBackgroundColor)
 
     // MARK: - Body
