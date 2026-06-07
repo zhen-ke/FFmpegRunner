@@ -75,11 +75,13 @@ struct ParameterFieldView: View {
             // 标签
             HStack {
                 Text(parameter.label)
-                    .font(.headline)
+                    .font(.callout)
+                    .fontWeight(.medium)
 
                 if parameter.isRequired {
                     Text("*")
                         .foregroundColor(.red)
+                        .accessibilityLabel("必填")
                 }
             }
 
@@ -214,10 +216,12 @@ struct FastCutTimeRangeField: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Text(title)
-                    .font(.headline)
+                    .font(.callout)
+                    .fontWeight(.medium)
 
                 Text("*")
                     .foregroundColor(.red)
+                    .accessibilityLabel("必填")
             }
 
             TextField(prompt, text: text)
@@ -482,9 +486,11 @@ struct GifFpsWidthField: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("宽度 (像素)")
-                        .font(.headline)
+                        .font(.callout)
+                        .fontWeight(.medium)
                     Text("*")
                         .foregroundColor(.red)
+                        .accessibilityLabel("必填")
                 }
 
                 TextField("例如 320, 480, 640", text: $widthText)
@@ -500,9 +506,11 @@ struct GifFpsWidthField: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("帧率 (FPS)")
-                        .font(.headline)
+                        .font(.callout)
+                        .fontWeight(.medium)
                     Text("*")
                         .foregroundColor(.red)
+                        .accessibilityLabel("必填")
                 }
 
                 TextField("建议 10-24", text: $fpsText)

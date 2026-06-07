@@ -54,7 +54,8 @@ struct TemplateHeaderView: View {
                 Button(action: detailViewModel.resetToDefaults) {
                     Label("重置", systemImage: "arrow.counterclockwise")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
+                .foregroundColor(.secondary)
                 .disabled(executionViewModel.isRunning || executionViewModel.isQueueRunning)
 
                 Button(action: {
@@ -72,12 +73,25 @@ struct TemplateHeaderView: View {
                 .disabled(!detailViewModel.canExecute || !previewViewModel.isComplete)
 
                 Button(action: { showQueuePopover.toggle() }) {
-                    Label(queueButtonTitle, systemImage: "list.bullet")
+                    Image(systemName: "list.bullet")
+                        .font(.title3)
+                        .overlay(alignment: .topTrailing) {
+                            if executionViewModel.queueItems.count > 0 {
+                                Text("\(executionViewModel.queueItems.count)")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(Color.red))
+                                    .offset(x: 10, y: -10)
+                            }
+                        }
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
                 .popover(isPresented: $showQueuePopover, arrowEdge: .top) {
                     QueuePopoverView(executionViewModel: executionViewModel)
                 }
+                .help(queueButtonTitle)
 
                 // 执行/取消按钮
                 if executionViewModel.isRunning || executionViewModel.isQueueRunning {

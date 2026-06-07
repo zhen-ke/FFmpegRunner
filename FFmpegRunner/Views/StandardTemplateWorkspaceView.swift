@@ -28,8 +28,6 @@ struct StandardTemplateWorkspaceView: View {
 
             VStack(spacing: 0) {
                 CommandPreviewView()
-                    .padding([.horizontal, .top], 12)
-                    .padding(.bottom, 4)
                     .frame(minHeight: 140, maxHeight: 220)
 
                 Divider()

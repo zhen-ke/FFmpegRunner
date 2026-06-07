@@ -131,7 +131,6 @@ struct ConsoleHeaderView: View {
     @State private var showClearConfirm = false
     @State private var showSearch = false
     @State private var showLogHistory = false
-    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -156,15 +155,13 @@ struct ConsoleHeaderView: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
-                .frame(width: 90)
+                .fixedSize(horizontal: true, vertical: false)
                 .help("过滤日志")
 
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         showSearch.toggle()
-                        if showSearch {
-                            isSearchFocused = true
-                        } else {
+                        if !showSearch {
                             searchText = ""
                         }
                     }
@@ -184,6 +181,11 @@ struct ConsoleHeaderView: View {
                     Image(systemName: "arrow.down.to.line")
                         .frame(width: 18, height: 18)
                         .foregroundColor(autoScroll ? .accentColor : .primary)
+                        .padding(4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(autoScroll ? Color.accentColor.opacity(0.12) : Color.clear)
+                        )
                 }
                 .buttonStyle(.borderless)
                 .help("自动滚动到底部")
@@ -215,6 +217,7 @@ struct ConsoleHeaderView: View {
                 }
                 .buttonStyle(.borderless)
                 .help("清空日志")
+                // Note: SwiftUI automatically places Cancel on left and Clear on right on macOS
                 .confirmationDialog(
                     "清空所有日志",
                     isPresented: $showClearConfirm,
@@ -232,20 +235,16 @@ struct ConsoleHeaderView: View {
             if showSearch {
                 VStack(spacing: 6) {
                     HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.secondary)
-                            .font(.caption)
-
-                        TextField(isRegexSearchEnabled ? "输入正则表达式..." : "搜索日志...", text: $searchText)
-                            .textFieldStyle(.plain)
-                            .font(.system(.caption, design: .monospaced))
-                            .focused($isSearchFocused)
-                            .onExitCommand {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    showSearch = false
-                                    searchText = ""
-                                }
+                        NativeSearchField(
+                            text: $searchText,
+                            placeholder: isRegexSearchEnabled ? "输入正则表达式..." : "搜索日志..."
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showSearch = false
+                                searchText = ""
                             }
+                        }
+                        .frame(height: 22)
 
                         Toggle(isOn: $isRegexSearchEnabled) {
                             Text(".*")
@@ -258,16 +257,6 @@ struct ConsoleHeaderView: View {
                             Text("\(count) 条匹配")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
-                        }
-
-                        if !searchText.isEmpty {
-                            Button {
-                                searchText = ""
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundColor(.secondary)
-                            }
-                            .buttonStyle(.plain)
                         }
                     }
 
@@ -313,7 +302,7 @@ struct ExecutionStatusBadge: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(state.displayColor.opacity(0.1))
-        .cornerRadius(4)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 }
 
@@ -367,7 +356,7 @@ private struct ConsoleEmptyState: View {
             Text(
                 isRunning
                 ? "新的 FFmpeg 输出会持续追加到这里。"
-                : "运行命令后，这里会显示可选择、可搜索、可暂停跟随的日志。"
+                : "运行后日志将在此显示"
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -1460,4 +1449,58 @@ private struct LogHistoryRow: View {
             return vm
         }())
         .frame(width: 700, height: 350)
+}
+
+// MARK: - NativeSearchField
+
+struct NativeSearchField: NSViewRepresentable {
+    @Binding var text: String
+    var placeholder: String
+    var onCancel: () -> Void
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let searchField = NSSearchField()
+        searchField.placeholderString = placeholder
+        searchField.delegate = context.coordinator
+        searchField.bezelStyle = .roundedBezel
+        searchField.font = NSFont.systemFont(ofSize: NSFont.systemFontSize(for: .small))
+        
+        // Auto-focus when appearing
+        DispatchQueue.main.async {
+            searchField.window?.makeFirstResponder(searchField)
+        }
+        return searchField
+    }
+
+    func updateNSView(_ nsView: NSSearchField, context: Context) {
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, NSSearchFieldDelegate {
+        var parent: NativeSearchField
+
+        init(_ parent: NativeSearchField) {
+            self.parent = parent
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            if let textField = obj.object as? NSTextField {
+                parent.text = textField.stringValue
+            }
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                parent.onCancel()
+                return true
+            }
+            return false
+        }
+    }
 }

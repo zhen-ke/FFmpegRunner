@@ -44,12 +44,6 @@ struct CommandPreviewView: View {
             }
         }
         .background(terminalBackground)
-        .cornerRadius(8)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(NSColor.separatorColor), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
         .onHover { hovering in
             isHovering = hovering
         }
@@ -59,10 +53,9 @@ struct CommandPreviewView: View {
 
     private var headerView: some View {
         HStack(spacing: 10) {
-            // 左侧：仅标题（轻量）
+            // 左侧：仅标题（升级为 headline 粗细，与控制台对齐）
             Text("命令预览")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                .font(.headline)
 
             Spacer()
 
@@ -76,7 +69,7 @@ struct CommandPreviewView: View {
             }
             .disabled(viewModel.renderedCommand.isEmpty)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal)
         .padding(.vertical, 8)
         .background(headerBackground)
         .overlay(
