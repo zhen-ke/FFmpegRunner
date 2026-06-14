@@ -783,6 +783,20 @@ final class SplitCommandTests: XCTestCase {
         ))
     }
 
+    func testConsoleDisplayMessageCompactsProgressLogsForScanning() {
+        let entry = LogEntry(
+            timestamp: Date(),
+            level: .debug,
+            message: "frame=  856 fps=141 q=36.3 size=    4608KiB time=00:00:28.46 bitrate=1326.1kbits/s speed= 4.7x elapsed=0:00:06.05",
+            isProgress: true
+        )
+
+        XCTAssertEqual(
+            ConsoleLogMessageFormatter.displayMessage(for: entry),
+            "frame 856   fps 141   size 4608KiB   time 00:00:28.46   speed 4.7x"
+        )
+    }
+
     @MainActor
     func testExecutionControllerPersistsRecentCommandBeforeReturning() async throws {
         let truePath = "/usr/bin/true"

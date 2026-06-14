@@ -30,6 +30,7 @@ private let filenameFormatter: DateFormatter = {
 private enum ConsoleTheme {
     static let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     static let emphasisFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
+    static let progressFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
     static let timestampFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
     static let metadataFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
 
@@ -89,6 +90,35 @@ enum ConsoleFollowPolicy {
         case .idle:
             return true
         }
+    }
+}
+
+enum ConsoleLogMessageFormatter {
+    private static let progressFields = ["frame", "fps", "size", "time", "speed"]
+
+    static func displayMessage(for entry: LogEntry) -> String {
+        guard entry.isProgress else { return entry.message }
+
+        let fields = progressFields.compactMap { key -> String? in
+            guard let value = fieldValue(for: key, in: entry.message) else { return nil }
+            return "\(key) \(value)"
+        }
+
+        return fields.isEmpty ? entry.message : fields.joined(separator: "   ")
+    }
+
+    private static func fieldValue(for key: String, in message: String) -> String? {
+        let pattern = #"\b\#(NSRegularExpression.escapedPattern(for: key))=\s*([^\s]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+
+        let range = NSRange(message.startIndex..<message.endIndex, in: message)
+        guard let match = regex.firstMatch(in: message, range: range),
+              let valueRange = Range(match.range(at: 1), in: message)
+        else {
+            return nil
+        }
+
+        return String(message[valueRange])
     }
 }
 
@@ -183,7 +213,8 @@ struct ConsoleHeaderView: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
-                .fixedSize(horizontal: true, vertical: false)
+                .controlSize(.small)
+                .frame(width: 144)
                 .help("过滤日志")
 
                 Button {
@@ -200,9 +231,8 @@ struct ConsoleHeaderView: View {
                     Image(systemName: showSearch || !searchText.isEmpty
                           ? "magnifyingglass.circle.fill"
                           : "magnifyingglass")
-                        .frame(width: 18, height: 18)
                 }
-                .buttonStyle(.borderless)
+                .consoleToolbarButtonStyle()
                 .help("搜索日志")
                 .keyboardShortcut("f", modifiers: .command)
 
@@ -210,31 +240,22 @@ struct ConsoleHeaderView: View {
                     autoScroll.toggle()
                 } label: {
                     Image(systemName: "arrow.down.to.line")
-                        .frame(width: 18, height: 18)
-                        .foregroundColor(autoScroll ? .accentColor : .primary)
-                        .padding(4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(autoScroll ? Color.accentColor.opacity(0.12) : Color.clear)
-                        )
                 }
-                .buttonStyle(.borderless)
+                .consoleToolbarButtonStyle(isSelected: autoScroll)
                 .help("自动滚动到底部")
 
                 Button(action: onExport) {
                     Image(systemName: "square.and.arrow.up")
-                        .frame(width: 18, height: 18)
                 }
-                .buttonStyle(.borderless)
+                .consoleToolbarButtonStyle()
                 .help("导出日志")
 
                 Button {
                     showLogHistory.toggle()
                 } label: {
                     Image(systemName: "clock.arrow.circlepath")
-                        .frame(width: 18, height: 18)
                 }
-                .buttonStyle(.borderless)
+                .consoleToolbarButtonStyle()
                 .help("历史日志")
                 .popover(isPresented: $showLogHistory, arrowEdge: .bottom) {
                     LogHistoryPopover()
@@ -244,9 +265,8 @@ struct ConsoleHeaderView: View {
                     showClearConfirm = true
                 } label: {
                     Image(systemName: "trash")
-                        .frame(width: 18, height: 18)
                 }
-                .buttonStyle(.borderless)
+                .consoleToolbarButtonStyle()
                 .help("清空日志")
                 // Note: SwiftUI automatically places Cancel on left and Clear on right on macOS
                 .confirmationDialog(
@@ -312,6 +332,22 @@ struct ConsoleHeaderView: View {
     }
 }
 
+private extension View {
+    func consoleToolbarButtonStyle(isSelected: Bool = false) -> some View {
+        self
+            .font(.system(size: 15, weight: .medium))
+            .frame(width: 30, height: 30)
+            .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
 // MARK: - ExecutionStatusBadge
 
 struct ExecutionStatusBadge: View {
@@ -331,10 +367,11 @@ struct ExecutionStatusBadge: View {
             }
             Text(state.displayText).font(.caption)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
         .background(state.displayColor.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 4))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -993,9 +1030,10 @@ private enum ConsoleTextRenderer {
 
     private static func line(for entry: LogEntry, highlightLatest: Bool) -> NSAttributedString {
         let line = NSMutableAttributedString()
-        let paragraphStyle = paragraphStyle()
+        let paragraphStyle = paragraphStyle(isProgress: entry.isProgress)
         let lineBackground = backgroundColor(for: entry, highlightLatest: highlightLatest)
         let level = shortLevelLabel(for: entry).padding(toLength: 5, withPad: " ", startingAt: 0)
+        let message = ConsoleLogMessageFormatter.displayMessage(for: entry)
 
         line.append(
             fragment(
@@ -1019,10 +1057,10 @@ private enum ConsoleTextRenderer {
         line.append(fragment("\t", background: lineBackground, paragraphStyle: paragraphStyle))
         line.append(
             fragment(
-                entry.message,
+                message,
                 color: messageColor(for: entry),
                 background: lineBackground,
-                font: entry.level == .error ? ConsoleTheme.emphasisFont : ConsoleTheme.font,
+                font: messageFont(for: entry),
                 paragraphStyle: paragraphStyle
             )
         )
@@ -1030,10 +1068,10 @@ private enum ConsoleTextRenderer {
         return line
     }
 
-    private static func paragraphStyle() -> NSParagraphStyle {
+    private static func paragraphStyle(isProgress: Bool) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byWordWrapping
-        style.lineSpacing = 2
+        style.lineSpacing = isProgress ? 1 : 2
         style.paragraphSpacing = 0
         style.tabStops = [
             NSTextTab(textAlignment: .left, location: timestampColumn),
@@ -1043,6 +1081,16 @@ private enum ConsoleTextRenderer {
         style.defaultTabInterval = messageColumn
         style.headIndent = 0
         return style
+    }
+
+    private static func messageFont(for entry: LogEntry) -> NSFont {
+        if entry.level == .error {
+            return ConsoleTheme.emphasisFont
+        }
+        if entry.isProgress {
+            return ConsoleTheme.progressFont
+        }
+        return ConsoleTheme.font
     }
 
     private static func fragment(
