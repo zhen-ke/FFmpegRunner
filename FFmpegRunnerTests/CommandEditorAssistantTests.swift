@@ -4,9 +4,76 @@
 //
 
 import XCTest
+import AppKit
 @testable import FFmpegRunner
 
 final class CommandEditorAssistantTests: XCTestCase {
+    @MainActor
+    func testFileDropInsertionPointSnapsToTextLineFromEditorWhitespace() {
+        let command = "ffmpeg -i input.mp4 -c:v libx264 output.mp4"
+        let textView = CommandNSTextView(frame: NSRect(x: 0, y: 0, width: 700, height: 140))
+        textView.isRichText = false
+        textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.textContainerInset = NSSize(width: 4, height: 4)
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: 700,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.string = command
+
+        guard let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer else {
+            return XCTFail("Command text view should have TextKit layout objects")
+        }
+
+        layoutManager.ensureLayout(for: textContainer)
+
+        let expectedIndex = (command as NSString).range(of: "input.mp4").upperBound
+        let glyphIndex = layoutManager.glyphIndexForCharacter(at: expectedIndex - 1)
+        var glyphRect = layoutManager.boundingRect(
+            forGlyphRange: NSRange(location: glyphIndex, length: 1),
+            in: textContainer
+        )
+        glyphRect.origin.x += textView.textContainerInset.width
+        glyphRect.origin.y += textView.textContainerInset.height
+
+        let dropPoint = NSPoint(x: glyphRect.maxX + 2, y: glyphRect.maxY + 12)
+
+        XCTAssertEqual(textView.getInsertionCharacterIndex(at: dropPoint), expectedIndex)
+    }
+
+    @MainActor
+    func testDragInsertionCaretRectTracksInsertionPoint() {
+        let command = "ffmpeg -i input.mp4 -c:v libx264 output.mp4"
+        let textView = makeCommandTextView(command)
+
+        guard let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer else {
+            return XCTFail("Command text view should have TextKit layout objects")
+        }
+
+        layoutManager.ensureLayout(for: textContainer)
+
+        let insertionIndex = (command as NSString).range(of: "input.mp4").upperBound
+        let glyphIndex = layoutManager.glyphIndexForCharacter(at: insertionIndex - 1)
+        var glyphRect = layoutManager.boundingRect(
+            forGlyphRange: NSRange(location: glyphIndex, length: 1),
+            in: textContainer
+        )
+        glyphRect.origin.x += textView.textContainerInset.width
+        glyphRect.origin.y += textView.textContainerInset.height
+
+        guard let caretRect = textView.dragInsertionCaretRect(for: insertionIndex) else {
+            return XCTFail("Expected a caret rect for the insertion index")
+        }
+
+        XCTAssertEqual(caretRect.origin.x, glyphRect.maxX, accuracy: 1)
+        XCTAssertEqual(caretRect.midY, glyphRect.midY, accuracy: 1)
+        XCTAssertGreaterThan(caretRect.height, 0)
+    }
+
     func testDiagnosticsDetectMalformedCommand() {
         let diagnostics = CommandEditorAssistant.diagnostics(for: #"ffmpeg -i "input.mp4"#)
         XCTAssertEqual(diagnostics.first?.severity, .error)
@@ -226,4 +293,19 @@ final class CommandEditorAssistantTests: XCTestCase {
         XCTAssertFalse(results.isEmpty)
         XCTAssertTrue(results.contains("libx264"))
     }
+}
+
+private func makeCommandTextView(_ command: String) -> CommandNSTextView {
+    let textView = CommandNSTextView(frame: NSRect(x: 0, y: 0, width: 700, height: 140))
+    textView.isRichText = false
+    textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+    textView.textContainerInset = NSSize(width: 4, height: 4)
+    textView.isHorizontallyResizable = false
+    textView.textContainer?.widthTracksTextView = true
+    textView.textContainer?.containerSize = NSSize(
+        width: 700,
+        height: CGFloat.greatestFiniteMagnitude
+    )
+    textView.string = command
+    return textView
 }

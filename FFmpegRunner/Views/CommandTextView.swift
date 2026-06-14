@@ -637,6 +637,7 @@ final class CommandNSTextView: NSTextView {
 
     var onDragStateChanged: ((Bool) -> Void)?
     private var dragInsertionIndex: Int?
+    private var dragInsertionCaretRect: NSRect?
     private var dragOriginalSelectionRange: NSRange?
     private var didPerformDragInsertion = false
     private var mouseTrackingArea: NSTrackingArea?
@@ -724,7 +725,14 @@ final class CommandNSTextView: NSTextView {
         }
 
         super.draw(dirtyRect)
+        drawDragInsertionCaretIfNeeded()
         drawInlineCompletionIfNeeded()
+    }
+
+    private func drawDragInsertionCaretIfNeeded() {
+        guard let rect = dragInsertionCaretRect else { return }
+        NSColor.controlAccentColor.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 1, yRadius: 1).fill()
     }
 
     // MARK: - Keyboard Shortcuts
@@ -862,6 +870,7 @@ final class CommandNSTextView: NSTextView {
         var adjusted = point
         adjusted.x -= textContainerInset.width
         adjusted.y -= textContainerInset.height
+        adjusted = nearestTextLinePoint(for: adjusted, layoutManager: layoutManager, textContainer: textContainer)
 
         var fraction: CGFloat = 0
         let characterIndex = layoutManager.characterIndex(
@@ -870,6 +879,83 @@ final class CommandNSTextView: NSTextView {
             fractionOfDistanceBetweenInsertionPoints: &fraction
         )
         return min(fraction > 0.5 ? characterIndex + 1 : characterIndex, string.utf16.count)
+    }
+
+    func dragInsertionCaretRect(for characterIndex: Int) -> NSRect? {
+        guard let layoutManager, let textContainer else { return nil }
+
+        layoutManager.ensureLayout(for: textContainer)
+
+        let glyphCount = layoutManager.numberOfGlyphs
+        let lineHeight = layoutManager.defaultLineHeight(for: font ?? .monospacedSystemFont(ofSize: 13, weight: .regular))
+
+        guard glyphCount > 0 else {
+            return NSRect(
+                x: textContainerInset.width,
+                y: textContainerInset.height,
+                width: 2,
+                height: lineHeight
+            )
+        }
+
+        let clampedIndex = min(max(characterIndex, 0), string.utf16.count)
+        let anchorIndex = min(max(clampedIndex - 1, 0), string.utf16.count - 1)
+        let glyphIndex = min(layoutManager.glyphIndexForCharacter(at: anchorIndex), glyphCount - 1)
+
+        var rect = layoutManager.boundingRect(
+            forGlyphRange: NSRange(location: glyphIndex, length: 1),
+            in: textContainer
+        )
+        rect.origin.x += textContainerInset.width
+        rect.origin.y += textContainerInset.height
+
+        if clampedIndex > anchorIndex { rect.origin.x += rect.width }
+        rect.size.width = 2
+        rect.size.height = lineHeight
+        return rect
+    }
+
+    private func nearestTextLinePoint(
+        for point: NSPoint,
+        layoutManager: NSLayoutManager,
+        textContainer: NSTextContainer
+    ) -> NSPoint {
+        guard !string.isEmpty else { return point }
+
+        layoutManager.ensureLayout(for: textContainer)
+
+        let glyphCount = layoutManager.numberOfGlyphs
+        guard glyphCount > 0 else { return point }
+
+        var nearestPoint = point
+        var nearestDistance = CGFloat.greatestFiniteMagnitude
+        var glyphIndex = 0
+
+        while glyphIndex < glyphCount {
+            var lineGlyphRange = NSRange(location: 0, length: 0)
+            let lineRect = layoutManager.lineFragmentRect(
+                forGlyphAt: glyphIndex,
+                effectiveRange: &lineGlyphRange
+            )
+
+            let verticalDistance: CGFloat
+            if point.y < lineRect.minY {
+                verticalDistance = lineRect.minY - point.y
+            } else if point.y > lineRect.maxY {
+                verticalDistance = point.y - lineRect.maxY
+            } else {
+                verticalDistance = 0
+            }
+
+            if verticalDistance < nearestDistance {
+                nearestDistance = verticalDistance
+                nearestPoint.y = verticalDistance == 0 ? point.y : lineRect.midY
+            }
+
+            glyphIndex = max(lineGlyphRange.location + lineGlyphRange.length, glyphIndex + 1)
+        }
+
+        return nearestPoint
     }
 
     private func beginDragSessionIfNeeded() {
@@ -882,6 +968,7 @@ final class CommandNSTextView: NSTextView {
         let point          = convert(sender.draggingLocation, from: nil)
         let insertionIndex = getInsertionCharacterIndex(at: point)
         dragInsertionIndex = insertionIndex
+        updateDragInsertionCaret(for: insertionIndex)
 
         let insertionRange = NSRange(location: insertionIndex, length: 0)
         if !NSEqualRanges(selectedRange(), insertionRange) {
@@ -890,7 +977,19 @@ final class CommandNSTextView: NSTextView {
         }
     }
 
+    private func updateDragInsertionCaret(for insertionIndex: Int) {
+        let oldRect = dragInsertionCaretRect
+        dragInsertionCaretRect = dragInsertionCaretRect(for: insertionIndex)
+
+        if let oldRect { setNeedsDisplay(oldRect.insetBy(dx: -2, dy: -2)) }
+        if let dragInsertionCaretRect { setNeedsDisplay(dragInsertionCaretRect.insetBy(dx: -2, dy: -2)) }
+    }
+
     private func endDragSession(restoreSelection: Bool) {
+        let oldCaretRect = dragInsertionCaretRect
+        dragInsertionCaretRect = nil
+        if let oldCaretRect { setNeedsDisplay(oldCaretRect.insetBy(dx: -2, dy: -2)) }
+
         if restoreSelection, let originalRange = dragOriginalSelectionRange {
             // ③ 统一使用 NSRange.clamped 扩展
             let clamped = NSRange.clamped(originalRange, maxUTF16Length: string.utf16.count)
