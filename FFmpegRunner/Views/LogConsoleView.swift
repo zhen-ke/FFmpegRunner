@@ -67,6 +67,31 @@ private final class ConsoleLogTextView: NSTextView {
     }
 }
 
+enum ConsoleFollowPolicy {
+    enum UserScrollState {
+        case idle
+        case recentManualScroll
+        case manualResume
+    }
+
+    static func shouldFollowDuringContentUpdate(
+        requestedFollow: Bool,
+        viewportIsAtBottom: Bool,
+        userScrollState: UserScrollState
+    ) -> Bool {
+        guard requestedFollow else { return false }
+
+        switch userScrollState {
+        case .manualResume:
+            return true
+        case .recentManualScroll:
+            return viewportIsAtBottom
+        case .idle:
+            return true
+        }
+    }
+}
+
 // MARK: - LogConsoleView
 
 struct LogConsoleView: View {
@@ -85,7 +110,9 @@ struct LogConsoleView: View {
                 onExport: { showExportSheet = true },
                 state: viewModel.state,
                 isFFmpegAvailable: viewModel.isFFmpegAvailable,
-                matchCount: viewModel.searchText.isEmpty ? nil : viewModel.visibleLogs.count,
+                matchCount: viewModel.searchText.isEmpty || viewModel.regexSearchError != nil
+                    ? nil
+                    : viewModel.visibleLogs.count,
                 regexSearchError: viewModel.regexSearchError
             )
 
@@ -519,9 +546,15 @@ private struct InteractiveLogConsoleView: NSViewRepresentable {
             guard let scrollView, let textView else { return }
 
             let currentFollowEnabled = parent.followEnabled
+            var effectiveFollowEnabled = currentFollowEnabled
             let followWasResumed = currentFollowEnabled && !lastFollowEnabled
             let renderFingerprint = ConsoleTextRenderer.fingerprint(for: logs, isRunning: isRunning)
             let contentChanged = renderFingerprint != lastRenderFingerprint
+            let shouldFollowContent = ConsoleFollowPolicy.shouldFollowDuringContentUpdate(
+                requestedFollow: currentFollowEnabled,
+                viewportIsAtBottom: isScrolledToBottom(scrollView),
+                userScrollState: followWasResumed ? .manualResume : currentUserScrollState
+            )
 
             if contentChanged {
                 let selectedRange = textView.selectedRange()
@@ -531,10 +564,14 @@ private struct InteractiveLogConsoleView: NSViewRepresentable {
                 syncTextStorage(logs: logs, isRunning: isRunning)
                 textView.setSelectedRange(.clamped(selectedRange, maxUTF16Length: textView.string.utf16.count))
 
-                if currentFollowEnabled {
+                if shouldFollowContent {
                     scrollToBottom()
                 } else {
                     restoreVisibleOrigin(visibleOrigin)
+                    if currentFollowEnabled {
+                        setFollowEnabled(false)
+                        effectiveFollowEnabled = false
+                    }
                 }
 
                 scheduleViewportSync()
@@ -545,7 +582,7 @@ private struct InteractiveLogConsoleView: NSViewRepresentable {
             }
 
             lastRenderFingerprint = renderFingerprint
-            lastFollowEnabled = currentFollowEnabled
+            lastFollowEnabled = effectiveFollowEnabled
         }
 
         private func syncTextStorage(logs: [LogEntry], isRunning: Bool) {
@@ -626,6 +663,10 @@ private struct InteractiveLogConsoleView: NSViewRepresentable {
             (ProcessInfo.processInfo.systemUptime - lastUserScrollTimestamp) <= userScrollGraceInterval
         }
 
+        private var currentUserScrollState: ConsoleFollowPolicy.UserScrollState {
+            isLikelyUserScroll ? .recentManualScroll : .idle
+        }
+
         private func markUserScroll() {
             lastUserScrollTimestamp = ProcessInfo.processInfo.systemUptime
         }
@@ -649,9 +690,14 @@ private struct InteractiveLogConsoleView: NSViewRepresentable {
         }
 
         private func scrollToBottom() {
-            guard let textView else { return }
-            let endRange = NSRange(location: textView.string.utf16.count, length: 0)
-            textView.scrollRangeToVisible(endRange)
+            guard let scrollView else { return }
+
+            let visibleHeight = scrollView.contentView.bounds.height
+            let documentHeight = scrollView.documentView?.bounds.height ?? 0
+            let targetOrigin = NSPoint(x: 0, y: max(0, documentHeight - visibleHeight))
+
+            scrollView.contentView.scroll(to: targetOrigin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
         }
 
         private func restoreVisibleOrigin(_ origin: NSPoint) {

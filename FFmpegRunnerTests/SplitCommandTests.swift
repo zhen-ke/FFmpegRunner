@@ -759,6 +759,30 @@ final class SplitCommandTests: XCTestCase {
         XCTAssertNotNil(result.errorMessage)
     }
 
+    func testConsoleFollowPolicyTreatsRecentManualScrollAwayAsPaused() {
+        XCTAssertFalse(ConsoleFollowPolicy.shouldFollowDuringContentUpdate(
+            requestedFollow: true,
+            viewportIsAtBottom: false,
+            userScrollState: .recentManualScroll
+        ))
+    }
+
+    func testConsoleFollowPolicyHonorsManualResumeEvenAwayFromBottom() {
+        XCTAssertTrue(ConsoleFollowPolicy.shouldFollowDuringContentUpdate(
+            requestedFollow: true,
+            viewportIsAtBottom: false,
+            userScrollState: .manualResume
+        ))
+    }
+
+    func testConsoleFollowPolicyKeepsFollowingWhenAtBottom() {
+        XCTAssertTrue(ConsoleFollowPolicy.shouldFollowDuringContentUpdate(
+            requestedFollow: true,
+            viewportIsAtBottom: true,
+            userScrollState: .idle
+        ))
+    }
+
     @MainActor
     func testExecutionControllerPersistsRecentCommandBeforeReturning() async throws {
         let truePath = "/usr/bin/true"
