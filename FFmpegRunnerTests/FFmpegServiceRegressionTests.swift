@@ -656,6 +656,29 @@ final class FFmpegServiceRegressionTests: XCTestCase {
     }
 
     @MainActor
+    func testTemplateRepositoryLoadsBundledTemplates() async throws {
+        let directory = try makeTemporaryTemplateDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let repository = TemplateRepository(
+            sources: [
+                BundleTemplateSource(),
+                UserTemplateSource(directory: directory)
+            ],
+            userDirectory: directory
+        )
+
+        let report = await repository.loadTemplates()
+        let loadedIDs = Set(report.templates.map(\.id))
+
+        XCTAssertTrue(report.errors.isEmpty, report.errors.map(\.localizedDescription).joined(separator: "\n"))
+        XCTAssertTrue(loadedIDs.contains(Template.rawCommandId))
+        XCTAssertTrue(loadedIDs.contains("compress_video"))
+        XCTAssertTrue(loadedIDs.contains("concat_videos"))
+        XCTAssertGreaterThanOrEqual(report.templates.count, 13)
+    }
+
+    @MainActor
     func testTemplateListViewModelShowsInvalidTemplateReasons() async throws {
         let directory = try makeTemporaryTemplateDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

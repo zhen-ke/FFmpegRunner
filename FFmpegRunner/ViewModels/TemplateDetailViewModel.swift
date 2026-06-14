@@ -105,13 +105,20 @@ final class TemplateDetailViewModel: ObservableObject {
 
     private var cache = TemplateDetailCache()
     private let outputPathEngine = OutputPathAutoFillEngine()
+    private let mediaDurationResolver: MediaDurationResolving
+    private let mediaDurationAutoFillEngine = MediaDurationAutoFillEngine()
+    private var mediaDurationAutoFillTask: Task<Void, Never>?
 
     /// macOS 系统 Undo 管理器，支持 ⌘Z / ⇧⌘Z
     let undoManager = UndoManager()
 
     // MARK: - Initialization
 
-    init(template: Template? = nil) {
+    init(
+        template: Template? = nil,
+        mediaDurationResolver: @escaping @Sendable MediaDurationResolving = MediaDurationResolver.resolveDuration(for:)
+    ) {
+        self.mediaDurationResolver = mediaDurationResolver
         selectTemplate(template)
     }
 
@@ -127,6 +134,9 @@ final class TemplateDetailViewModel: ObservableObject {
         let initialValues = TemplateValue.from(template: template)
         cache.rebuild(template: template, values: initialValues)
         outputPathEngine.reset()
+        mediaDurationAutoFillEngine.reset()
+        mediaDurationAutoFillTask?.cancel()
+        mediaDurationAutoFillTask = nil
         undoManager.removeAllActions()
         state = buildState(template: template, values: initialValues)
     }
@@ -154,11 +164,21 @@ final class TemplateDetailViewModel: ObservableObject {
             newValue: value,
             cache: cache
         )
+        mediaDurationAutoFillEngine.trackManualTimeRangeEditIfNeeded(
+            changedKey: key,
+            newValue: value,
+            cache: cache
+        )
 
         let autoUpdatedKeys = outputPathEngine.applyAutoFillIfNeeded(
             changedKey: key,
             values: &nextValues,
             cache: cache
+        )
+        scheduleMediaDurationAutoFillIfNeeded(
+            changedKey: key,
+            values: nextValues,
+            template: template
         )
 
         state = buildState(template: template, values: nextValues)
@@ -202,6 +222,9 @@ final class TemplateDetailViewModel: ObservableObject {
 
         cache.rebuild(template: template, values: restoredValues)
         outputPathEngine.reset()
+        mediaDurationAutoFillEngine.reset()
+        mediaDurationAutoFillTask?.cancel()
+        mediaDurationAutoFillTask = nil
         state = buildState(template: template, values: restoredValues)
 
         for parameter in template.parameters where parameter.type == .file {
@@ -288,6 +311,9 @@ private extension TemplateDetailViewModel {
         state = .empty
         cache = TemplateDetailCache()
         outputPathEngine.reset()
+        mediaDurationAutoFillEngine.reset()
+        mediaDurationAutoFillTask?.cancel()
+        mediaDurationAutoFillTask = nil
     }
 
     func persistRecentDirectoryIfNeeded(for key: String, values: [TemplateValue]) {
@@ -314,9 +340,64 @@ private extension TemplateDetailViewModel {
             UserSettings.shared.lastInputDirectory = directoryPath
         }
     }
+
+    func scheduleMediaDurationAutoFillIfNeeded(
+        changedKey: String,
+        values: [TemplateValue],
+        template: Template
+    ) {
+        guard let request = cache.mediaDurationRequest(forChangedKey: changedKey, values: values) else {
+            return
+        }
+
+        mediaDurationAutoFillTask?.cancel()
+        let templateID = template.id
+        mediaDurationAutoFillTask = Task.detached(priority: .utility) { [weak self, mediaDurationResolver, request, templateID] in
+            let duration = await mediaDurationResolver(request.sourceURL)
+            guard !Task.isCancelled, let duration, duration > 0 else { return }
+
+            await MainActor.run {
+                self?.applyMediaDurationAutoFill(
+                    duration: duration,
+                    request: request,
+                    expectedTemplateID: templateID
+                )
+            }
+        }
+    }
+
+    func applyMediaDurationAutoFill(
+        duration: TimeInterval,
+        request: MediaDurationAutoFillRequest,
+        expectedTemplateID: String
+    ) {
+        guard let template = state.template,
+              template.id == expectedTemplateID,
+              getValue(for: request.sourceKey) == request.sourceURL.path else {
+            return
+        }
+
+        var nextValues = state.values
+        let updatedKeys = mediaDurationAutoFillEngine.applyAutoFillIfNeeded(
+            duration: duration,
+            request: request,
+            values: &nextValues,
+            cache: cache
+        )
+
+        guard !updatedKeys.isEmpty else { return }
+        state = buildState(template: template, values: nextValues)
+    }
 }
 
 // MARK: - Detail Cache
+
+private struct MediaDurationAutoFillRequest: Equatable, Sendable {
+    let sourceKey: String
+    let sourceURL: URL
+    let startKey: String
+    let durationKey: String
+}
 
 /// 参数索引和输出依赖缓存，负责把模板定义转换成可快速查询的结构。
 private struct TemplateDetailCache {
@@ -364,6 +445,43 @@ private struct TemplateDetailCache {
         return isOutputParameter(parameter)
     }
 
+    func isTimeRangeDurationKey(_ key: String) -> Bool {
+        parameterByKey.values.contains { parameter in
+            parameter.uiHint?.compositeType == "timeRange" &&
+            parameter.uiHint?.compositeGroup == key
+        }
+    }
+
+    func mediaDurationRequest(forChangedKey key: String, values: [TemplateValue]) -> MediaDurationAutoFillRequest? {
+        guard let sourceParameter = parameterByKey[key],
+              sourceParameter.type == .file,
+              !isOutputParameter(sourceParameter),
+              let sourceIndex = index(for: key),
+              sourceIndex < values.count else {
+            return nil
+        }
+
+        let sourcePath = values[sourceIndex].rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sourcePath.isEmpty,
+              FileManager.default.fileExists(atPath: sourcePath) else {
+            return nil
+        }
+
+        guard let timeRangeParameter = parameterByKey.values.first(where: { $0.uiHint?.compositeType == "timeRange" }),
+              let durationKey = timeRangeParameter.uiHint?.compositeGroup,
+              index(for: durationKey) != nil else {
+            return nil
+        }
+
+        return MediaDurationAutoFillRequest(
+            sourceKey: key,
+            sourceURL: URL(fileURLWithPath: sourcePath),
+            startKey: timeRangeParameter.key,
+            durationKey: durationKey
+        )
+    }
+
     private static func buildValueIndex(_ values: [TemplateValue]) -> [String: Int] {
         var index: [String: Int] = [:]
         for (offset, value) in values.enumerated() where index[value.key] == nil {
@@ -384,13 +502,13 @@ private struct TemplateDetailCache {
         if let configuredSourceKey = outputParameter.constraints?.outputSourceKey,
            !configuredSourceKey.isEmpty,
            let configuredParameter = parameterByKey[configuredSourceKey],
-           configuredParameter.type == .file,
+           Self.isSourceParameter(configuredParameter),
            !isOutputParameter(configuredParameter) {
             return configuredSourceKey
         }
 
         let fileInputKeys = template.parameters
-            .filter { $0.type == .file && !isOutputParameter($0) }
+            .filter { Self.isSourceParameter($0) && !isOutputParameter($0) }
             .map(\.key)
 
         guard !fileInputKeys.isEmpty else { return nil }
@@ -431,6 +549,89 @@ private struct TemplateDetailCache {
     private func isOutputParameter(_ parameter: TemplateParameter) -> Bool {
         parameter.type == .file &&
         (parameter.constraints?.isOutputFile == true || parameter.key == "output")
+    }
+
+    private static func isSourceParameter(_ parameter: TemplateParameter) -> Bool {
+        parameter.type == .file || parameter.type == .files
+    }
+}
+
+// MARK: - Media Duration Auto-Fill Engine
+
+/// 剪切模板的片尾自动填充规则，只覆盖空值或上次自动生成的值。
+private final class MediaDurationAutoFillEngine {
+    private var autoGeneratedDurations: [String: String] = [:]
+    private var manuallyEditedDurationKeys: Set<String> = []
+
+    func reset() {
+        autoGeneratedDurations.removeAll()
+        manuallyEditedDurationKeys.removeAll()
+    }
+
+    func trackManualTimeRangeEditIfNeeded(
+        changedKey: String,
+        newValue: String,
+        cache: TemplateDetailCache
+    ) {
+        guard cache.isTimeRangeDurationKey(changedKey) else {
+            return
+        }
+
+        if autoGeneratedDurations[changedKey] == newValue {
+            return
+        }
+
+        autoGeneratedDurations.removeValue(forKey: changedKey)
+        manuallyEditedDurationKeys.insert(changedKey)
+    }
+
+    func applyAutoFillIfNeeded(
+        duration: TimeInterval,
+        request: MediaDurationAutoFillRequest,
+        values: inout [TemplateValue],
+        cache: TemplateDetailCache
+    ) -> [String] {
+        guard let startIndex = cache.index(for: request.startKey),
+              startIndex < values.count,
+              let durationIndex = cache.index(for: request.durationKey),
+              durationIndex < values.count else {
+            return []
+        }
+
+        var updatedKeys: [String] = []
+
+        let currentStart = values[startIndex].rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if currentStart.isEmpty {
+            values[startIndex].rawValue = "00:00:00"
+            updatedKeys.append(request.startKey)
+        }
+
+        let normalizedStart = values[startIndex].rawValue
+        let startSeconds = FastCutTimecodeSupport.parseUserTimecode(normalizedStart) ?? 0
+        let remainingDuration = max(duration - startSeconds, 0)
+        guard remainingDuration > 0 else { return updatedKeys }
+
+        let generatedDuration = FastCutTimecodeSupport.formatDurationSeconds(remainingDuration)
+        let currentDuration = values[durationIndex].rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let durationDefaultValue = cache.parameter(for: request.durationKey)?.defaultValue
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let shouldReplace = currentDuration.isEmpty ||
+            currentDuration == autoGeneratedDurations[request.durationKey] ||
+            (currentDuration == durationDefaultValue && !manuallyEditedDurationKeys.contains(request.durationKey))
+
+        guard shouldReplace,
+              values[durationIndex].rawValue != generatedDuration else {
+            autoGeneratedDurations[request.durationKey] = generatedDuration
+            return updatedKeys
+        }
+
+        values[durationIndex].rawValue = generatedDuration
+        autoGeneratedDurations[request.durationKey] = generatedDuration
+        updatedKeys.append(request.durationKey)
+
+        return updatedKeys
     }
 }
 
@@ -520,7 +721,10 @@ private final class OutputPathAutoFillEngine {
             return nil
         }
 
-        let path = Self.normalizedPath(values[sourceIndex].rawValue)
+        let path = Self.firstExistingSourcePath(
+            from: values[sourceIndex].rawValue,
+            parameter: cache.parameter(for: sourceKey)
+        )
         guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return nil }
         return path
     }
@@ -534,7 +738,13 @@ private final class OutputPathAutoFillEngine {
         let sourceURL = URL(fileURLWithPath: sourcePath)
         let directoryURL = sourceURL.deletingLastPathComponent()
         let baseName = sourceURL.deletingPathExtension().lastPathComponent
-        let sourceExtension = sourceURL.pathExtension.lowercased()
+        let sourceExtension: String
+        if let sourceKey = cache.sourceKeyByOutputKey[outputParameter.key],
+           cache.parameter(for: sourceKey)?.type == .files {
+            sourceExtension = ""
+        } else {
+            sourceExtension = sourceURL.pathExtension.lowercased()
+        }
         let outputExtension = resolveOutputExtension(
             sourceExtension: sourceExtension,
             outputParameter: outputParameter,
@@ -641,5 +851,21 @@ private final class OutputPathAutoFillEngine {
     private static func normalizedPath(_ rawValue: String) -> String {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         return (trimmed as NSString).expandingTildeInPath
+    }
+
+    private static func firstExistingSourcePath(
+        from rawValue: String,
+        parameter: TemplateParameter?
+    ) -> String {
+        let rawPaths: [String]
+        if parameter?.type == .files {
+            rawPaths = rawValue.components(separatedBy: "\n")
+        } else {
+            rawPaths = [rawValue]
+        }
+
+        return rawPaths
+            .map(normalizedPath)
+            .first { !$0.isEmpty && FileManager.default.fileExists(atPath: $0) } ?? ""
     }
 }

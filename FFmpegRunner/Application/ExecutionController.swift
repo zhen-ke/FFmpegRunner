@@ -322,8 +322,24 @@ final class ExecutionController: ObservableObject {
 
         state = .preparing
 
+        // Pre-run：生成 concat 临时文件（如果有 files 类型参数）
+        var tempFiles: [URL] = []
+        defer {
+            // defer 在 async 函数里是安全的：等 await execute(plan:) 结束后才执行
+            // 覆盖成功 / 失败 / 取消三种路径
+            tempFiles.forEach { try? FileManager.default.removeItem(at: $0) }
+        }
+
+        let resolvedBinding: TemplateBinding
         do {
-            let plan = try makeExecutionPlan(binding: binding, forceOverwrite: forceOverwrite)
+            (resolvedBinding, tempFiles) = try ConcatListBuilder.resolve(binding: binding)
+        } catch {
+            state = .error(error.localizedDescription)
+            throw ExecutionError.planningFailed(error.localizedDescription)
+        }
+
+        do {
+            let plan = try makeExecutionPlan(binding: resolvedBinding, forceOverwrite: forceOverwrite)
             return try await execute(plan: plan)
         } catch let error as CommandPlannerError {
             state = .error(error.localizedDescription)
@@ -388,6 +404,7 @@ final class ExecutionController: ObservableObject {
         binding: TemplateBinding,
         forceOverwrite: Bool = false
     ) throws -> ExecutionQueueItem {
+        // TODO: 队列暂不支持 files 类型参数
         do {
             let plan = try makeExecutionPlan(binding: binding, forceOverwrite: forceOverwrite)
             return enqueue(plan: plan)

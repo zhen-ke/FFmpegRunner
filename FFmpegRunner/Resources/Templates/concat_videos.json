@@ -1,0 +1,38 @@
+{
+  "id": "concat_videos",
+  "name": "合并视频 (Concat)",
+  "description": "无损拼接/合并多个相同编码格式的视频文件 (如多个 TS 分片)",
+  "category": "视频处理",
+  "icon": "arrow.triangle.merge",
+  "commandTemplate": "ffmpeg -f concat -safe 0 -i {{inputsList}} -c copy -y {{output}}",
+  "parameters": [
+    {
+      "key": "inputsList",
+      "label": "待合并视频列表",
+      "type": "files",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "ts",
+          "mp4",
+          "mov",
+          "mkv"
+        ]
+      }
+    },
+    {
+      "key": "output",
+      "label": "输出视频文件",
+      "type": "file",
+      "isRequired": true,
+      "constraints": {
+        "fileTypes": [
+          "mp4",
+          "ts",
+          "mkv"
+        ],
+        "isOutputFile": true
+      }
+    }
+  ]
+}

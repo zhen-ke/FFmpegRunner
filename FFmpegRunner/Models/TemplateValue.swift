@@ -26,6 +26,8 @@ enum ParsedValue: Hashable {
     case bool(Bool)
     /// 文件路径
     case file(URL)
+    /// 多文件路径
+    case fileList([URL])
 
     /// 转换为字符串表示
     var stringValue: String {
@@ -35,6 +37,7 @@ enum ParsedValue: Hashable {
             return n.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(n)) : String(n)
         case .bool(let b): return b ? "true" : "false"
         case .file(let url): return url.path
+        case .fileList(let urls): return urls.map(\.path).joined(separator: "\n")
         }
     }
 }
@@ -152,6 +155,13 @@ extension TemplateValue {
             if !rawValue.isEmpty {
                 result.parsedValue = .file(URL(fileURLWithPath: rawValue))
             }
+
+        case .files:
+            let urls = rawValue.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .map { URL(fileURLWithPath: $0) }
+            result.parsedValue = .fileList(urls)
 
         case .select:
             result.parsedValue = .string(rawValue)

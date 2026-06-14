@@ -133,6 +133,12 @@ struct ParameterFieldView: View {
                 isOutput: parameter.constraints?.isOutputFile ?? false
             )
 
+        case .files:
+            FilesListField(
+                value: $value,
+                fileTypes: parameter.constraints?.fileTypes
+            )
+
         case .select:
             SelectField(
                 value: $value,
@@ -884,6 +890,329 @@ struct SelectField: View {
             return option
         }
         return labels[index]
+    }
+}
+
+// MARK: - 多文件选择字段
+
+struct FilesListField: View {
+    @Binding var value: String
+    let fileTypes: [String]?
+
+    @State private var isDragging = false
+    @State private var items: [FileListItem] = []
+    @State private var lastSyncedValue = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // 文件列表展示
+            if items.isEmpty {
+                emptyListView
+            } else {
+                listView
+            }
+
+            // 操作按钮
+            HStack(spacing: 12) {
+                Button(action: addFiles) {
+                    Label("添加文件", systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+
+                if !items.isEmpty {
+                    Button(role: .destructive, action: clearAll) {
+                        Label("清空列表", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                }
+
+                Spacer()
+                
+                if !items.isEmpty {
+                    Text("共 \(items.count) 个文件")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .onAppear {
+            syncItemsIfNeeded(from: value)
+        }
+        .onChange(of: value) { newValue in
+            syncItemsIfNeeded(from: newValue)
+        }
+    }
+
+    private var emptyListView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "square.and.arrow.down")
+                .font(.system(size: 28))
+                .foregroundColor(.secondary.opacity(0.8))
+
+            Text("拖拽视频文件到此处，或点击下方「添加文件」")
+                .font(.callout)
+                .foregroundColor(.secondary)
+            
+            if let fileTypes = fileTypes, !fileTypes.isEmpty {
+                Text("仅支持: \(fileTypes.joined(separator: ", "))")
+                    .font(.caption2)
+                    .foregroundColor(.secondary.opacity(0.7))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 32)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isDragging ? Color.accentColor : Color.secondary.opacity(0.2), style: StrokeStyle(lineWidth: 1.5, dash: [4]))
+        )
+        .background(isDragging ? Color.accentColor.opacity(0.05) : Color.clear)
+        .onDrop(of: [.fileURL], isTargeted: $isDragging) { providers in
+            handleDrop(providers)
+        }
+    }
+
+    private var listView: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        FileListRow(
+                            item: item,
+                            index: index,
+                            totalCount: items.count,
+                            onMoveUp: { moveItem(from: index, to: index - 1) },
+                            onMoveDown: { moveItem(from: index, to: index + 1) },
+                            onRemove: { removeItem(at: index) }
+                        )
+                        .equatable()
+                    }
+                }
+                .padding(4)
+            }
+            .frame(maxHeight: 250)
+        }
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isDragging ? Color.accentColor : Color.secondary.opacity(0.2), lineWidth: 1)
+        )
+        .onDrop(of: [.fileURL], isTargeted: $isDragging) { providers in
+            handleDrop(providers)
+        }
+    }
+
+    // MARK: - Actions
+
+    private func addFiles() {
+        Task { @MainActor in
+            let initialDirectory = resolvedInitialDirectoryURL()
+            let selectedURLs = await FilePicker.selectFiles(
+                types: fileTypes,
+                initialDirectory: initialDirectory,
+                prompt: "选择要合并的视频文件"
+            )
+
+            guard !selectedURLs.isEmpty else { return }
+
+            commitItems(items.appendingUniqueURLs(selectedURLs, sortResult: true))
+
+            // 记录最后一次输入路径
+            if let firstURL = selectedURLs.first {
+                UserSettings.shared.lastInputDirectory = firstURL.deletingLastPathComponent().path
+            }
+        }
+    }
+
+    private func clearAll() {
+        commitItems([])
+    }
+
+    private func removeItem(at index: Int) {
+        var currentItems = items
+        guard index >= 0 && index < currentItems.count else { return }
+        currentItems.remove(at: index)
+        commitItems(currentItems)
+    }
+
+    private func moveItem(from: Int, to: Int) {
+        var currentItems = items
+        guard from >= 0 && from < currentItems.count && to >= 0 && to < currentItems.count else { return }
+        let element = currentItems.remove(at: from)
+        currentItems.insert(element, at: to)
+        commitItems(currentItems)
+    }
+
+    private func commitItems(_ newItems: [FileListItem]) {
+        if items != newItems {
+            items = newItems
+        }
+
+        let newValue = newItems.map(\.path).joined(separator: "\n")
+        lastSyncedValue = newValue
+        if value != newValue {
+            value = newValue
+        }
+    }
+
+    private func resolvedInitialDirectoryURL() -> URL? {
+        if let last = items.last?.url {
+            return last.deletingLastPathComponent()
+        }
+        let recentDirectory = UserSettings.shared.lastInputDirectory
+        let normalizedDirectory = (recentDirectory as NSString)
+            .expandingTildeInPath
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !normalizedDirectory.isEmpty else { return nil }
+        return URL(fileURLWithPath: normalizedDirectory)
+    }
+
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        Task {
+            let droppedURLs = await DragDropHandler.extractFileURLs(from: providers)
+            let filteredURLs = droppedURLs.filter { url in
+                DragDropHandler.matchesFileTypes(url, types: fileTypes)
+            }
+
+            guard !filteredURLs.isEmpty else { return }
+
+            await MainActor.run {
+                commitItems(items.appendingUniqueURLs(filteredURLs, sortResult: true))
+
+                if let firstURL = filteredURLs.first {
+                    UserSettings.shared.lastInputDirectory = firstURL.deletingLastPathComponent().path
+                }
+            }
+        }
+        return true
+    }
+
+    private func syncItemsIfNeeded(from rawValue: String) {
+        guard rawValue != lastSyncedValue else { return }
+        let parsedItems = FileListItem.parse(rawValue)
+        if items != parsedItems {
+            items = parsedItems
+        }
+        lastSyncedValue = rawValue
+    }
+}
+
+private struct FileListItem: Identifiable, Equatable {
+    let url: URL
+    let path: String
+    let id: String
+
+    init(url: URL) {
+        self.url = url
+        self.path = url.path
+        self.id = url.path
+    }
+
+    var fileName: String {
+        url.lastPathComponent
+    }
+
+    var directoryPath: String {
+        url.deletingLastPathComponent().path
+    }
+
+    static func parse(_ rawValue: String) -> [FileListItem] {
+        rawValue.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map { FileListItem(url: URL(fileURLWithPath: $0)) }
+    }
+}
+
+private extension Array where Element == FileListItem {
+    func appendingUniqueURLs(_ urls: [URL], sortResult: Bool = false) -> [FileListItem] {
+        let mergedURLs: [URL]
+        if sortResult {
+            mergedURLs = FileListOrdering.appendingUniqueNaturalAscending(existing: map(\.url), incoming: urls)
+        } else {
+            var result = map(\.url)
+            var existingPaths = Set(result.map(\.path))
+            for url in urls where existingPaths.insert(url.path).inserted {
+                result.append(url)
+            }
+            mergedURLs = result
+        }
+
+        return mergedURLs.map(FileListItem.init(url:))
+    }
+}
+
+private struct FileListRow: View, Equatable {
+    let item: FileListItem
+    let index: Int
+    let totalCount: Int
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
+    let onRemove: () -> Void
+
+    static func == (lhs: FileListRow, rhs: FileListRow) -> Bool {
+        lhs.item == rhs.item &&
+        lhs.index == rhs.index &&
+        lhs.totalCount == rhs.totalCount
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("\(index + 1)")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundColor(.secondary)
+                .frame(width: 20, alignment: .trailing)
+
+            Image(systemName: "video")
+                .foregroundColor(.accentColor)
+                .imageScale(.medium)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.fileName)
+                    .font(.body)
+                    .lineLimit(1)
+                Text(item.directoryPath)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer()
+
+            HStack(spacing: 2) {
+                Button(action: onMoveUp) {
+                    Image(systemName: "arrow.up")
+                        .imageScale(.small)
+                }
+                .buttonStyle(.plain)
+                .disabled(index == 0)
+                .foregroundColor(index == 0 ? .secondary.opacity(0.3) : .primary)
+                .accessibilityLabel("上移 \(item.fileName)")
+
+                Button(action: onMoveDown) {
+                    Image(systemName: "arrow.down")
+                        .imageScale(.small)
+                }
+                .buttonStyle(.plain)
+                .disabled(index == totalCount - 1)
+                .foregroundColor(index == totalCount - 1 ? .secondary.opacity(0.3) : .primary)
+                .accessibilityLabel("下移 \(item.fileName)")
+            }
+            .padding(.horizontal, 4)
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("移除 \(item.fileName)")
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(index % 2 == 0 ? Color.clear : Color.secondary.opacity(0.03))
     }
 }
 

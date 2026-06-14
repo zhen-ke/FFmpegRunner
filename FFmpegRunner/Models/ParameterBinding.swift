@@ -159,3 +159,94 @@ extension TemplateBinding {
         )
     }
 }
+
+// MARK: - Extensions for Copy-Init
+
+extension ParameterBinding {
+    /// 用临时文件路径替换当前绑定，返回新实例
+    func withRawValue(_ newPath: String) -> ParameterBinding {
+        let updatedValue = TemplateValue(
+            key: value.key,
+            rawValue: newPath,
+            parsedValue: .file(URL(fileURLWithPath: newPath)),
+            validationResult: .valid
+        )
+        return ParameterBinding(parameter: parameter, value: updatedValue)
+    }
+}
+
+extension TemplateBinding {
+    func withBindings(_ newBindings: [ParameterBinding]) -> TemplateBinding {
+        TemplateBinding(
+            template: template,
+            bindings: newBindings,
+            conditionallyHiddenKeys: conditionallyHiddenKeys
+        )
+    }
+}
+
+// MARK: - Concat List Builder
+
+enum ConcatListError: LocalizedError {
+    case emptyFileList(key: String)
+    case writeError(key: String, underlying: Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyFileList(let key):
+            return "参数「\(key)」未选择任何文件"
+        case .writeError(let key, let err):
+            return "参数「\(key)」临时列表写入失败：\(err.localizedDescription)"
+        }
+    }
+}
+
+struct ConcatListBuilder {
+
+    /// 扫描 binding 中所有 `.files` 类型参数，生成临时 concat 列表文件
+    /// - Returns: (已替换路径的新 binding，需在执行结束后清理的临时文件列表)
+    static func resolve(binding: TemplateBinding) throws -> (TemplateBinding, [URL]) {
+        var tempFiles: [URL] = []
+        var newBindings = binding.bindings
+
+        for (index, b) in newBindings.enumerated() {
+            guard b.parameter.type == .files else { continue }
+
+            // 从 parsedValue 拿结构化 URL 列表
+            guard case .fileList(let urls) = b.parsedValue, !urls.isEmpty else {
+                throw ConcatListError.emptyFileList(key: b.key)
+            }
+
+            // 写临时文件
+            let tempURL: URL
+            do {
+                tempURL = try writeConcatList(urls: urls)
+            } catch {
+                throw ConcatListError.writeError(key: b.key, underlying: error)
+            }
+            tempFiles.append(tempURL)
+
+            // 替换 binding 为临时文件路径（CommandRenderer 看到的就是普通 file 路径）
+            newBindings[index] = b.withRawValue(tempURL.path)
+        }
+
+        return (binding.withBindings(newBindings), tempFiles)
+    }
+
+    // MARK: - Private
+
+    private static func writeConcatList(urls: [URL]) throws -> URL {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ffmpegrunner_concat_\(UUID().uuidString).txt")
+
+        let lines = urls.map { url -> String in
+            // 路径内的单引号要转义，避免 concat 协议解析错误
+            let escapedPath = url.path.replacingOccurrences(of: "'", with: "'\\''")
+            return "file '\(escapedPath)'"
+        }
+        try lines.joined(separator: "\n").write(to: tempURL, atomically: true, encoding: .utf8)
+        return tempURL
+    }
+}
+
+

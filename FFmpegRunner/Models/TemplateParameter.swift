@@ -27,7 +27,10 @@ enum ParameterType: String, Codable, CaseIterable {
     case file
     /// 下拉选择
     case select
+    /// 多文件选择器
+    case files
 }
+
 
 // MARK: - Parameter Role
 
@@ -515,6 +518,29 @@ extension TemplateParameter {
                 if !allowedLowercased.contains(fileExtension) {
                     let typesString = allowedTypes.joined(separator: ", ")
                     return .invalid(code: .invalidFileType, message: "文件类型错误 (仅支持: \(typesString))")
+                }
+            }
+
+        case .files:
+            let paths = value.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            if isRequired && paths.isEmpty {
+                return .invalid(code: .empty, message: "\(label) 不能为空")
+            }
+            let allowedTypes = constraints?.fileTypes ?? []
+            let allowedExtensions = Set(allowedTypes.map { $0.lowercased() })
+
+            for path in paths {
+                if !FileManager.default.fileExists(atPath: path) {
+                    return .invalid(code: .fileNotFound, message: "文件不存在: \(URL(fileURLWithPath: path).lastPathComponent)")
+                }
+                if !allowedExtensions.isEmpty {
+                    let fileExtension = (path as NSString).pathExtension.lowercased()
+                    if !allowedExtensions.contains(fileExtension) {
+                        let typesString = allowedTypes.joined(separator: ", ")
+                        return .invalid(code: .invalidFileType, message: "文件类型错误 (仅支持: \(typesString))")
+                    }
                 }
             }
 

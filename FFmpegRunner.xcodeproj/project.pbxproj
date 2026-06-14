@@ -22,8 +22,10 @@
 		001A0003 /* Template.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0003 /* Template.swift */; };
 		001A0004 /* TemplateParameter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0004 /* TemplateParameter.swift */; };
 		001A0005 /* TemplateValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0005 /* TemplateValue.swift */; };
+		001A0080 /* FileListOrdering.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0080 /* FileListOrdering.swift */; };
 		001A0006 /* ExecutionResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0006 /* ExecutionResult.swift */; };
 		001A0008 /* CommandRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0008 /* CommandRenderer.swift */; };
+		001A0081 /* MediaDurationResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0081 /* MediaDurationResolver.swift */; };
 		001A0009 /* FFmpegService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0009 /* FFmpegService.swift */; };
 		001A0010 /* ProcessLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0010 /* ProcessLogger.swift */; };
 		001A0011 /* TemplateListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001B0011 /* TemplateListViewModel.swift */; };
@@ -87,8 +89,10 @@
 		001B0003 /* Template.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Template.swift; sourceTree = "<group>"; };
 		001B0004 /* TemplateParameter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateParameter.swift; sourceTree = "<group>"; };
 		001B0005 /* TemplateValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateValue.swift; sourceTree = "<group>"; };
+		001B0080 /* FileListOrdering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileListOrdering.swift; sourceTree = "<group>"; };
 		001B0006 /* ExecutionResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutionResult.swift; sourceTree = "<group>"; };
 		001B0008 /* CommandRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandRenderer.swift; sourceTree = "<group>"; };
+		001B0081 /* MediaDurationResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaDurationResolver.swift; sourceTree = "<group>"; };
 		001B0009 /* FFmpegService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFmpegService.swift; sourceTree = "<group>"; };
 		001B0010 /* ProcessLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessLogger.swift; sourceTree = "<group>"; };
 		001B0011 /* TemplateListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateListViewModel.swift; sourceTree = "<group>"; };
@@ -208,6 +212,7 @@
 				001B0029 /* ParameterBinding.swift */,
 				001B0004 /* TemplateParameter.swift */,
 				001B0005 /* TemplateValue.swift */,
+				001B0080 /* FileListOrdering.swift */,
 				001B0006 /* ExecutionResult.swift */,
 				001B0030 /* ExecutionPlan.swift */,
 				001B0024 /* CommandHistory.swift */,
@@ -234,6 +239,7 @@
 				001B0033 /* FFmpegPathResolver.swift */,
 				001B0025 /* HistoryService.swift */,
 				001B0026 /* CommandValidator.swift */,
+				001B0081 /* MediaDurationResolver.swift */,
 				001B0070 /* LogPersistenceService.swift */,
 			);
 			path = Services;
@@ -464,8 +470,10 @@
 				001A0003 /* Template.swift in Sources */,
 				001A0004 /* TemplateParameter.swift in Sources */,
 				001A0005 /* TemplateValue.swift in Sources */,
+				001A0080 /* FileListOrdering.swift in Sources */,
 				001A0006 /* ExecutionResult.swift in Sources */,
 				001A0008 /* CommandRenderer.swift in Sources */,
+				001A0081 /* MediaDurationResolver.swift in Sources */,
 				001A0009 /* FFmpegService.swift in Sources */,
 				001A0010 /* ProcessLogger.swift in Sources */,
 				001A0011 /* TemplateListViewModel.swift in Sources */,

@@ -1111,6 +1111,121 @@ final class CommandPreviewViewModelTests: XCTestCase {
         )
     }
 
+    func testPreviewSummarizesLargeFilesSelections() async throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("concat-preview-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let inputURLs = try (0..<100).map { index in
+            let url = sandbox.appendingPathComponent(String(format: "segment-%03d.ts", index))
+            try Data().write(to: url)
+            return url
+        }
+        let outputURL = sandbox.appendingPathComponent("merged.mp4")
+        let detailViewModel = TemplateDetailViewModel(template: makeConcatTemplate())
+        let previewViewModel = CommandPreviewViewModel(detailViewModel: detailViewModel)
+
+        detailViewModel.updateValue(
+            key: "inputsList",
+            value: inputURLs.map(\.path).joined(separator: "\n")
+        )
+        detailViewModel.updateValue(key: "output", value: outputURL.path)
+        await settlePreviewPipeline()
+
+        XCTAssertTrue(previewViewModel.isComplete)
+        XCTAssertTrue(previewViewModel.renderedCommand.contains("100 个文件"))
+        XCTAssertFalse(previewViewModel.renderedCommand.contains(inputURLs[50].path))
+        XCTAssertLessThan(previewViewModel.renderedCommand.count, 220)
+    }
+
+    func testConcatTemplateAutoFillsOutputBesideSelectedFiles() throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("concat-output-autofill-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let firstInput = sandbox.appendingPathComponent("output_001.ts")
+        let secondInput = sandbox.appendingPathComponent("output_002.ts")
+        try Data().write(to: firstInput)
+        try Data().write(to: secondInput)
+
+        let detailViewModel = TemplateDetailViewModel(template: makeConcatTemplate())
+        detailViewModel.updateValue(
+            key: "inputsList",
+            value: [firstInput, secondInput].map(\.path).joined(separator: "\n")
+        )
+
+        let output = detailViewModel.getValue(for: "output")
+        XCTAssertTrue(output.hasPrefix(sandbox.path + "/"))
+        XCTAssertTrue(URL(fileURLWithPath: output).lastPathComponent.hasPrefix("output_001_"))
+        XCTAssertEqual(URL(fileURLWithPath: output).pathExtension, "mp4")
+        XCTAssertTrue(detailViewModel.canExecute)
+    }
+
+    func testFastCutAutoFillsEndTimeFromInputDuration() async throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fast-cut-duration-autofill-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let inputURL = sandbox.appendingPathComponent("clip.mp4")
+        try Data().write(to: inputURL)
+
+        let detailViewModel = TemplateDetailViewModel(
+            template: makeFastCutTemplate(),
+            mediaDurationResolver: { _ in 125 }
+        )
+
+        detailViewModel.updateValue(key: "input", value: inputURL.path)
+        try await waitForDetailValue(detailViewModel, key: "duration", expectedValue: "125")
+
+        XCTAssertEqual(detailViewModel.getValue(for: "startTime"), "00:00:00")
+        XCTAssertEqual(detailViewModel.getValue(for: "duration"), "125")
+        XCTAssertEqual(
+            FastCutTimecodeSupport.derivedEndTime(
+                normalizedStartTime: detailViewModel.getValue(for: "startTime"),
+                durationText: detailViewModel.getValue(for: "duration")
+            ),
+            "00:02:05"
+        )
+    }
+
+    func testFastCutKeepsManuallyEditedDurationWhenInputChanges() async throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fast-cut-manual-duration-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let firstInput = sandbox.appendingPathComponent("first.mp4")
+        let secondInput = sandbox.appendingPathComponent("second.mp4")
+        try Data().write(to: firstInput)
+        try Data().write(to: secondInput)
+
+        let detailViewModel = TemplateDetailViewModel(
+            template: makeFastCutTemplate(),
+            mediaDurationResolver: { url in
+                url.lastPathComponent == "first.mp4" ? 125 : 240
+            }
+        )
+
+        detailViewModel.updateValue(key: "input", value: firstInput.path)
+        try await waitForDetailValue(detailViewModel, key: "duration", expectedValue: "125")
+
+        detailViewModel.updateValue(key: "duration", value: "30")
+        detailViewModel.updateValue(key: "input", value: secondInput.path)
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        XCTAssertEqual(detailViewModel.getValue(for: "duration"), "30")
+        XCTAssertEqual(
+            FastCutTimecodeSupport.derivedEndTime(
+                normalizedStartTime: detailViewModel.getValue(for: "startTime"),
+                durationText: detailViewModel.getValue(for: "duration")
+            ),
+            "00:00:30"
+        )
+    }
+
     private func makeEncodeTemplate() -> Template {
         Template(
             id: "encode",
@@ -1130,6 +1245,81 @@ final class CommandPreviewViewModelTests: XCTestCase {
                     type: .string,
                     defaultValue: "out.mp4",
                     isRequired: true
+                )
+            ],
+            category: nil,
+            icon: nil
+        )
+    }
+
+    private func makeFastCutTemplate() -> Template {
+        Template(
+            id: "fast-cut",
+            name: "Fast Cut",
+            description: "Cut video",
+            commandTemplate: "ffmpeg -ss {{startTime}} -i {{input}} -t {{duration}} -c copy -map 0 -y {{output}}",
+            parameters: [
+                TemplateParameter(
+                    key: "input",
+                    label: "Input",
+                    type: .file,
+                    isRequired: true
+                ),
+                TemplateParameter(
+                    key: "startTime",
+                    label: "Start",
+                    type: .string,
+                    defaultValue: "00:00:00",
+                    isRequired: true,
+                    uiHint: ParameterUIHint(
+                        compositeType: "timeRange",
+                        compositeGroup: "duration"
+                    )
+                ),
+                TemplateParameter(
+                    key: "duration",
+                    label: "Duration",
+                    type: .number,
+                    defaultValue: "60",
+                    isRequired: true,
+                    uiHint: ParameterUIHint(hidden: true)
+                ),
+                TemplateParameter(
+                    key: "output",
+                    label: "Output",
+                    type: .file,
+                    isRequired: true,
+                    constraints: TemplateParameter.Constraints(isOutputFile: true)
+                )
+            ],
+            category: nil,
+            icon: nil
+        )
+    }
+
+    private func makeConcatTemplate() -> Template {
+        Template(
+            id: "concat",
+            name: "Concat",
+            description: "Concat videos",
+            commandTemplate: "ffmpeg -f concat -safe 0 -i {{inputsList}} -c copy -y {{output}}",
+            parameters: [
+                TemplateParameter(
+                    key: "inputsList",
+                    label: "Inputs",
+                    type: .files,
+                    isRequired: true,
+                    constraints: TemplateParameter.Constraints(fileTypes: ["ts", "mp4", "mov"])
+                ),
+                TemplateParameter(
+                    key: "output",
+                    label: "Output",
+                    type: .file,
+                    isRequired: true,
+                    constraints: TemplateParameter.Constraints(
+                        fileTypes: ["mp4", "ts", "mkv"],
+                        isOutputFile: true
+                    )
                 )
             ],
             category: nil,
@@ -1211,6 +1401,22 @@ final class CommandPreviewViewModelTests: XCTestCase {
         await Task.yield()
         await Task.yield()
         await Task.yield()
+    }
+
+    private func waitForDetailValue(
+        _ viewModel: TemplateDetailViewModel,
+        key: String,
+        expectedValue: String,
+        timeout: TimeInterval = 1.0
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if viewModel.getValue(for: key) == expectedValue {
+                return
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail("Timed out waiting for \(key) to become \(expectedValue), current: \(viewModel.getValue(for: key))")
     }
 }
 
@@ -1470,6 +1676,22 @@ final class FastCutTimecodeSupportTests: XCTestCase {
             ),
             "00:11:30.500"
         )
+    }
+}
+
+final class MediaDurationResolverTests: XCTestCase {
+
+    func testParseFFprobeDurationOutputUsesFirstPositiveDurationLine() {
+        XCTAssertEqual(
+            MediaDurationResolver.parseFFprobeDurationOutput("125.250000\n"),
+            125.25
+        )
+        XCTAssertEqual(
+            MediaDurationResolver.parseFFprobeDurationOutput("N/A\n90.5\n"),
+            90.5
+        )
+        XCTAssertNil(MediaDurationResolver.parseFFprobeDurationOutput("N/A\n"))
+        XCTAssertNil(MediaDurationResolver.parseFFprobeDurationOutput("-1\n"))
     }
 }
 

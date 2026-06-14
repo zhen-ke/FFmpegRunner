@@ -42,6 +42,11 @@ protocol RenderContext {
     /// - Returns: 参数值，如果不存在返回 nil
     func value(forKey key: String) -> String?
 
+    /// 获取指定 key 的 UI 展示值。默认与执行值一致，重型参数可提供摘要。
+    /// - Parameter key: 参数键名
+    /// - Returns: 展示值，如果不存在返回 nil
+    func displayValue(forKey key: String) -> String?
+
     /// 判断指定 key 是否需要跳过转义
     /// - Parameter key: 参数键名
     /// - Returns: 是否跳过转义
@@ -61,6 +66,12 @@ protocol RenderContext {
     /// - Parameter key: 参数键名
     /// - Returns: true 表示空值是预期行为
     func shouldIgnoreMissingPlaceholder(forKey key: String) -> Bool
+}
+
+extension RenderContext {
+    func displayValue(forKey key: String) -> String? {
+        value(forKey: key)
+    }
 }
 
 // MARK: - Context Implementations
@@ -121,6 +132,14 @@ struct ParameterBindingContext: RenderContext {
         return bindingDict[key]?.renderValue
     }
 
+    func displayValue(forKey key: String) -> String? {
+        if conditionallyHiddenKeys.contains(key) {
+            return ""
+        }
+        guard let binding = bindingDict[key] else { return nil }
+        return Self.displayValue(for: binding)
+    }
+
     func shouldSkipEscape(forKey key: String) -> Bool {
         skipEscapeKeys.contains(key)
     }
@@ -135,6 +154,33 @@ struct ParameterBindingContext: RenderContext {
 
     func shouldIgnoreMissingPlaceholder(forKey key: String) -> Bool {
         conditionallyHiddenKeys.contains(key)
+    }
+
+    private static func displayValue(for binding: ParameterBinding) -> String {
+        guard binding.parameter.type == .files else {
+            return binding.renderValue
+        }
+
+        let urls: [URL]
+        if case .fileList(let parsedURLs) = binding.parsedValue {
+            urls = parsedURLs
+        } else {
+            urls = binding.rawValue.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .map { URL(fileURLWithPath: $0) }
+        }
+
+        guard urls.count > 1 else {
+            return binding.renderValue
+        }
+
+        let firstName = urls.first?.lastPathComponent ?? ""
+        let lastName = urls.last?.lastPathComponent ?? ""
+        if urls.count == 2 {
+            return "2 个文件：\(firstName)、\(lastName)"
+        }
+        return "\(urls.count) 个文件：\(firstName) … \(lastName)"
     }
 }
 
@@ -348,6 +394,7 @@ struct CommandRenderer {
             let staticPart = commandTemplate[currentIndex..<fullRange.lowerBound]
             let key = String(commandTemplate[keyRange])
             let value = context.value(forKey: key) ?? ""
+            let displayValue = context.displayValue(forKey: key) ?? value
             let isEmpty = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
             // ① Display 路径：追加静态文本
@@ -373,9 +420,9 @@ struct CommandRenderer {
                     display.append("{{\(key)}}")
                 }
             } else if !context.shouldSkipEscape(forKey: key) {
-                display.append(escapeForDisplay(value))
+                display.append(escapeForDisplay(displayValue))
             } else {
-                display.append(value)
+                display.append(displayValue)
             }
 
             // ⑤ Args 路径：处理占位符值
